@@ -1,0 +1,105 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Quip V0.1 — global styles
+   The Electron window is transparent + frameless, so the body itself must be
+   transparent. Pix and the Ask panel render as floating elements over the
+   desktop with no visible "app frame". */
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  background: transparent;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-family: Inter, "SF Pro Text", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", system-ui, sans-serif;
+}
+
+/* Disable text selection on the floating UI — it's a companion, not a doc. */
+body {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+/* Allow selection inside chat bubbles only (so users can copy answers). */
+.quip-md {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Thin, calm scrollbars inside the panel. */
+.quip-scroll::-webkit-scrollbar,
+.overflow-y-auto::-webkit-scrollbar {
+  width: 6px;
+}
+.quip-scroll::-webkit-scrollbar-thumb,
+.overflow-y-auto::-webkit-scrollbar-thumb {
+  background: rgba(17, 17, 17, 0.12);
+  border-radius: 6px;
+}
+.quip-scroll::-webkit-scrollbar-track,
+.overflow-y-auto::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Markdown polish inside bubbles. */
+.quip-md p {
+  margin: 0 0 0.5em;
+}
+.quip-md p:last-child {
+  margin-bottom: 0;
+}
+.quip-md ul,
+.quip-md ol {
+  margin: 0.3em 0 0.6em;
+  padding-left: 1.2em;
+}
+.quip-md li {
+  margin: 0.15em 0;
+}
+.quip-md code {
+  background: rgba(17, 17, 17, 0.06);
+  padding: 0.1em 0.35em;
+  border-radius: 5px;
+  font-size: 0.86em;
+  font-family: "SF Mono", "JetBrains Mono", ui-monospace, monospace;
+}
+.quip-md pre {
+  background: #0c1018;
+  color: #e6edf3;
+  padding: 0.7em 0.85em;
+  border-radius: 12px;
+  overflow-x: auto;
+  margin: 0.4em 0;
+  font-size: 0.82em;
+  line-height: 1.5;
+}
+.quip-md pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+.quip-md a {
+  color: #1aa3d6;
+  text-decoration: none;
+}
+.quip-md a:hover {
+  text-decoration: underline;
+}
+.quip-md strong {
+  font-weight: 600;
+}
+.quip-md blockquote {
+  border-left: 3px solid rgba(111, 214, 255, 0.5);
+  margin: 0.4em 0;
+  padding: 0.1em 0 0.1em 0.7em;
+  color: #555;
+}
