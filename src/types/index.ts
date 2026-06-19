@@ -37,7 +37,7 @@ export type PixState =
   | "responding"
   | "sleeping";
 
-export type CompanionId = "pix" | "kai" | "ren";
+export type CompanionId = "pix" | "kai" | "zee";
 
 /** A saved chat session for history viewing */
 export interface ChatSession {
