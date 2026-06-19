@@ -12,6 +12,10 @@ export type QuipAPI = {
   onChatError: (
     cb: (err: { message: string; kind: string }) => void
   ) => () => void;
+  // Act mode
+  actExecute: (payload: { requestId: string; command: string }) => Promise<{ success: boolean; output?: string }>;
+  onActResult: (cb: (result: { success: boolean; output?: string }) => void) => () => void;
+  onActError: (cb: (err: { message: string }) => void) => () => void;
 };
 
 declare global {

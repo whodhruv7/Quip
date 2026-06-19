@@ -8,7 +8,8 @@
 // Security: API keys NEVER reach the renderer. They live in the
 // process env (loaded from the local .env) and are only used here in main.
 
-import { app, BrowserWindow, ipcMain, screen, Tray, nativeImage } from "electron";
+import { app, BrowserWindow, ipcMain, screen, Tray, nativeImage, shell } from "electron";
+import { exec } from "child_process";
 import path from "node:path";
 import fs from "node:fs";
 
@@ -37,7 +38,7 @@ function loadEnvFile(file: string) {
 loadEnvFile(path.join(app.getAppPath(), ".env"));
 loadEnvFile(path.join(process.cwd(), ".env"));
 
-import { IPC, ChatSendPayload, ChatErrorPayload } from "./shared";
+import { IPC, ChatSendPayload, ChatErrorPayload, ActExecutePayload } from "./shared";
 
 // Models
 const PRIMARY_MODEL = process.env.OPENROUTER_MODEL || "google/gemma-3-27b-it:free";
@@ -407,6 +408,77 @@ async function streamOpenRouter(
 ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
   await streamOpenRouter(payload, PRIMARY_MODEL);
   return { ok: true };
+});
+
+// ---------------------------------------------------------------------------
+// ACT MODE - Safe command execution
+// ---------------------------------------------------------------------------
+const ALLOWED_COMMANDS: Record<string, string | ((arg: string) => Promise<void>)> = {
+  // Open URLs via shell.openExternal
+  "youtube": (arg: string) => shell.openExternal(`https://youtube.com/${arg}`),
+  "google": (arg: string) => shell.openExternal(`https://google.com/search?q=${encodeURIComponent(arg)}`),
+  "github": (arg: string) => shell.openExternal(`https://github.com/${arg}`),
+  "chatgpt": () => shell.openExternal("https://chat.openai.com"),
+  
+  // Open apps via shell.openExternal (macOS) or exec (Windows/Linux)
+  "chrome": () => shell.openExternal("https://google.com"),
+  "spotify": () => {
+    const url = process.platform === "darwin" ? "spotify:" : "https://open.spotify.com";
+    return shell.openExternal(url);
+  },
+  "vscode": () => {
+    const cmd = process.platform === "darwin" ? "open -a 'Visual Studio Code'" : 
+                process.platform === "win32" ? "code" : "code";
+    return new Promise((resolve) => exec(cmd, () => resolve()));
+  },
+  "cursor": () => {
+    const cmd = process.platform === "darwin" ? "open -a 'Cursor'" : 
+                process.platform === "win32" ? "cursor" : "cursor";
+    return new Promise((resolve) => exec(cmd, () => resolve()));
+  },
+  "finder": () => {
+    const cmd = process.platform === "darwin" ? "open ." : 
+                process.platform === "win32" ? "explorer ." : "xdg-open .";
+    return new Promise((resolve) => exec(cmd, () => resolve()));
+  },
+  "settings": () => {
+    const cmd = process.platform === "darwin" ? "open 'System Preferences'" : 
+                process.platform === "win32" ? "start ms-settings:" : "gnome-control-center";
+    return new Promise((resolve) => exec(cmd, () => resolve()));
+  },
+};
+
+async function executeActCommand(command: string): Promise<{ success: boolean; output?: string }> {
+  const parts = command.trim().toLowerCase().split(/\s+/);
+  const action = parts[0];
+  const args = parts.slice(1).join(" ");
+  
+  try {
+    if (action in ALLOWED_COMMANDS) {
+      const handler = ALLOWED_COMMANDS[action];
+      if (typeof handler === "function") {
+        await handler(args);
+      } else {
+        await shell.openExternal(handler);
+      }
+      return { success: true, output: `Opened ${action}` };
+    }
+    
+    // Try to open as URL directly
+    if (command.startsWith("http://") || command.startsWith("https://")) {
+      await shell.openExternal(command);
+      return { success: true, output: `Opened ${command}` };
+    }
+    
+    return { success: false, output: `Unknown command: ${action}. Try: youtube, google, chrome, spotify, github, vscode, cursor, finder, settings` };
+  } catch (error: any) {
+    return { success: false, output: `Error: ${error?.message || String(error)}` };
+  }
+}
+
+ipcMain.handle(IPC.ACT_EXECUTE, async (_e, payload: ActExecutePayload) => {
+  const result = await executeActCommand(payload.command);
+  return result;
 });
 
 // ---------------------------------------------------------------------------

@@ -10,6 +10,10 @@ export const IPC = {
   CHAT_CHUNK: "quip:chat-chunk",
   CHAT_DONE: "quip:chat-done",
   CHAT_ERROR: "quip:chat-error",
+  // Act mode - execute safe commands
+  ACT_EXECUTE: "quip:act-execute",
+  ACT_RESULT: "quip:act-result",
+  ACT_ERROR: "quip:act-error",
 } as const;
 
 export interface ChatMessage {
@@ -40,4 +44,20 @@ export interface ChatErrorPayload {
   requestId: string;
   message: string;
   kind: "no-key" | "http" | "network" | "parse";
+}
+
+export interface ActExecutePayload {
+  requestId: string;
+  command: string;
+}
+
+export interface ActResultPayload {
+  requestId: string;
+  success: boolean;
+  output?: string;
+}
+
+export interface ActErrorPayload {
+  requestId: string;
+  message: string;
 }

@@ -3,7 +3,7 @@
 // Features:
 //   - Top bar with companion icon, QUIP logo, settings & close buttons
 //   - Full-screen white chat area
-//   - Clean input with send
+//   - Clean input with ASK/ACT toggle and send
 //   - Premium spacing, typography
 
 import { useEffect, useRef, useState } from "react";
@@ -21,6 +21,7 @@ interface AskPanelProps {
   busy: boolean;
   error: string | null;
   onSend: (text: string) => void;
+  onAct: (command: string) => void;
   onClear: () => void;
   onClose: () => void;
 }
@@ -33,6 +34,7 @@ export function AskPanel({
   busy,
   error,
   onSend,
+  onAct,
   onClear,
   onClose,
 }: AskPanelProps) {
@@ -255,7 +257,7 @@ export function AskPanel({
         )}
 
         {/* Input */}
-        <ChatInput onSend={onSend} busy={busy} themeColor={theme.primary} />
+        <ChatInput onSend={onSend} onAct={onAct} busy={busy} themeColor={theme.primary} />
       </div>
     </motion.div>
   );
