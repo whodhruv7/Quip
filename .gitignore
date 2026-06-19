@@ -1,29 +1,51 @@
+```
 # Dependencies
 node_modules/
 
-# Build output
+# Build outputs
 dist/
-dist-electron/
-release/
+build/
+*.js
+*.ts
 
-# Env / secrets
+# Logs and temp files
+*.log
+*.tmp
+
+# Environment variables
 .env
 .env.local
-.env.*.local
+*.env.*
 
-# Logs
-*.log
-npm-debug.log*
+# Editors
+.vscode/
+.idea/
 
-# OS
+# OS generated files
 .DS_Store
 Thumbs.db
 
-# Editor
-.vscode/
-.idea/
-node_modules/
-.env
-dist/
-build/
-nul
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Node.js
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Electron specific
+release/
+out/
+*.asar
+
+# Coverage reports
+coverage/
+*.lcov
+
+# Testing
+*.test.js
+*.test.ts
+```

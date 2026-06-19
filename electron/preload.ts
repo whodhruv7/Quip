@@ -5,7 +5,7 @@
 // streamed chunks.
 
 import { contextBridge, ipcRenderer } from "electron";
-import { IPC, ChatSendPayload } from "./shared";
+import { IPC, ChatSendPayload, ActExecutePayload } from "./shared";
 
 const api = {
   // --- window ---
@@ -39,6 +39,20 @@ const api = {
     ) => cb(data);
     ipcRenderer.on(IPC.CHAT_ERROR, handler as any);
     return () => ipcRenderer.removeListener(IPC.CHAT_ERROR, handler as any);
+  },
+
+  // --- act mode ---
+  actExecute: (payload: ActExecutePayload) =>
+    ipcRenderer.invoke(IPC.ACT_EXECUTE, payload) as Promise<{ success: boolean; output?: string }>,
+  onActResult: (cb: (result: { success: boolean; output?: string }) => void) => {
+    const handler = (_e: unknown, data: { success: boolean; output?: string }) => cb(data);
+    ipcRenderer.on(IPC.ACT_RESULT, handler as any);
+    return () => ipcRenderer.removeListener(IPC.ACT_RESULT, handler as any);
+  },
+  onActError: (cb: (err: { message: string }) => void) => {
+    const handler = (_e: unknown, data: { message: string }) => cb(data);
+    ipcRenderer.on(IPC.ACT_ERROR, handler as any);
+    return () => ipcRenderer.removeListener(IPC.ACT_ERROR, handler as any);
   },
 };
 

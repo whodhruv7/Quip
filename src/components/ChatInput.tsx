@@ -1,17 +1,21 @@
-// Quip V0.1 — input bar with theme-aware accent.
+// Quip V0.1 — input bar with theme-aware accent + ASK/ACT mode toggle.
 
 import { useEffect, useRef, useState } from "react";
 import { COMPANIONS } from "./Companion";
 import type { CompanionId } from "@/types";
 
+type Mode = "ask" | "act";
+
 interface ChatInputProps {
   onSend: (text: string) => void;
+  onAct: (command: string) => void;
   busy: boolean;
   themeColor?: string;
 }
 
-export function ChatInput({ onSend, busy, themeColor = "#6FD6FF" }: ChatInputProps) {
+export function ChatInput({ onSend, onAct, busy, themeColor = "#6FD6FF" }: ChatInputProps) {
   const [value, setValue] = useState("");
+  const [mode, setMode] = useState<Mode>("ask");
   const ref = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -24,71 +28,116 @@ export function ChatInput({ onSend, busy, themeColor = "#6FD6FF" }: ChatInputPro
   const submit = () => {
     const text = value.trim();
     if (!text || busy) return;
-    onSend(text);
+    if (mode === "ask") {
+      onSend(text);
+    } else {
+      onAct(text);
+    }
     setValue("");
   };
 
   return (
     <div
-      className="flex items-end gap-2 px-3 py-2.5"
+      className="flex flex-col px-3 py-2.5"
       style={{
         borderTop: "1px solid rgba(0,0,0,0.05)",
         background: "rgba(255,255,255,0.55)",
         backdropFilter: "blur(20px)",
       }}
     >
-      <div className="relative flex-1">
-        <textarea
-          ref={ref}
-          rows={1}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              submit();
-            }
-          }}
-          placeholder="Ask anything…"
-          className="w-full resize-none rounded-2xl border border-black/[0.07] bg-white/80 px-4 py-2.5 text-[14px] text-quip-ink placeholder:text-quip-gray/60 focus:outline-none"
-          style={{
-            transition: "border-color 200ms, box-shadow 200ms",
-          }}
-          onFocus={(e) => {
-            e.currentTarget.style.borderColor = themeColor + "55";
-            e.currentTarget.style.boxShadow = `0 0 0 3px ${themeColor}15`;
-          }}
-          onBlur={(e) => {
-            e.currentTarget.style.borderColor = "rgba(0,0,0,0.07)";
-            e.currentTarget.style.boxShadow = "none";
-          }}
-        />
+      {/* Mode toggle */}
+      <div className="mb-2 flex items-center gap-2">
+        <button
+          onClick={() => setMode("ask")}
+          className={`rounded-full px-3 py-1 text-[11px] font-medium transition-all ${
+            mode === "ask"
+              ? "text-white shadow-sm"
+              : "bg-black/[0.04] text-quip-gray hover:bg-black/[0.08]"
+          }`}
+          style={
+            mode === "ask"
+              ? { background: `linear-gradient(135deg, ${themeColor}, ${themeColor}cc)` }
+              : {}
+          }
+        >
+          ✦ ASK
+        </button>
+        <button
+          onClick={() => setMode("act")}
+          className={`rounded-full px-3 py-1 text-[11px] font-medium transition-all ${
+            mode === "act"
+              ? "text-white shadow-sm"
+              : "bg-black/[0.04] text-quip-gray hover:bg-black/[0.08]"
+          }`}
+          style={
+            mode === "act"
+              ? { background: `linear-gradient(135deg, ${themeColor}, ${themeColor}cc)` }
+              : {}
+          }
+        >
+          ⚡ ACT
+        </button>
+        <div className="flex-1" />
+        <span className="text-[10px] text-quip-gray">
+          {mode === "ask" ? "Ask anything…" : "Open apps & URLs"}
+        </span>
       </div>
 
-      <button
-        onClick={submit}
-        disabled={busy || !value.trim()}
-        aria-label="Send"
-        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl text-white transition-all"
-        style={
-          busy || !value.trim()
-            ? { background: "rgba(0,0,0,0.08)", cursor: "not-allowed" }
-            : {
-                background: `linear-gradient(135deg, ${themeColor}, ${themeColor}cc)`,
-                boxShadow: `0 4px 14px ${themeColor}33`,
+      {/* Input row */}
+      <div className="flex items-end gap-2">
+        <div className="relative flex-1">
+          <textarea
+            ref={ref}
+            rows={1}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                submit();
               }
-        }
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-          <path
-            d="M5 12h14M13 6l6 6-6 6"
-            stroke="currentColor"
-            strokeWidth="2.2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+            }}
+            placeholder={mode === "ask" ? "Ask anything…" : "e.g., open youtube, open chrome, open spotify…"}
+            className="w-full resize-none rounded-2xl border border-black/[0.07] bg-white/80 px-4 py-2.5 text-[14px] text-quip-ink placeholder:text-quip-gray/60 focus:outline-none"
+            style={{
+              transition: "border-color 200ms, box-shadow 200ms",
+            }}
+            onFocus={(e) => {
+              e.currentTarget.style.borderColor = themeColor + "55";
+              e.currentTarget.style.boxShadow = `0 0 0 3px ${themeColor}15`;
+            }}
+            onBlur={(e) => {
+              e.currentTarget.style.borderColor = "rgba(0,0,0,0.07)";
+              e.currentTarget.style.boxShadow = "none";
+            }}
           />
-        </svg>
-      </button>
+        </div>
+
+        <button
+          onClick={submit}
+          disabled={busy || !value.trim()}
+          aria-label="Send"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl text-white transition-all"
+          style={
+            busy || !value.trim()
+              ? { background: "rgba(0,0,0,0.08)", cursor: "not-allowed" }
+              : {
+                  background: `linear-gradient(135deg, ${themeColor}, ${themeColor}cc)`,
+                  boxShadow: `0 4px 14px ${themeColor}33`,
+                }
+          }
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path
+              d="M5 12h14M13 6l6 6-6 6"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+      </div>
     </div>
   );
 }

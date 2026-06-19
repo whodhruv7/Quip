@@ -1,13 +1,9 @@
-// Quip V0.1 — application root.
+// Quip V1 — application root.
 //
-// Layout inside the transparent Electron window:
-//   - Companion (Pix/Kai/Ren) sits bottom-right.
-//   - Click opens Ask panel (glass, theme-matched).
-//   - Panel has companion switcher pills + chat history.
-//   - Drag moves companion anywhere.
-//   - Empty areas pass clicks through to the desktop.
+// Layout: Full-screen chat with top bar, companion floating bottom-right.
+// Click companion to open chat panel. Settings in top bar.
 
-import { useRef, useState } from "react";
+import { useRef, useState, useCallback } from "react";
 import { AnimatePresence } from "framer-motion";
 import { Companion, COMPANIONS } from "@/components/Companion";
 import { AskPanel } from "@/components/AskPanel";
@@ -16,11 +12,15 @@ import { usePixState } from "@/hooks/usePixState";
 import { useWindowDrag } from "@/hooks/useWindowDrag";
 import type { CompanionId } from "@/types";
 
+const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+
 export default function App() {
   const [companionId, setCompanionId] = useState<CompanionId>("pix");
   const [panelOpen, setPanelOpen] = useState(false);
   const { messages, busy, error, send, clear } = useChat(companionId);
   const { state, setHovering, wake } = usePixState(busy, panelOpen);
+  
+  const [actBusy, setActBusy] = useState(false);
 
   const isResponding =
     busy &&
@@ -49,6 +49,29 @@ export default function App() {
     setPanelOpen(true);
   };
 
+  // Handle ACT mode command
+  const handleAct = useCallback(async (command: string) => {
+    if (actBusy) return;
+    
+    setActBusy(true);
+    wake();
+
+    try {
+      const result = await window.quip.actExecute({ requestId: uid(), command });
+      
+      // Add to main chat messages too for context
+      if (result.success) {
+        send(`[ACT: ${command}] - ${result.output}`);
+      } else {
+        send(`[ACT Error]: ${result.output}`);
+      }
+    } catch (err: any) {
+      send(`[ACT Error]: ${err?.message || String(err)}`);
+    } finally {
+      setActBusy(false);
+    }
+  }, [actBusy, send, wake]);
+
   const theme = COMPANIONS.find((c) => c.id === companionId)!;
 
   return (
@@ -60,12 +83,12 @@ export default function App() {
         pointerEvents: "none",
       }}
     >
-      {/* Ask panel — positioned above the companion */}
+      {/* Chat panel */}
       <div
         style={{
           position: "absolute",
-          right: 6,
-          bottom: 100,
+          right: 20,
+          bottom: 20,
           pointerEvents: "none",
         }}
       >
@@ -77,22 +100,24 @@ export default function App() {
                 companionId={companionId}
                 onCompanionChange={switchCompanion}
                 messages={messages}
-                busy={busy}
+                busy={busy || actBusy}
                 error={error}
                 onSend={send}
+                onAct={handleAct}
                 onClear={clear}
+                onClose={() => setPanelOpen(false)}
               />
             </div>
           )}
         </AnimatePresence>
       </div>
 
-      {/* Companion sprite — bottom-right, small, draggable */}
+      {/* Companion sprite — bottom-right, draggable */}
       <div
         style={{
           position: "absolute",
-          right: 14,
-          bottom: 12,
+          right: 30,
+          bottom: 20,
           width: 72,
           height: 88,
           pointerEvents: "auto",
@@ -115,7 +140,7 @@ export default function App() {
 
         {/* Status pill */}
         <AnimatePresence>
-          {busy && (
+          {(busy || actBusy) && (
             <div
               style={{
                 position: "absolute",
@@ -126,21 +151,18 @@ export default function App() {
                 fontSize: 10,
                 fontWeight: 500,
                 color: theme.primary,
-                background: "rgba(255,255,255,0.88)",
+                background: "rgba(255,255,255,0.95)",
                 padding: "2px 8px",
                 borderRadius: 10,
                 boxShadow: `0 2px 8px ${theme.primary}18`,
-                backdropFilter: "blur(6px)",
                 border: `1px solid ${theme.primary}20`,
               }}
             >
-              {isResponding ? "typing…" : "thinking…"}
+              {isResponding ? "typing…" : actBusy ? "executing…" : "thinking…"}
             </div>
           )}
         </AnimatePresence>
       </div>
-
-      {/* Future: Kai, Ren evolution, memory engine, voice, toolbar, notifications */}
     </div>
   );
 }

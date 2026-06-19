@@ -97,17 +97,17 @@ export const COMPANIONS: CompanionTheme[] = [
     mouthThinking: "#A78BFA",
   },
   {
-    id: "ren",
-    name: "Ren",
-    subtitle: "The Memory Keeper",
-    primary: "#34D399",
-    secondary: "#6EE7B7",
-    dark: "#0C1410",
-    eyeColor: "#34D399",
-    cheekColor: "rgba(110,231,183,0.40)",
-    auraA: "rgba(52,211,153,0.28)",
-    auraB: "rgba(110,231,183,0.14)",
-    mouthThinking: "#34D399",
+    id: "zee",
+    name: "Zee",
+    subtitle: "The Fearless Explorer",
+    primary: "#1a1a1a",
+    secondary: "#FFD700",
+    dark: "#0a0a0a",
+    eyeColor: "#FFD700",
+    cheekColor: "rgba(255,215,0,0.35)",
+    auraA: "rgba(26,26,26,0.40)",
+    auraB: "rgba(255,215,0,0.20)",
+    mouthThinking: "#FFD700",
   },
 ];
 
@@ -203,45 +203,49 @@ function KaiBody({ t, asleep, blinking }: { t: CompanionTheme; asleep: boolean; 
   );
 }
 
-function RenBody({ t, asleep, blinking }: { t: CompanionTheme; asleep: boolean; blinking: boolean }) {
+function ZeeBody({ t, asleep, blinking }: { t: CompanionTheme; asleep: boolean; blinking: boolean }) {
   return (
     <>
-      {/* Ring/halo antenna — Ren's signature */}
-      <motion.g animate={{ y: [-0.5, -1.5, -0.5], rotate: [0, 5, -5, 0] }}
-        transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}>
-        <rect x="14.5" y="-1" width="3" height="3" rx="1.5" fill="none" stroke={t.primary} strokeWidth="1" opacity="0.7" />
-        <line x1="16" y1="2" x2="16" y2="4" stroke={t.primary} strokeWidth="1" strokeLinecap="round" opacity="0.5" />
+      {/* Bold angular antenna */}
+      <motion.g animate={{ y: [-0.6, -1.8, -0.6], rotate: [0, 6, -6, 0] }}
+        transition={{ duration: 2.6, repeat: Infinity, ease: "easeInOut" }}>
+        <line x1="16" y1="3" x2="16" y2="0" stroke={t.secondary} strokeWidth="1.4" strokeLinecap="round" opacity="0.8" />
+        <polygon points="16,-1 17.5,1.5 19.5,1.5 18,3.5 18.5,5.5 16,4 13.5,5.5 14,3.5 12.5,1.5 14.5,1.5"
+          fill={t.secondary} transform="translate(0,1) scale(0.4)" />
       </motion.g>
-      {/* Oval/softer pixel body */}
-      <rect x="4" y="7" width="24" height="20" rx="11" fill="white" stroke="rgba(0,0,0,0.04)" strokeWidth="0.8" />
-      {/* Face panel */}
-      <rect x="7" y="11" width="18" height="11" rx="5" fill={t.dark} />
-      {/* Eyes — rounder, gentler */}
+      {/* Strong angular body - black with gold accents */}
+      <rect x="4" y="6" width="24" height="22" rx="6" fill="#1a1a1a" stroke="rgba(255,215,0,0.15)" strokeWidth="0.8" />
+      {/* Gold accent lines on body */}
+      <rect x="5" y="7" width="22" height="20" rx="5" fill="none" stroke="rgba(255,215,0,0.20)" strokeWidth="0.6" />
+      {/* Face panel - darker */}
+      <rect x="7" y="10" width="18" height="12" rx="4" fill={t.dark} />
+      {/* Eyes — bold, determined look */}
       <motion.g variants={blinkVar} initial="open"
         animate={asleep ? "blink" : blinking ? "blink" : "open"}
         style={{ originY: "32px" }}>
-        <rect x="10" y="14" width="4" height="3.5" rx="1.2" fill={t.eyeColor} />
-        <rect x="18" y="14" width="4" height="3.5" rx="1.2" fill={t.eyeColor} />
+        <rect x="10" y="13" width="4" height="3.5" rx="0.6" fill={t.eyeColor} />
+        <rect x="18" y="13" width="4" height="3.5" rx="0.6" fill={t.eyeColor} />
       </motion.g>
+      {/* Eye highlights */}
       {!asleep && (
         <>
-          <rect x="10" y="14" width="1.3" height="1.3" rx="0.4" fill="white" opacity="0.65" />
-          <rect x="18" y="14" width="1.3" height="1.3" rx="0.4" fill="white" opacity="0.65" />
+          <rect x="10.5" y="13.5" width="1.2" height="1.2" rx="0.3" fill="white" opacity="0.8" />
+          <rect x="18.5" y="13.5" width="1.2" height="1.2" rx="0.3" fill="white" opacity="0.8" />
         </>
       )}
-      {/* Cheeks */}
-      {!asleep && <><rect x="7" y="18" width="2.5" height="1.8" rx="0.9" fill={t.cheekColor} />
-      <rect x="22.5" y="18" width="2.5" height="1.8" rx="0.9" fill={t.cheekColor} /></>}
-      {/* Mouth — soft, caring */}
+      {/* Cheeks - subtle gold */}
+      {!asleep && <><rect x="7" y="17" width="2.5" height="1.8" rx="0.9" fill={t.cheekColor} />
+      <rect x="22.5" y="17" width="2.5" height="1.8" rx="0.9" fill={t.cheekColor} /></>}
+      {/* Mouth — confident smile */}
       {asleep ? (
-        <motion.rect x="14" y="20" width="4" height="1" rx="0.5" fill="#3A4658"
+        <motion.rect x="14" y="19" width="4" height="1" rx="0.5" fill="#3A4658"
           animate={{ opacity: [0.4, 0.8, 0.4] }} transition={{ duration: 3, repeat: Infinity }} />
       ) : (
-        <rect x="14" y="20" width="4" height="1.4" rx="0.7" fill="#3A4658" />
+        <rect x="14" y="19" width="4" height="1.6" rx="0.8" fill="#2a2a2a" />
       )}
-      {/* Feet — smaller, gentle */}
-      <rect x="10" y="26" width="4" height="2.5" rx="1.2" fill="white" stroke="rgba(0,0,0,0.04)" strokeWidth="0.5" />
-      <rect x="18" y="26" width="4" height="2.5" rx="1.2" fill="white" stroke="rgba(0,0,0,0.04)" strokeWidth="0.5" />
+      {/* Feet - bold with gold accents */}
+      <rect x="9" y="27" width="5" height="3" rx="1.2" fill="#1a1a1a" stroke="rgba(255,215,0,0.25)" strokeWidth="0.6" />
+      <rect x="18" y="27" width="5" height="3" rx="1.2" fill="#1a1a1a" stroke="rgba(255,215,0,0.25)" strokeWidth="0.6" />
     </>
   );
 }
@@ -275,7 +279,7 @@ export function Companion({ id, state, size = 80 }: CompanionProps) {
     return () => clearTimeout(timer);
   }, [asleep]);
 
-  const Body = id === "kai" ? KaiBody : id === "ren" ? RenBody : PixBody;
+  const Body = id === "kai" ? KaiBody : id === "zee" ? ZeeBody : PixBody;
 
   return (
     <motion.div
