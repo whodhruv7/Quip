@@ -1,22 +1,24 @@
-// Quip V0.1 — input bar with theme-aware accent + ASK/ACT mode toggle.
+// Quip V2 — Unified input bar.
+//
+// NO ask/act toggle. Single input. The task brain auto-detects if the user
+// wants to chat or execute an action. Seamless experience.
 
 import { useEffect, useRef, useState } from "react";
-import { COMPANIONS } from "./Companion";
+import { getCompanion } from "@/lib/companion-config";
 import type { CompanionId } from "@/types";
-
-type Mode = "ask" | "act";
 
 interface ChatInputProps {
   onSend: (text: string) => void;
-  onAct: (command: string) => void;
   busy: boolean;
-  themeColor?: string;
+  companionId?: CompanionId;
 }
 
-export function ChatInput({ onSend, onAct, busy, themeColor = "#6FD6FF" }: ChatInputProps) {
+export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
   const [value, setValue] = useState("");
-  const [mode, setMode] = useState<Mode>("ask");
   const ref = useRef<HTMLTextAreaElement>(null);
+
+  const theme = companionId ? getCompanion(companionId) : null;
+  const themeColor = theme?.primary ?? "#6FD6FF";
 
   useEffect(() => {
     const el = ref.current;
@@ -28,11 +30,7 @@ export function ChatInput({ onSend, onAct, busy, themeColor = "#6FD6FF" }: ChatI
   const submit = () => {
     const text = value.trim();
     if (!text || busy) return;
-    if (mode === "ask") {
-      onSend(text);
-    } else {
-      onAct(text);
-    }
+    onSend(text);
     setValue("");
   };
 
@@ -45,44 +43,6 @@ export function ChatInput({ onSend, onAct, busy, themeColor = "#6FD6FF" }: ChatI
         backdropFilter: "blur(20px)",
       }}
     >
-      {/* Mode toggle */}
-      <div className="mb-2 flex items-center gap-2">
-        <button
-          onClick={() => setMode("ask")}
-          className={`rounded-full px-3 py-1 text-[11px] font-medium transition-all ${
-            mode === "ask"
-              ? "text-white shadow-sm"
-              : "bg-black/[0.04] text-quip-gray hover:bg-black/[0.08]"
-          }`}
-          style={
-            mode === "ask"
-              ? { background: `linear-gradient(135deg, ${themeColor}, ${themeColor}cc)` }
-              : {}
-          }
-        >
-          ✦ ASK
-        </button>
-        <button
-          onClick={() => setMode("act")}
-          className={`rounded-full px-3 py-1 text-[11px] font-medium transition-all ${
-            mode === "act"
-              ? "text-white shadow-sm"
-              : "bg-black/[0.04] text-quip-gray hover:bg-black/[0.08]"
-          }`}
-          style={
-            mode === "act"
-              ? { background: `linear-gradient(135deg, ${themeColor}, ${themeColor}cc)` }
-              : {}
-          }
-        >
-          ⚡ ACT
-        </button>
-        <div className="flex-1" />
-        <span className="text-[10px] text-quip-gray">
-          {mode === "ask" ? "Ask anything…" : "Open apps & URLs"}
-        </span>
-      </div>
-
       {/* Input row */}
       <div className="flex items-end gap-2">
         <div className="relative flex-1">
@@ -97,7 +57,7 @@ export function ChatInput({ onSend, onAct, busy, themeColor = "#6FD6FF" }: ChatI
                 submit();
               }
             }}
-            placeholder={mode === "ask" ? "Ask anything…" : "e.g., open youtube, open chrome, open spotify…"}
+            placeholder="Ask anything or say what to do…"
             className="w-full resize-none rounded-2xl border border-black/[0.07] bg-white/80 px-4 py-2.5 text-[14px] text-quip-ink placeholder:text-quip-gray/60 focus:outline-none"
             style={{
               transition: "border-color 200ms, box-shadow 200ms",

@@ -1,32 +1,52 @@
-// Quip V0.1 — IPC channel names + shared types
+// Quip V2 — IPC channel names + shared types.
 // Kept in a single file so main process and renderer stay in sync.
 
 export const IPC = {
   // Window movement
   MOVE_WINDOW: "quip:move-window",
   GET_WINDOW_POSITION: "quip:get-window-position",
-  // Chat (OpenRouter streaming)
+
+  // Chat streaming
   CHAT_SEND: "quip:chat-send",
   CHAT_CHUNK: "quip:chat-chunk",
   CHAT_DONE: "quip:chat-done",
   CHAT_ERROR: "quip:chat-error",
-  // Act mode - execute safe commands
-  ACT_EXECUTE: "quip:act-execute",
-  ACT_RESULT: "quip:act-result",
-  ACT_ERROR: "quip:act-error",
+
+  // Task execution
+  TASK_EXECUTE: "quip:task-execute",
+  TASK_PROGRESS: "quip:task-progress",
+  CONFIRMATION_REQUEST: "quip:confirmation-request",
+  CONFIRMATION_RESOLVE: "quip:confirmation-resolve",
+
+  // Device brain
+  GET_DEVICE_PROFILE: "quip:get-device-profile",
+  RESCAN_DEVICE: "quip:rescan-device",
+
+  // Spatial brain
+  GET_SPATIAL_CONFIG: "quip:get-spatial-config",
+  SPATIAL_CHANGE: "quip:spatial-change",
+
+  // Environment brain
+  ENVIRONMENT_CHANGE: "quip:environment-change",
+
+  // Memory brain
+  GET_MEMORIES: "quip:get-memories",
+  FORGET_MEMORY: "quip:forget-memory",
+
+  // Model router
+  GET_MODEL_STATUS: "quip:get-model-status",
+
+  // Permission system
+  GET_PERMISSIONS: "quip:get-permissions",
+  UPDATE_PERMISSION: "quip:update-permission",
+
+  // Bootstrap
+  BOOTSTRAP_PROGRESS: "quip:bootstrap-progress",
 } as const;
 
-export interface ChatMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  ts: number;
-}
-
+// ─── Chat payloads ─────────────────────────────────────────────────────────
 export interface ChatSendPayload {
-  /** caller-provided id so streamed chunks can be matched back */
   requestId: string;
-  /** full history (most recent last) to send as context */
   history: { role: "user" | "assistant"; content: string }[];
 }
 
@@ -46,18 +66,40 @@ export interface ChatErrorPayload {
   kind: "no-key" | "http" | "network" | "parse";
 }
 
-export interface ActExecutePayload {
+// ─── Task payloads ─────────────────────────────────────────────────────────
+export interface TaskExecutePayload {
   requestId: string;
   command: string;
 }
 
-export interface ActResultPayload {
+export interface TaskProgressPayload {
   requestId: string;
-  success: boolean;
-  output?: string;
+  step: number;
+  total: number;
+  description: string;
 }
 
-export interface ActErrorPayload {
+export interface TaskResultPayload {
   requestId: string;
-  message: string;
+  success: boolean;
+  summary: string;
+  notes: string[];
+  plan: {
+    id: string;
+    intent: { type: string; raw: string };
+    subtasks: { id: string; description: string; status: string; output?: string }[];
+    isChat: boolean;
+  };
+}
+
+export interface ConfirmationPayload {
+  id: string;
+  requestId: string;
+  description: string;
+  capability: string;
+}
+
+export interface ConfirmationResolvePayload {
+  id: string;
+  approved: boolean;
 }

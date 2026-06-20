@@ -1,33 +1,32 @@
-// Quip V1 — application root.
+// Quip V2 — application root.
 //
-// Layout: Full-screen chat with top bar, companion floating bottom-right.
-// Click companion to open chat panel. Settings in top bar.
+// Layout: Companion is ALWAYS visible (bottom-right, floating, draggable).
+// The chat PANEL toggles open/closed on companion tap. Tap = show, tap = hide.
+// Settings panel slides over everything when opened.
 
-import { useRef, useState, useCallback } from "react";
-import { AnimatePresence } from "framer-motion";
-import { Companion, COMPANIONS } from "@/components/Companion";
-import { AskPanel } from "@/components/AskPanel";
+import { useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { Companion } from "@/components/Companion";
+import { TopBar } from "@/components/TopBar";
+import { ChatLayout } from "@/components/ChatLayout";
+import { ChatWelcome } from "@/components/ChatWelcome";
+import { ChatInput } from "@/components/ChatInput";
+import { ScanOverlay } from "@/components/ScanOverlay";
+import { SettingsPanel } from "@/components/SettingsPanel";
 import { useChat } from "@/hooks/useChat";
-import { usePixState } from "@/hooks/usePixState";
 import { useWindowDrag } from "@/hooks/useWindowDrag";
-import type { CompanionId } from "@/types";
-
-const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+import { loadPrefs, savePrefs } from "@/lib/storage";
+import { getCompanion } from "@/lib/companion-config";
+import type { CompanionId, PixState } from "@/types";
 
 export default function App() {
-  const [companionId, setCompanionId] = useState<CompanionId>("pix");
-  const [panelOpen, setPanelOpen] = useState(false);
-  const { messages, busy, error, send, clear } = useChat(companionId);
-  const { state, setHovering, wake } = usePixState(busy, panelOpen);
-  
-  const [actBusy, setActBusy] = useState(false);
+  const [companionId, setCompanionId] = useState<CompanionId>(() => loadPrefs().companionId);
+  const [panelOpen, setPanelOpen] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [scanDone, setScanDone] = useState(false);
+  const [hovering, setHovering] = useState(false);
 
-  const isResponding =
-    busy &&
-    messages.some(
-      (m) => m.role === "assistant" && m.streaming && m.content.length > 0
-    );
-  const pixState = isResponding ? "responding" : state;
+  const { messages, busy: chatBusy, error, send, newChat } = useChat(companionId);
 
   const drag = useWindowDrag(true);
   const lastClick = useRef(0);
@@ -35,44 +34,34 @@ export default function App() {
   const handleCompanionClick = () => {
     if (drag.totalMoved() > 5) return;
     const now = Date.now();
+    // Double-click hides the panel fast; single toggles.
     if (now - lastClick.current < 340) {
       setPanelOpen(false);
     } else {
       setPanelOpen((o) => !o);
     }
     lastClick.current = now;
-    wake();
   };
 
   const switchCompanion = (id: CompanionId) => {
     setCompanionId(id);
+    savePrefs({ companionId: id });
     setPanelOpen(true);
   };
 
-  // Handle ACT mode command
-  const handleAct = useCallback(async (command: string) => {
-    if (actBusy) return;
-    
-    setActBusy(true);
-    wake();
+  // Determine companion state for animation.
+  const isResponding =
+    chatBusy &&
+    messages.some((m) => m.role === "assistant" && m.streaming && m.content.length > 0);
+  const pixState: PixState = chatBusy
+    ? isResponding
+      ? "responding"
+      : "thinking"
+    : hovering
+      ? "hover"
+      : "idle";
 
-    try {
-      const result = await window.quip.actExecute({ requestId: uid(), command });
-      
-      // Add to main chat messages too for context
-      if (result.success) {
-        send(`[ACT: ${command}] - ${result.output}`);
-      } else {
-        send(`[ACT Error]: ${result.output}`);
-      }
-    } catch (err: any) {
-      send(`[ACT Error]: ${err?.message || String(err)}`);
-    } finally {
-      setActBusy(false);
-    }
-  }, [actBusy, send, wake]);
-
-  const theme = COMPANIONS.find((c) => c.id === companionId)!;
+  const theme = getCompanion(companionId);
 
   return (
     <div
@@ -83,36 +72,84 @@ export default function App() {
         pointerEvents: "none",
       }}
     >
-      {/* Chat panel */}
+      {/* ─── Chat PANEL — toggles on companion tap ─────────────────────── */}
       <div
         style={{
           position: "absolute",
           right: 20,
-          bottom: 20,
+          bottom: 120, // above the companion sprite
           pointerEvents: "none",
         }}
       >
         <AnimatePresence>
           {panelOpen && (
-            <div style={{ pointerEvents: "auto" }}>
-              <AskPanel
-                open={panelOpen}
+            <motion.div
+              initial={{ opacity: 0, y: 20, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 20, scale: 0.96 }}
+              transition={{ duration: 0.25, ease: "easeOut" }}
+              style={{
+                pointerEvents: "auto",
+                width: 400,
+                height: 560,
+                borderRadius: 18,
+                overflow: "hidden",
+                display: "flex",
+                flexDirection: "column",
+                background: "rgba(255,255,255,0.65)",
+                backdropFilter: "blur(30px)",
+                WebkitBackdropFilter: "blur(30px)",
+                border: "1px solid rgba(255,255,255,0.5)",
+                boxShadow: "0 20px 60px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.03)",
+              }}
+            >
+              <TopBar
                 companionId={companionId}
                 onCompanionChange={switchCompanion}
-                messages={messages}
-                busy={busy || actBusy}
-                error={error}
-                onSend={send}
-                onAct={handleAct}
-                onClear={clear}
-                onClose={() => setPanelOpen(false)}
+                onSettingsToggle={() => setSettingsOpen(true)}
+                onNewChat={newChat}
               />
-            </div>
+
+              {/* Error banner */}
+              {error && (
+                <div
+                  style={{
+                    padding: "6px 12px",
+                    fontSize: 11,
+                    color: "#dc2626",
+                    background: "rgba(254,235,235,0.7)",
+                    borderBottom: "1px solid rgba(239,68,68,0.12)",
+                  }}
+                >
+                  {error}
+                </div>
+              )}
+
+              {/* Body */}
+              <div className="relative flex flex-1 flex-col overflow-hidden">
+                {messages.length === 0 ? (
+                  <ChatWelcome companionId={companionId} onSuggestionClick={send} />
+                ) : (
+                  <ChatLayout messages={messages} busy={chatBusy} />
+                )}
+              </div>
+
+              {/* Input */}
+              <ChatInput onSend={send} busy={chatBusy} companionId={companionId} />
+
+              {/* Settings overlay (inside panel) */}
+              <SettingsPanel
+                open={settingsOpen}
+                companionId={companionId}
+                onCompanionChange={switchCompanion}
+                onClose={() => setSettingsOpen(false)}
+              />
+            </motion.div>
           )}
         </AnimatePresence>
       </div>
 
-      {/* Companion sprite — bottom-right, draggable */}
+      {/* ─── COMPANION SPRITE — ALWAYS visible ─────────────────────────── */}
       <div
         style={{
           position: "absolute",
@@ -140,8 +177,11 @@ export default function App() {
 
         {/* Status pill */}
         <AnimatePresence>
-          {(busy || actBusy) && (
-            <div
+          {chatBusy && (
+            <motion.div
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
               style={{
                 position: "absolute",
                 bottom: -4,
@@ -158,11 +198,45 @@ export default function App() {
                 border: `1px solid ${theme.primary}20`,
               }}
             >
-              {isResponding ? "typing…" : actBusy ? "executing…" : "thinking…"}
-            </div>
+              {isResponding ? "typing…" : "thinking…"}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* "Tap to open" hint when panel closed */}
+        <AnimatePresence>
+          {!panelOpen && !chatBusy && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.8 }}
+              style={{
+                position: "absolute",
+                top: -22,
+                left: "50%",
+                transform: "translateX(-50%)",
+                whiteSpace: "nowrap",
+                fontSize: 10,
+                fontWeight: 500,
+                color: "#6b7280",
+                background: "rgba(255,255,255,0.95)",
+                padding: "3px 9px",
+                borderRadius: 10,
+                boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
+                border: "1px solid rgba(0,0,0,0.04)",
+                pointerEvents: "none",
+              }}
+            >
+              tap me
+            </motion.div>
           )}
         </AnimatePresence>
       </div>
+
+      {/* Bootstrap scan overlay — only on first launch */}
+      {!scanDone && (
+        <ScanOverlay companionId={companionId} onDone={() => setScanDone(true)} />
+      )}
     </div>
   );
 }

@@ -5,12 +5,13 @@
   "author": "Quip",
   "license": "UNLICENSED",
   "private": true,
-  "main": "dist-electron/main.js",
+  "main": "dist-electron/electron/main.js",
   "scripts": {
     "dev": "concurrently -k \"npm:dev:vite\" \"npm:dev:electron\"",
     "dev:vite": "vite",
     "dev:electron": "wait-on tcp:5173 && tsc -p electron/tsconfig.json && cross-env NODE_ENV=development electron .",
     "build": "tsc -p electron/tsconfig.json && vite build",
+    "launch": "cross-env NODE_ENV=production electron .",
     "start": "tsc -p electron/tsconfig.json && cross-env NODE_ENV=production electron .",
     "preview": "vite preview"
   },
