@@ -48,4 +48,5 @@ coverage/
 # Testing
 *.test.js
 *.test.ts
-```
+```dist-electron/
+dist-electron/
