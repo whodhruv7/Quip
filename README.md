@@ -1,6 +1,6 @@
 # Quip V2 — AI Life Companion OS
 
-> **Made with 💙 by [Dhruv Sharma](https://github.com/whodhruv7)**
+> **Made with 💙 by [Dhruv Sharma](https://heydhruv.vercel.app)** · [🌐 Website](https://heydhruv.vercel.app) · [📸 Instagram @who_dhruv7](https://instagram.com/who_dhruv7) · [💻 GitHub](https://github.com/whodhruv7)
 >
 > *"Quip is not a chatbot. Quip is not an assistant. Quip is a Context Engine wrapped inside a companion."*
 
@@ -345,8 +345,10 @@ UNLICENSED — personal use only. All rights reserved.
 
 **Made with 💙 by Dhruv Sharma**
 
-- GitHub: [@whodhruv7](https://github.com/whodhruv7)
-- Repository: [Quip](https://github.com/whodhruv7/Quip)
+- 🌐 Website: [heydhruv.vercel.app](https://heydhruv.vercel.app)
+- 📸 Instagram: [@who_dhruv7](https://instagram.com/who_dhruv7)
+- 💻 GitHub: [@whodhruv7](https://github.com/whodhruv7)
+- 📦 Repository: [Quip](https://github.com/whodhruv7/Quip)
 
 > *"Quip is not a chatbot, and not just an agent. It is a Context Engine wrapped inside a companion."*
 
