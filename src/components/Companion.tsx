@@ -11,8 +11,8 @@
 //
 // Each has: idle, hover, thinking, responding, sleeping states.
 
-import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
+import { useEffect, useState, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import type { CompanionId, PixState } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -114,7 +114,7 @@ export const COMPANIONS: CompanionTheme[] = [
 // ---------------------------------------------------------------------------
 // Companion SVG body shapes (each unique)
 // ---------------------------------------------------------------------------
-function PixBody({ t, asleep, blinking }: { t: CompanionTheme; asleep: boolean; blinking: boolean }) {
+function PixBody({ t, asleep, blinking, eyeOffset = { x: 0, y: 0 } }: { t: CompanionTheme; asleep: boolean; blinking: boolean; eyeOffset?: { x: number; y: number } }) {
   return (
     <>
       {/* Antenna spark */}
@@ -127,10 +127,10 @@ function PixBody({ t, asleep, blinking }: { t: CompanionTheme; asleep: boolean; 
       <rect x="4" y="6" width="24" height="22" rx="10" fill="white" stroke="rgba(0,0,0,0.04)" strokeWidth="0.8" />
       {/* Face panel */}
       <rect x="7" y="10" width="18" height="12" rx="5" fill={t.dark} />
-      {/* Eyes — pixel squares */}
+      {/* Eyes — pixel squares with cursor tracking offset */}
       <motion.g variants={blinkVar} initial="open"
         animate={asleep ? "blink" : blinking ? "blink" : "open"}
-        style={{ originY: "32px" }}>
+        style={{ originY: "32px", x: eyeOffset.x, y: eyeOffset.y }}>
         <rect x="10" y="13" width="4" height="4" rx="0.8" fill={t.eyeColor} />
         <rect x="18" y="13" width="4" height="4" rx="0.8" fill={t.eyeColor} />
       </motion.g>
@@ -158,7 +158,7 @@ function PixBody({ t, asleep, blinking }: { t: CompanionTheme; asleep: boolean; 
   );
 }
 
-function KaiBody({ t, asleep, blinking }: { t: CompanionTheme; asleep: boolean; blinking: boolean }) {
+function KaiBody({ t, asleep, blinking, eyeOffset = { x: 0, y: 0 } }: { t: CompanionTheme; asleep: boolean; blinking: boolean; eyeOffset?: { x: number; y: number } }) {
   return (
     <>
       {/* Star antenna */}
@@ -203,7 +203,7 @@ function KaiBody({ t, asleep, blinking }: { t: CompanionTheme; asleep: boolean; 
   );
 }
 
-function ZeeBody({ t, asleep, blinking }: { t: CompanionTheme; asleep: boolean; blinking: boolean }) {
+function ZeeBody({ t, asleep, blinking, eyeOffset = { x: 0, y: 0 } }: { t: CompanionTheme; asleep: boolean; blinking: boolean; eyeOffset?: { x: number; y: number } }) {
   return (
     <>
       {/* Bold angular antenna */}
@@ -265,8 +265,53 @@ interface CompanionProps {
 
 export function Companion({ id, state, size = 80, unlockedCosmetics = [], moodSpeed = 1 }: CompanionProps) {
   const [blink, setBlink] = useState(false);
+  const [eyeOffset, setEyeOffset] = useState({ x: 0, y: 0 });
+  const [wakingUp, setWakingUp] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
   const theme = COMPANIONS.find((c) => c.id === id)!;
   const asleep = state === "sleeping";
+  const prevState = useRef(state);
+
+  // Eye tracking: eyes follow cursor when nearby
+  useEffect(() => {
+    if (asleep) return;
+    const handleMove = (e: PointerEvent) => {
+      const el = containerRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const dx = e.clientX - cx;
+      const dy = e.clientY - cy;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      // Only track when cursor is within 300px
+      if (dist > 300) {
+        setEyeOffset({ x: 0, y: 0 });
+        return;
+      }
+      // Max eye offset: 0.8px
+      const maxOffset = 0.8;
+      const angle = Math.atan2(dy, dx);
+      const magnitude = Math.min(maxOffset, maxOffset * (1 - dist / 300));
+      setEyeOffset({
+        x: Math.cos(angle) * magnitude,
+        y: Math.sin(angle) * magnitude,
+      });
+    };
+    window.addEventListener("pointermove", handleMove);
+    return () => window.removeEventListener("pointermove", handleMove);
+  }, [asleep]);
+
+  // Wake-up animation: when transitioning from sleeping → any other state
+  useEffect(() => {
+    if (prevState.current === "sleeping" && state !== "sleeping") {
+      setWakingUp(true);
+      const t = setTimeout(() => setWakingUp(false), 600);
+      prevState.current = state;
+      return () => clearTimeout(t);
+    }
+    prevState.current = state;
+  }, [state]);
 
   useEffect(() => {
     if (asleep) return;
@@ -300,11 +345,30 @@ export function Companion({ id, state, size = 80, unlockedCosmetics = [], moodSp
 
   return (
     <motion.div
+      ref={containerRef}
       variants={adjustedVariants}
       initial="idle"
       animate={state}
       style={{ width: size, height: size + 8, position: "relative" }}
     >
+      {/* Wake-up burst — a quick scale + opacity flash when returning from sleep */}
+      <AnimatePresence>
+        {wakingUp && (
+          <motion.div
+            initial={{ scale: 0.5, opacity: 0.5 }}
+            animate={{ scale: 1.5, opacity: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.6, ease: "easeOut" }}
+            style={{
+              position: "absolute",
+              inset: "-20%",
+              borderRadius: "50%",
+              border: `2px solid ${theme.primary}`,
+              pointerEvents: "none",
+            }}
+          />
+        )}
+      </AnimatePresence>
       {/* Soft aura */}
       <div
         aria-hidden
@@ -333,7 +397,7 @@ export function Companion({ id, state, size = 80, unlockedCosmetics = [], moodSp
         {/* Shadow */}
         <ellipse cx="16" cy="32" rx="8" ry="1.8" fill="rgba(0,0,0,0.08)" />
 
-        <Body t={theme} asleep={asleep} blinking={blink} />
+        <Body t={theme} asleep={asleep} blinking={blink} eyeOffset={eyeOffset} />
 
         {/* ─── Cosmetic upgrades (rendered on top of body) ──────────── */}
         <Cosmetics id={id} unlocked={unlockedCosmetics} theme={theme} />

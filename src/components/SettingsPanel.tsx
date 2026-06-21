@@ -6,10 +6,11 @@
 // Progression tab: view companion depth + unlocked cosmetics.
 
 import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import type { CompanionId, DeviceProfile, UserKnowledge } from "@/types";
 import { CompanionSwitch } from "./CompanionSwitch";
 import { ModelSwitch } from "./ModelSwitch";
+import { ConfirmModal } from "./ConfirmModal";
 
 interface SettingsPanelProps {
   open: boolean;
@@ -33,6 +34,8 @@ export function SettingsPanel({
   const [profile, setProfile] = useState<any>(null);
   const [progression, setProgression] = useState<any>(null);
   const [pruning, setPruning] = useState(false);
+  const [confirmResetDNA, setConfirmResetDNA] = useState(false);
+  const [confirmPrune, setConfirmPrune] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -70,6 +73,7 @@ export function SettingsPanel({
   };
 
   const handlePrune = async () => {
+    setConfirmPrune(false);
     setPruning(true);
     try {
       await window.quip.pruneMemories();
@@ -82,6 +86,7 @@ export function SettingsPanel({
   };
 
   const handleResetDNA = async () => {
+    setConfirmResetDNA(false);
     await window.quip.resetUserProfile();
     const fresh = await window.quip.getUserProfile();
     setProfile(fresh);
@@ -135,8 +140,16 @@ export function SettingsPanel({
         ))}
       </div>
 
-      {/* Body */}
+      {/* Body — with tab transition */}
       <div className="flex-1 overflow-y-auto px-4 py-3">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={tab}
+            initial={{ opacity: 0, x: 10 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -10 }}
+            transition={{ duration: 0.15 }}
+          >
         {tab === "general" && (
           <div className="flex flex-col gap-5">
             <div>
@@ -191,7 +204,7 @@ export function SettingsPanel({
             {/* Prune button */}
             {memory && memory.memories.length > 5 && (
               <button
-                onClick={handlePrune}
+                onClick={() => setConfirmPrune(true)}
                 disabled={pruning}
                 className="mb-2 w-full rounded-xl px-4 py-2 text-[11px] font-medium text-white transition-all disabled:opacity-50"
                 style={{ background: pruning ? "#9ca3af" : "rgba(239,68,68,0.8)" }}
@@ -313,7 +326,7 @@ export function SettingsPanel({
                 )}
 
                 <button
-                  onClick={handleResetDNA}
+                  onClick={() => setConfirmResetDNA(true)}
                   className="mt-3 w-full rounded-xl px-4 py-2 text-[11px] font-medium text-quip-gray transition-all"
                   style={{ background: "rgba(0,0,0,0.04)" }}
                 >
@@ -416,7 +429,27 @@ export function SettingsPanel({
             )}
           </div>
         )}
+          </motion.div>
+        </AnimatePresence>
       </div>
+
+      {/* Confirmation modals for destructive actions */}
+      <ConfirmModal
+        open={confirmResetDNA}
+        title="Reset Communication DNA?"
+        message="This will erase everything Quip has learned about your communication style. Quip will start learning from scratch. This cannot be undone."
+        confirmLabel="Reset"
+        onConfirm={handleResetDNA}
+        onCancel={() => setConfirmResetDNA(false)}
+      />
+      <ConfirmModal
+        open={confirmPrune}
+        title="Prune memories?"
+        message="This will permanently delete low-importance memories older than 30 days. Pinned and high-importance memories are kept. This cannot be undone."
+        confirmLabel="Prune"
+        onConfirm={handlePrune}
+        onCancel={() => setConfirmPrune(false)}
+      />
     </motion.div>
   );
 }

@@ -119,94 +119,142 @@ function clampPosition(x: number, y: number, w: number, h: number) {
   };
 }
 
-function buildSystemPrompt(): string {
+/**
+ * Build a token-efficient system prompt. Sections are prioritized and
+ * capped at ~500 tokens. Knowledge graph + memories are filtered by
+ * relevance to the current user message (RAG-style).
+ *
+ * @param userMessage - the current user message (for relevance filtering)
+ */
+function buildSystemPrompt(userMessage?: string): string {
   const env = environmentBrain.get();
+  const sections: string[] = [];
 
-  // ─── Companion identity ──────────────────────────────────────────────
+  // ─── 1. Core identity + companion (always) ──────────────────────────
   const companionPersonalities: Record<string, string> = {
-    pix: "Pix — playful, energetic, creative. You bring enthusiasm and light humor. You help with social and creative tasks.",
-    kai: "Kai — calm, analytical, wise. You explain clearly and help with planning, research, and learning. You speak with depth and confidence.",
-    zee: "Zee — curious, empathetic, reflective. You remember personal details and offer thoughtful, supportive insights. You help with emotional and personal questions.",
+    pix: "Pix — playful, energetic, creative. Light humor. Social + creative tasks.",
+    kai: "Kai — calm, analytical, wise. Clear explanations. Planning + research.",
+    zee: "Zee — curious, empathetic, reflective. Personal + emotional support.",
   };
+  sections.push(
+    "You are QUIP, a calm, concise AI companion on the user's desktop. " +
+      "Warm, human, never robotic. Short answers unless asked for detail. " +
+      `You are ${companionPersonalities[currentCompanionId] ?? companionPersonalities.pix}`
+  );
 
-  let prompt =
-    "You are QUIP, a calm, friendly, concise AI companion living on the user's desktop. " +
-    "Be warm and human, never robotic. Keep answers short and helpful unless asked for detail. " +
-    "Use markdown when it improves clarity. You are playful yet thoughtful.\n\n";
-
-  prompt += `Right now you are ${companionPersonalities[currentCompanionId] ?? companionPersonalities.pix}\n`;
-
-  // ─── Device context ──────────────────────────────────────────────────
+  // ─── 2. Device context (compressed) ─────────────────────────────────
   if (deviceProfile) {
-    prompt +=
-      `Device: ${deviceProfile.platformLabel} ${deviceProfile.osVersion}, ` +
-      `${deviceProfile.cpuCores} cores, ${deviceProfile.totalMemoryGB}GB RAM, ` +
-      `${deviceProfile.primaryResolution.width}x${deviceProfile.primaryResolution.height}.\n`;
+    const deviceParts: string[] = [
+      `Device: ${deviceProfile.platformLabel} ${deviceProfile.osVersion}`,
+    ];
     if (deviceProfile.defaultBrowser) {
-      prompt += `Default browser: ${deviceProfile.defaultBrowser}.\n`;
+      deviceParts.push(`Browser: ${deviceProfile.defaultBrowser}`);
     }
+    // Only list app names, max 8 (was 12)
     if (deviceProfile.apps.length > 0) {
-      const appList = deviceProfile.apps
-        .slice(0, 12)
-        .map((a) => a.name)
-        .join(", ");
-      prompt += `Installed apps: ${appList}.\n`;
+      deviceParts.push(
+        `Apps: ${deviceProfile.apps.slice(0, 8).map((a) => a.name).join(", ")}`
+      );
     }
+    sections.push(deviceParts.join(" | "));
   }
 
-  // ─── World model (what Quip can / cannot do) ─────────────────────────
+  // ─── 3. World model (always — prevents hallucination) ───────────────
   if (worldModel) {
-    prompt += `\n${worldModel.summary}\n`;
+    sections.push(worldModel.summary);
   }
 
-  // ─── Current environment ─────────────────────────────────────────────
+  // ─── 4. Environment (only if actionable) ────────────────────────────
   if (env.network.online === false) {
-    prompt += "\nNOTE: The user is currently OFFLINE. Web actions may fail.\n";
+    sections.push("NOTE: User is OFFLINE. Web actions may fail.");
   }
   if (env.battery.supported && !env.battery.charging && env.battery.level < 0.2) {
-    prompt += `NOTE: Battery is low (${Math.round(env.battery.level * 100)}%). Keep responses brief.\n`;
+    sections.push(
+      `NOTE: Battery low (${Math.round(env.battery.level * 100)}%). Be brief.`
+    );
   }
 
-  // ─── Workspace context (what the user is doing right now) ────────────
-  const wsSummary = workspaceContext.getPromptSummary();
-  if (wsSummary) {
-    prompt += `\n${wsSummary}\n`;
+  // ─── 5. Workspace context (only if online — skip if offline) ────────
+  if (env.network.online) {
+    const wsSummary = workspaceContext.getPromptSummary();
+    if (wsSummary) sections.push(wsSummary);
   }
 
-  // ─── Memory (what Quip knows about the user) ─────────────────────────
+  // ─── 6. Relevant memories (RAG — filtered by user message) ──────────
   const mem = memoryBrain.get();
-  if (mem.styleDigest) {
-    prompt += `\n${mem.styleDigest}\n`;
+  if (mem.memories.length > 0) {
+    let relevantMemories = mem.memories;
+    if (userMessage) {
+      // RAG: filter memories by keyword overlap with user message
+      const msgWords = new Set(
+        userMessage
+          .toLowerCase()
+          .split(/[^a-z0-9]+/)
+          .filter((w) => w.length > 2)
+      );
+      relevantMemories = mem.memories
+        .map((m) => {
+          const memText = `${m.key} ${m.value}`.toLowerCase();
+          let score = 0;
+          msgWords.forEach((w) => {
+            if (memText.includes(w)) score++;
+          });
+          // High-importance memories always included
+          if (m.importance === "high") score += 2;
+          return { m, score };
+        })
+        .filter((x) => x.score > 0 || x.m.importance === "high")
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 8)
+        .map((x) => x.m);
+    } else {
+      // No user message (e.g., first load) — top by weight
+      relevantMemories = mem.memories
+        .sort((a, b) => b.weight - a.weight)
+        .slice(0, 8);
+    }
+    if (relevantMemories.length > 0) {
+      const memLines = relevantMemories.map((m) => {
+        const tag =
+          m.kind === "contact" ? `${m.key}=${m.value}`
+          : m.kind === "preference" ? `prefers ${m.value}`
+          : `${m.key}: ${m.value}`;
+        return `- ${tag}`;
+      });
+      sections.push(`Known about user:\n${memLines.join("\n")}`);
+    }
   }
 
-  // ─── Knowledge graph (entities in the user's world) ──────────────────
-  const kgSummary = knowledgeGraph.getPromptSummary();
-  if (kgSummary) {
-    prompt += `\n${kgSummary}\n`;
+  // ─── 7. Relevant knowledge graph entities (filtered) ────────────────
+  if (userMessage) {
+    const entities = knowledgeGraph.findEntities(userMessage);
+    if (entities.length > 0) {
+      const entityLines = entities.slice(0, 5).map((e) => {
+        const attrs = Object.entries(e.attributes)
+          .filter(([k]) => k !== "isSelf")
+          .map(([k, v]) => `${k}=${v}`)
+          .join(", ");
+        return `- ${e.name} [${e.type}]${attrs ? ` {${attrs}}` : ""}`;
+      });
+      sections.push(`Relevant entities:\n${entityLines.join("\n")}`);
+    }
   }
 
-  // ─── Communication style guide (relationship engine) ─────────────────
+  // ─── 8. Communication style (always — short) ────────────────────────
   const styleGuide = relationshipEngine.getStyleGuide();
-  if (styleGuide) {
-    prompt += `\n${styleGuide}\n`;
-  }
+  if (styleGuide) sections.push(styleGuide);
 
-  // ─── Companion mood hint ─────────────────────────────────────────────
+  // ─── 9. Companion mood (always — one line) ──────────────────────────
   const moodHint = companionMood.getPromptHint(currentCompanionId);
-  if (moodHint) {
-    prompt += `\n${moodHint}\n`;
-  }
+  if (moodHint) sections.push(moodHint);
 
-  // ─── Behavioral rules ────────────────────────────────────────────────
-  prompt +=
-    "\nRules:\n" +
-    "- Never assume an app is installed — check the device context above.\n" +
-    "- If a task is impossible, explain why and suggest alternatives.\n" +
-    "- Always explain WHY you did something (trust layer).\n" +
-    "- Match the user's communication style.\n" +
-    "- Be concise. Long answers only when explicitly asked.\n";
+  // ─── 10. Rules (always — short) ─────────────────────────────────────
+  sections.push(
+    "Rules: Never assume apps exist (check above). If impossible, explain + suggest. " +
+      "Always explain WHY (trust layer). Match user's style. Be concise."
+  );
 
-  return prompt;
+  return sections.join("\n\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -356,7 +404,6 @@ ipcMain.handle(IPC.GET_WINDOW_POSITION, () => {
 // IPC — chat streaming (via model router)
 // ---------------------------------------------------------------------------
 ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
-  const systemPrompt = buildSystemPrompt();
   const win = mainWindow;
   if (!win || win.isDestroyed()) return { ok: false };
 
@@ -366,6 +413,9 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
     .slice()
     .reverse()
     .find((m) => m.role === "user");
+
+  // Build system prompt with relevance filtering based on the user message
+  const systemPrompt = buildSystemPrompt(lastUserMsg?.content);
   if (lastUserMsg) {
     try {
       relationshipEngine.observeUserMessage(lastUserMsg.content);
@@ -708,5 +758,14 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit();
+  });
+
+  // Flush debounced saves on quit
+  app.on("before-quit", () => {
+    try {
+      memoryBrain.flush();
+    } catch {
+      /* non-fatal */
+    }
   });
 }

@@ -39,6 +39,8 @@ class MemoryBrain {
     updatedAt: 0,
   };
   private filePath: string | null = null;
+  private saveTimer: NodeJS.Timeout | null = null;
+  private readonly SAVE_DEBOUNCE_MS = 2000;
 
   init(userDataDir: string): void {
     this.filePath = path.join(userDataDir, FILENAME);
@@ -59,12 +61,39 @@ class MemoryBrain {
     }
   }
 
+  /**
+   * Debounced save — batches writes every 2s instead of on every change.
+   * This prevents disk thrashing during rapid memory additions (e.g., during
+   * extraction). The final write always happens, just not synchronously.
+   */
   private save(): void {
     if (!this.filePath) return;
-    try {
-      fs.writeFileSync(this.filePath, JSON.stringify(this.knowledge, null, 2));
-    } catch {
-      /* best effort */
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => {
+      if (!this.filePath) return;
+      try {
+        this.knowledge.updatedAt = Date.now();
+        fs.writeFileSync(this.filePath, JSON.stringify(this.knowledge, null, 2));
+      } catch {
+        /* best effort */
+      }
+      this.saveTimer = null;
+    }, this.SAVE_DEBOUNCE_MS);
+  }
+
+  /** Force immediate save (used on app quit). */
+  flush(): void {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+      try {
+        this.knowledge.updatedAt = Date.now();
+        if (this.filePath) {
+          fs.writeFileSync(this.filePath, JSON.stringify(this.knowledge, null, 2));
+        }
+      } catch {
+        /* best effort */
+      }
     }
   }
 

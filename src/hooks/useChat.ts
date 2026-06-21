@@ -251,5 +251,9 @@ export function useChat(
     [companionId]
   );
 
-  return { messages, busy, error, send, clear, addNotice, sessions, newChat, openSession };
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
+
+  return { messages, busy, error, send, clear, addNotice, sessions, newChat, openSession, clearError };
 }

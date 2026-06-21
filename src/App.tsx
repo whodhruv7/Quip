@@ -21,6 +21,7 @@ import { SettingsPanel } from "@/components/SettingsPanel";
 import { useChat } from "@/hooks/useChat";
 import { useWindowDrag } from "@/hooks/useWindowDrag";
 import { useSpatialLayout } from "@/hooks/useSpatialLayout";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboard";
 import {
   loadPrefs,
   savePrefs,
@@ -50,13 +51,14 @@ export default function App() {
   const [moodSpeed, setMoodSpeed] = useState(1);
   const [cosmetics, setCosmetics] = useState<string[]>([]);
   const [unlockToast, setUnlockToast] = useState<string | null>(null);
+  const [companionScreenPos, setCompanionScreenPos] = useState<{ x: number; y: number } | null>(null);
 
   // Restore messages from storage on mount (history persistence)
   const [restoredMessages, setRestoredMessages] = useState<ChatMessage[]>(() =>
     loadCurrentMessages(companionId)
   );
 
-  const { messages, busy: chatBusy, error, send, newChat } = useChat(companionId, restoredMessages);
+  const { messages, busy: chatBusy, error, send, newChat, clearError } = useChat(companionId, restoredMessages);
   const drag = useWindowDrag(true);
   const spatial = useSpatialLayout();
 
@@ -140,6 +142,38 @@ export default function App() {
     setRestoredMessages(restored);
     setChatState(restored.length > 0 ? "open" : "idle");
   }, [companionId, messages]);
+
+  // ─── Keyboard shortcuts (wired after handlers are defined) ─────────────
+  useKeyboardShortcuts({
+    onToggleChat: handleCompanionTap,
+    onCloseChat: handleClose,
+    onOpenSettings: () => setSettingsOpen(true),
+    onNewChat: handleNewChat,
+    onSwitchCompanion: switchCompanion,
+    isSettingsOpen: settingsOpen,
+  });
+
+  // ─── Track companion screen position (for panel transformOrigin) ──────
+  const companionRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const updatePos = () => {
+      const el = companionRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      setCompanionScreenPos({
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+      });
+    };
+    updatePos();
+    window.addEventListener("resize", updatePos);
+    // Also update after drag ends
+    const interval = setInterval(updatePos, 1000);
+    return () => {
+      window.removeEventListener("resize", updatePos);
+      clearInterval(interval);
+    };
+  }, []);
 
   // ─── On mount: tell main which companion is active ──────────────────────
   useEffect(() => {
@@ -231,6 +265,15 @@ export default function App() {
 
   const theme = getCompanion(companionId);
   const showPanel = chatState === "open" || chatState === "closing";
+  // During close animation, disable all pointer events inside the panel
+  // to prevent accidental sends / clicks while it's animating away.
+  const panelInteractive = chatState === "open";
+
+  // Dynamic transform origin: panel grows FROM the companion sprite's
+  // actual position on screen. Falls back to "bottom right" if unknown.
+  const transformOrigin = companionScreenPos
+    ? `${companionScreenPos.x}px ${companionScreenPos.y}px`
+    : "bottom right";
 
   return (
     <div
@@ -274,17 +317,26 @@ export default function App() {
           {showPanel && (
             <motion.div
               key="chat-panel"
-              initial={{ opacity: 0, y: 20, scale: 0.96, transformOrigin: "bottom right" }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
+              initial={{ opacity: 0, y: 24, scale: 0.92, transformOrigin }}
+              animate={{
+                opacity: 1,
+                y: 0,
+                scale: 1,
+                transition: {
+                  type: "spring",
+                  stiffness: 380,
+                  damping: 32,
+                  mass: 0.8,
+                },
+              }}
               exit={{
                 opacity: 0,
-                y: 20,
-                scale: 0.96,
-                transition: { duration: CLOSE_ANIMATION_MS / 1000, ease: "easeIn" },
+                y: 16,
+                scale: 0.94,
+                transition: { duration: CLOSE_ANIMATION_MS / 1000, ease: [0.4, 0, 1, 1] },
               }}
-              transition={{ duration: 0.2, ease: "easeOut" }}
               style={{
-                pointerEvents: "auto",
+                pointerEvents: panelInteractive ? "auto" : "none",
                 width: spatial?.chatPanel.width ?? 400,
                 height: spatial?.chatPanel.height ?? 560,
                 borderRadius: 18,
@@ -306,18 +358,37 @@ export default function App() {
                 onClose={handleClose}
               />
 
-              {/* Error banner */}
+              {/* Error banner — with dismiss + retry hint */}
               {error && (
                 <div
                   style={{
-                    padding: "6px 12px",
+                    padding: "8px 12px",
                     fontSize: 11,
                     color: "#dc2626",
                     background: "rgba(254,235,235,0.7)",
                     borderBottom: "1px solid rgba(239,68,68,0.12)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
                   }}
                 >
-                  {error}
+                  <span style={{ flex: 1 }}>{error}</span>
+                  <button
+                    onClick={clearError}
+                    style={{
+                      fontSize: 10,
+                      color: "#dc2626",
+                      padding: "2px 6px",
+                      borderRadius: 4,
+                      background: "rgba(239,68,68,0.1)",
+                      border: "none",
+                      cursor: "pointer",
+                    }}
+                    aria-label="Dismiss error"
+                  >
+                    ✕
+                  </button>
                 </div>
               )}
 
@@ -347,6 +418,10 @@ export default function App() {
 
       {/* ─── COMPANION SPRITE — ALWAYS visible ─────────────────────────── */}
       <div
+        ref={companionRef}
+        role="button"
+        aria-label={`${theme.name} companion — tap to ${showPanel ? "close" : "open"} chat. Keyboard: Cmd+K`}
+        tabIndex={0}
         style={{
           position: "absolute",
           right: 30,
@@ -357,6 +432,12 @@ export default function App() {
           cursor: "grab",
           transition: "filter 200ms",
           zIndex: 20,
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            handleCompanionTap();
+          }
         }}
         onPointerEnter={() => {
           setHovering(true);
