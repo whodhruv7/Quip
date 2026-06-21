@@ -33,6 +33,12 @@ interface ProviderAdapter {
     history: { role: "user" | "assistant"; content: string }[],
     cb: StreamCallbacks
   ) => Promise<string>;
+  /** Non-streaming completion (for extraction tasks). Throws on error. */
+  complete: (
+    systemPrompt: string,
+    history: { role: "user" | "assistant"; content: string }[],
+    timeoutMs?: number
+  ) => Promise<string>;
 }
 
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -83,6 +89,44 @@ function makeGroq(): ProviderAdapter {
         }
 
         return await readSSE(resp.body, cb.onChunk);
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+    async complete(systemPrompt, history, timeoutMs = 30_000) {
+      const key = process.env.GROQ_API_KEY;
+      if (!key) throw new Error("no-groq-key");
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${key}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: config.model,
+            stream: false,
+            messages: [
+              { role: "system", content: systemPrompt },
+              ...history,
+            ],
+            temperature: 0.3,
+            max_tokens: 1000,
+          }),
+          signal: controller.signal,
+        });
+
+        if (!resp.ok) {
+          const text = await resp.text().catch(() => "");
+          throw new Error(`groq-http-${resp.status}:${text.slice(0, 120)}`);
+        }
+
+        const data: any = await resp.json();
+        return data?.choices?.[0]?.message?.content ?? "";
       } finally {
         clearTimeout(timeout);
       }
@@ -140,6 +184,46 @@ function makeOpenRouter(): ProviderAdapter {
         }
 
         return await readSSE(resp.body, cb.onChunk);
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+    async complete(systemPrompt, history, timeoutMs = 30_000) {
+      const key = process.env.OPENROUTER_API_KEY;
+      if (!key) throw new Error("no-openrouter-key");
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${key}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://quip.app",
+            "X-Title": "Quip",
+          },
+          body: JSON.stringify({
+            model: config.model,
+            stream: false,
+            messages: [
+              { role: "system", content: systemPrompt },
+              ...history,
+            ],
+            temperature: 0.3,
+            max_tokens: 1000,
+          }),
+          signal: controller.signal,
+        });
+
+        if (!resp.ok) {
+          const text = await resp.text().catch(() => "");
+          throw new Error(`openrouter-http-${resp.status}:${text.slice(0, 120)}`);
+        }
+
+        const data: any = await resp.json();
+        return data?.choices?.[0]?.message?.content ?? "";
       } finally {
         clearTimeout(timeout);
       }
@@ -252,6 +336,32 @@ class ModelRouter {
       active,
       healthy: primary.available || !!fallback?.available,
     };
+  }
+
+  /** Non-streaming completion with primary→fallback. Used by extraction tasks. */
+  async complete(
+    systemPrompt: string,
+    history: { role: "user" | "assistant"; content: string }[],
+    timeoutMs?: number
+  ): Promise<string> {
+    const providers: ProviderAdapter[] = [this.primary];
+    if (this.fallback && this.fallback.isConfigured()) {
+      providers.push(this.fallback);
+    }
+
+    let lastErr: unknown = null;
+    for (const p of providers) {
+      if (!p.isConfigured()) continue;
+      try {
+        const result = await p.complete(systemPrompt, history, timeoutMs);
+        this.activeProvider = p.config.provider;
+        return result;
+      } catch (err: any) {
+        lastErr = err;
+        // fall through to next provider
+      }
+    }
+    throw lastErr ?? new Error("No AI provider configured");
   }
 }
 

@@ -257,9 +257,13 @@ interface CompanionProps {
   id: CompanionId;
   state: PixState;
   size?: number;
+  /** Unlocked cosmetic IDs — renders visual upgrades on the companion */
+  unlockedCosmetics?: string[];
+  /** Animation speed multiplier from Companion Mood (0.5 = slow, 1.5 = fast) */
+  moodSpeed?: number;
 }
 
-export function Companion({ id, state, size = 80 }: CompanionProps) {
+export function Companion({ id, state, size = 80, unlockedCosmetics = [], moodSpeed = 1 }: CompanionProps) {
   const [blink, setBlink] = useState(false);
   const theme = COMPANIONS.find((c) => c.id === id)!;
   const asleep = state === "sleeping";
@@ -268,7 +272,8 @@ export function Companion({ id, state, size = 80 }: CompanionProps) {
     if (asleep) return;
     let timer: ReturnType<typeof setTimeout>;
     const schedule = () => {
-      const next = 2400 + Math.random() * 3800;
+      // Mood affects blink frequency: low energy = slower blinks
+      const next = (2400 + Math.random() * 3800) / moodSpeed;
       timer = setTimeout(() => {
         setBlink(true);
         setTimeout(() => setBlink(false), 140);
@@ -277,13 +282,25 @@ export function Companion({ id, state, size = 80 }: CompanionProps) {
     };
     schedule();
     return () => clearTimeout(timer);
-  }, [asleep]);
+  }, [asleep, moodSpeed]);
 
   const Body = id === "kai" ? KaiBody : id === "zee" ? ZeeBody : PixBody;
 
+  // Scale the float animation duration by mood speed
+  const floatVariants = pixFloat;
+  // Apply mood speed by adjusting transition durations
+  const adjustedVariants = Object.fromEntries(
+    Object.entries(floatVariants).map(([key, variant]: [string, any]) => [
+      key,
+      variant.transition
+        ? { ...variant, transition: { ...variant.transition, duration: variant.transition.duration / moodSpeed } }
+        : variant,
+    ])
+  ) as Record<PixState, any>;
+
   return (
     <motion.div
-      variants={pixFloat}
+      variants={adjustedVariants}
       initial="idle"
       animate={state}
       style={{ width: size, height: size + 8, position: "relative" }}
@@ -318,13 +335,16 @@ export function Companion({ id, state, size = 80 }: CompanionProps) {
 
         <Body t={theme} asleep={asleep} blinking={blink} />
 
+        {/* ─── Cosmetic upgrades (rendered on top of body) ──────────── */}
+        <Cosmetics id={id} unlocked={unlockedCosmetics} theme={theme} />
+
         {/* Thinking/responding mouth glow */}
         {(state === "thinking" || state === "responding") && !asleep && (
           <motion.rect
             x="14" y="19.5" width="4" height="1.8" rx="0.9"
             fill={theme.mouthThinking}
             animate={{ opacity: [0.5, 1, 0.5] }}
-            transition={{ duration: 1, repeat: Infinity }}
+            transition={{ duration: 1 / moodSpeed, repeat: Infinity }}
           />
         )}
 
@@ -339,5 +359,89 @@ export function Companion({ id, state, size = 80 }: CompanionProps) {
         )}
       </svg>
     </motion.div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Cosmetics — small visual upgrades unlocked through companion evolution
+// ---------------------------------------------------------------------------
+function Cosmetics({ id, unlocked, theme }: { id: CompanionId; unlocked: string[]; theme: CompanionTheme }) {
+  // Each cosmetic is a small SVG element drawn on top of the companion body.
+  // Tier 1 = small accent, Tier 2 = badge, Tier 3 = aura/glow change.
+
+  return (
+    <>
+      {/* Pix: Tiny Scarf (tier 1) */}
+      {id === "pix" && unlocked.includes("pix-tier1") && (
+        <g>
+          <path d="M 9 23 Q 16 25 23 23 L 22 25 Q 16 27 10 25 Z" fill="#6FD6FF" opacity="0.85" />
+          <rect x="8" y="24" width="3" height="5" rx="1" fill="#6FD6FF" opacity="0.7" transform="rotate(15 9.5 26.5)" />
+        </g>
+      )}
+
+      {/* Pix: Star Sparkle (tier 2) */}
+      {id === "pix" && unlocked.includes("pix-tier2") && (
+        <motion.g
+          animate={{ opacity: [0.4, 1, 0.4], scale: [0.8, 1.1, 0.8] }}
+          transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+          style={{ transformOrigin: "28px 6px" }}
+        >
+          <path d="M 28 4 L 28.8 6 L 30.8 6.8 L 28.8 7.6 L 28 9.6 L 27.2 7.6 L 25.2 6.8 L 27.2 6 Z" fill="#FFD700" />
+        </motion.g>
+      )}
+
+      {/* Kai: Leaf Accent (tier 1) */}
+      {id === "kai" && unlocked.includes("kai-tier1") && (
+        <g transform="translate(24 4) rotate(20)">
+          <path d="M 0 0 Q 2 -3 4 0 Q 2 3 0 0 Z" fill="#4ade80" opacity="0.85" />
+          <line x1="0" y1="0" x2="4" y2="0" stroke="#16a34a" strokeWidth="0.3" />
+        </g>
+      )}
+
+      {/* Kai: Book Badge (tier 2) */}
+      {id === "kai" && unlocked.includes("kai-tier2") && (
+        <g transform="translate(22 22)">
+          <rect x="0" y="0" width="5" height="4" rx="0.5" fill="#A78BFA" />
+          <line x1="2.5" y1="0" x2="2.5" y2="4" stroke="#7c3aed" strokeWidth="0.3" />
+        </g>
+      )}
+
+      {/* Zee: Curiosity Spark (tier 1) */}
+      {id === "zee" && unlocked.includes("zee-tier1") && (
+        <motion.g
+          animate={{ opacity: [0.5, 1, 0.5] }}
+          transition={{ duration: 2, repeat: Infinity }}
+        >
+          <text x="25" y="8" fontSize="5" fill="#FFD700" fontWeight="bold" fontFamily="monospace">?</text>
+        </motion.g>
+      )}
+
+      {/* Zee: Galaxy Trail (tier 2) */}
+      {id === "zee" && unlocked.includes("zee-tier2") && (
+        <motion.g
+          animate={{ opacity: [0.3, 0.8, 0.3] }}
+          transition={{ duration: 3, repeat: Infinity }}
+        >
+          <circle cx="4" cy="28" r="0.8" fill="#FFD700" />
+          <circle cx="2" cy="30" r="0.5" fill="#FFD700" opacity="0.6" />
+          <circle cx="6" cy="26" r="0.4" fill="#FFD700" opacity="0.5" />
+        </motion.g>
+      )}
+
+      {/* Tier 3 — subtle aura boost for all companions */}
+      {(unlocked.includes("pix-tier3") || unlocked.includes("kai-tier3") || unlocked.includes("zee-tier3")) && (
+        <motion.circle
+          cx="16"
+          cy="16"
+          r="14"
+          fill="none"
+          stroke={theme.secondary}
+          strokeWidth="0.4"
+          opacity="0.3"
+          animate={{ r: [13, 15, 13], opacity: [0.15, 0.35, 0.15] }}
+          transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+        />
+      )}
+    </>
   );
 }

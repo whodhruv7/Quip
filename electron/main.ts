@@ -53,7 +53,8 @@ import { workspaceContext } from "./brains/workspace-context";
 import { relationshipEngine } from "./brains/relationship-engine";
 import { companionMood } from "./brains/companion-mood";
 import { companionEvolution } from "./brains/companion-evolution";
-import { runPrune, pinMemory, unpinMemory } from "./brains/memory-importance";
+import { runPrune } from "./brains/memory-importance";
+import { observeMessages, resetExtractionCount } from "./brains/memory-extractor";
 
 import type {
   DeviceProfile,
@@ -398,6 +399,14 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
     // ─── Observe the assistant response for relationship engine ──────
     try {
       relationshipEngine.observeAssistantResponse(full);
+    } catch {
+      /* non-fatal */
+    }
+
+    // ─── Feed the conversation to the memory extractor (background) ──
+    // This triggers LLM-based fact + entity extraction every N messages.
+    try {
+      observeMessages(currentCompanionId, payload.history);
     } catch {
       /* non-fatal */
     }

@@ -20,6 +20,7 @@ import { ScanOverlay } from "@/components/ScanOverlay";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { useChat } from "@/hooks/useChat";
 import { useWindowDrag } from "@/hooks/useWindowDrag";
+import { useSpatialLayout } from "@/hooks/useSpatialLayout";
 import {
   loadPrefs,
   savePrefs,
@@ -46,6 +47,9 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [scanDone, setScanDone] = useState(false);
   const [hovering, setHovering] = useState(false);
+  const [moodSpeed, setMoodSpeed] = useState(1);
+  const [cosmetics, setCosmetics] = useState<string[]>([]);
+  const [unlockToast, setUnlockToast] = useState<string | null>(null);
 
   // Restore messages from storage on mount (history persistence)
   const [restoredMessages, setRestoredMessages] = useState<ChatMessage[]>(() =>
@@ -54,6 +58,7 @@ export default function App() {
 
   const { messages, busy: chatBusy, error, send, newChat } = useChat(companionId, restoredMessages);
   const drag = useWindowDrag(true);
+  const spatial = useSpatialLayout();
 
   // Debounce tracking — prevents rapid-tap stacking
   const lastStateChange = useRef(0);
@@ -145,6 +150,66 @@ export default function App() {
     }
   }, [companionId]);
 
+  // ─── Fetch companion mood (animation speed) + cosmetics ────────────────
+  useEffect(() => {
+    let active = true;
+    const fetchMood = async () => {
+      try {
+        const mood = await window.quip.getCompanionMood(companionId);
+        if (active && mood && typeof (mood as any).energy === "number") {
+          setMoodSpeed(0.5 + (mood as any).energy);
+        }
+      } catch {
+        /* non-fatal */
+      }
+    };
+    const fetchCosmetics = async () => {
+      try {
+        const prog = await window.quip.getCompanionProgression();
+        if (active && prog) {
+          const p = (prog as any)[companionId];
+          if (p?.unlockedCosmetics) {
+            setCosmetics(p.unlockedCosmetics.map((c: any) => c.id));
+          }
+        }
+      } catch {
+        /* non-fatal */
+      }
+    };
+    fetchMood();
+    fetchCosmetics();
+    const interval = setInterval(() => {
+      fetchMood();
+    }, 60_000); // refresh mood every minute
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [companionId]);
+
+  // ─── Listen for cosmetic unlocks ────────────────────────────────────────
+  useEffect(() => {
+    const off = window.quip.onCosmeticUnlock((unlock: any) => {
+      if (unlock && unlock.companion === companionId) {
+        setUnlockToast(unlock.name);
+        // Add to cosmetics list
+        setCosmetics((prev) => [...prev, unlock.id]);
+        // Clear toast after 4 seconds
+        setTimeout(() => setUnlockToast(null), 4000);
+        // Refresh full cosmetics list
+        window.quip.getCompanionProgression().then((prog) => {
+          if (prog) {
+            const p = (prog as any)[companionId];
+            if (p?.unlockedCosmetics) {
+              setCosmetics(p.unlockedCosmetics.map((c: any) => c.id));
+            }
+          }
+        }).catch(() => {});
+      }
+    });
+    return off;
+  }, [companionId]);
+
   // ─── Persist messages on every change (debounced via useChat) ────────────
   useEffect(() => {
     if (chatState === "open" && messages.length > 0) {
@@ -195,6 +260,7 @@ export default function App() {
       )}
 
       {/* ─── Chat PANEL — toggles on companion tap ─────────────────────── */}
+      {/* Position from Spatial Brain — never overflows off-screen. */}
       <div
         style={{
           position: "absolute",
@@ -219,8 +285,8 @@ export default function App() {
               transition={{ duration: 0.2, ease: "easeOut" }}
               style={{
                 pointerEvents: "auto",
-                width: 400,
-                height: 560,
+                width: spatial?.chatPanel.width ?? 400,
+                height: spatial?.chatPanel.height ?? 560,
                 borderRadius: 18,
                 overflow: "hidden",
                 display: "flex",
@@ -304,7 +370,13 @@ export default function App() {
           handleCompanionTap();
         }}
       >
-        <Companion id={companionId} state={pixState} size={64} />
+        <Companion
+          id={companionId}
+          state={pixState}
+          size={64}
+          unlockedCosmetics={cosmetics}
+          moodSpeed={moodSpeed}
+        />
 
         {/* Status pill */}
         <AnimatePresence>
@@ -368,6 +440,45 @@ export default function App() {
       {!scanDone && (
         <ScanOverlay companionId={companionId} onDone={() => setScanDone(true)} />
       )}
+
+      {/* Cosmetic unlock toast — celebratory feedback */}
+      <AnimatePresence>
+        {unlockToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 20, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -10, scale: 0.95 }}
+            transition={{ duration: 0.3, ease: "easeOut" }}
+            style={{
+              position: "absolute",
+              bottom: 130,
+              right: 20,
+              zIndex: 30,
+              pointerEvents: "none",
+              background: "rgba(255,255,255,0.95)",
+              backdropFilter: "blur(20px)",
+              WebkitBackdropFilter: "blur(20px)",
+              borderRadius: 12,
+              padding: "10px 16px",
+              boxShadow: "0 10px 30px rgba(0,0,0,0.12)",
+              border: "1px solid rgba(255,255,255,0.6)",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
+            <span style={{ fontSize: 18 }}>✨</span>
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: "#111" }}>
+                New unlock!
+              </span>
+              <span style={{ fontSize: 11, color: "#6b7280" }}>
+                {unlockToast}
+              </span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
