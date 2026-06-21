@@ -54,6 +54,10 @@ const api = {
   // ─── Task execution ──────────────────────────────────────────────────
   executeTask: (payload: TaskExecutePayload) =>
     ipcRenderer.invoke(IPC.TASK_EXECUTE, payload),
+
+  // ─── Set active companion (so the system prompt adapts personality/mood) ─
+  setCompanion: (id: "pix" | "kai" | "zee") =>
+    ipcRenderer.send("quip:set-companion", id),
   onTaskProgress: (cb: (p: any) => void) => {
     const handler = (_e: unknown, data: any) => cb(data);
     ipcRenderer.on(IPC.TASK_PROGRESS, handler as any);
@@ -99,6 +103,40 @@ const api = {
     ipcRenderer.invoke(IPC.GET_MEMORIES),
   forgetMemory: (id: string) =>
     ipcRenderer.invoke(IPC.FORGET_MEMORY, id),
+  pinMemory: (id: string) =>
+    ipcRenderer.invoke(IPC.PIN_MEMORY, id),
+  pruneMemories: () =>
+    ipcRenderer.invoke(IPC.PRUNE_MEMORIES),
+
+  // ─── Knowledge graph ────────────────────────────────────────────────
+  getKnowledgeGraph: () =>
+    ipcRenderer.invoke(IPC.GET_KNOWLEDGE_GRAPH),
+  removeEntity: (id: string) =>
+    ipcRenderer.invoke(IPC.REMOVE_ENTITY, id),
+
+  // ─── Workspace context ──────────────────────────────────────────────
+  getWorkspaceContext: () =>
+    ipcRenderer.invoke(IPC.GET_WORKSPACE_CONTEXT),
+
+  // ─── Relationship engine (communication DNA) ───────────────────────
+  getUserProfile: () =>
+    ipcRenderer.invoke(IPC.GET_USER_PROFILE),
+  resetUserProfile: () =>
+    ipcRenderer.invoke(IPC.RESET_USER_PROFILE),
+
+  // ─── Companion mood ─────────────────────────────────────────────────
+  getCompanionMood: (companionId: string) =>
+    ipcRenderer.invoke(IPC.GET_COMPANION_MOOD, companionId),
+
+  // ─── Companion evolution ────────────────────────────────────────────
+  getCompanionProgression: () =>
+    ipcRenderer.invoke(IPC.GET_COMPANION_PROGRESSION),
+  onCosmeticUnlock: (cb: (unlock: any) => void) => {
+    const handler = (_e: unknown, data: any) => cb(data);
+    ipcRenderer.on(IPC.ON_COSMETIC_UNLOCK, handler as any);
+    return () =>
+      ipcRenderer.removeListener(IPC.ON_COSMETIC_UNLOCK, handler as any);
+  },
 
   // ─── Model router ────────────────────────────────────────────────────
   getModelStatus: () =>

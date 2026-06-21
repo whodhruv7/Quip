@@ -1,10 +1,15 @@
 // Quip V2 — application root.
 //
+// CRITICAL FIX (Companion Toggle):
+//   - Single tap opens chat. Next tap (or X, or tap-outside) closes it.
+//   - On close, conversation is saved to history (not lost).
+//   - No stacking: 200ms debounce prevents rapid-tap thrash.
+//   - On reopen, conversation restores from history.
+//
 // Layout: Companion is ALWAYS visible (bottom-right, floating, draggable).
-// The chat PANEL toggles open/closed on companion tap. Tap = show, tap = hide.
-// Settings panel slides over everything when opened.
+// Chat PANEL toggles open/closed. Settings overlays everything.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Companion } from "@/components/Companion";
 import { TopBar } from "@/components/TopBar";
@@ -15,41 +20,139 @@ import { ScanOverlay } from "@/components/ScanOverlay";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { useChat } from "@/hooks/useChat";
 import { useWindowDrag } from "@/hooks/useWindowDrag";
-import { loadPrefs, savePrefs } from "@/lib/storage";
+import {
+  loadPrefs,
+  savePrefs,
+  loadCurrentMessages,
+  saveCurrentMessages,
+  archiveSession,
+} from "@/lib/storage";
 import { getCompanion } from "@/lib/companion-config";
-import type { CompanionId, PixState } from "@/types";
+import type { ChatMessage, CompanionId, PixState } from "@/types";
+
+// ─── Chat State Machine ─────────────────────────────────────────────────────
+// idle     → chat closed, no recent conversation
+// open     → chat visible, accepting input
+// closing  → close animation playing (150ms), taps ignored
+// history  → chat closed, but conversation saved — reopen restores it
+type ChatState = "idle" | "open" | "closing" | "history";
+
+const TAP_DEBOUNCE_MS = 200;
+const CLOSE_ANIMATION_MS = 180;
 
 export default function App() {
   const [companionId, setCompanionId] = useState<CompanionId>(() => loadPrefs().companionId);
-  const [panelOpen, setPanelOpen] = useState(true);
+  const [chatState, setChatState] = useState<ChatState>("idle");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [scanDone, setScanDone] = useState(false);
   const [hovering, setHovering] = useState(false);
 
-  const { messages, busy: chatBusy, error, send, newChat } = useChat(companionId);
+  // Restore messages from storage on mount (history persistence)
+  const [restoredMessages, setRestoredMessages] = useState<ChatMessage[]>(() =>
+    loadCurrentMessages(companionId)
+  );
 
+  const { messages, busy: chatBusy, error, send, newChat } = useChat(companionId, restoredMessages);
   const drag = useWindowDrag(true);
-  const lastClick = useRef(0);
 
-  const handleCompanionClick = () => {
+  // Debounce tracking — prevents rapid-tap stacking
+  const lastStateChange = useRef(0);
+  const isAnimatingClose = useRef(false);
+
+  // ─── Toggle Handler ──────────────────────────────────────────────────────
+  // Single tap toggles. Debounced. During close animation, taps are ignored.
+  const handleCompanionTap = useCallback(() => {
+    // Ignore if this was a drag, not a tap
     if (drag.totalMoved() > 5) return;
-    const now = Date.now();
-    // Double-click hides the panel fast; single toggles.
-    if (now - lastClick.current < 340) {
-      setPanelOpen(false);
-    } else {
-      setPanelOpen((o) => !o);
-    }
-    lastClick.current = now;
-  };
 
-  const switchCompanion = (id: CompanionId) => {
+    // Debounce: ignore taps within TAP_DEBOUNCE_MS of the last state change
+    const now = Date.now();
+    if (now - lastStateChange.current < TAP_DEBOUNCE_MS) return;
+    lastStateChange.current = now;
+
+    // Ignore taps during close animation
+    if (isAnimatingClose.current) return;
+
+    setChatState((prev) => {
+      switch (prev) {
+        case "idle":
+        case "history":
+          // Open: restore from history (messages are already in useChat)
+          return "open";
+        case "open":
+          // Close: save to history first, then animate close
+          saveCurrentMessages(companionId, messages);
+          archiveSession(companionId, messages);
+          isAnimatingClose.current = true;
+          return "closing";
+        case "closing":
+          // Already closing — ignore
+          return "closing";
+      }
+    });
+  }, [companionId, messages, drag]);
+
+  // ─── Close handler (from X button or tap-outside) ────────────────────────
+  const handleClose = useCallback(() => {
+    const now = Date.now();
+    if (now - lastStateChange.current < TAP_DEBOUNCE_MS) return;
+    lastStateChange.current = now;
+    if (isAnimatingClose.current) return;
+
+    saveCurrentMessages(companionId, messages);
+    archiveSession(companionId, messages);
+    isAnimatingClose.current = true;
+    setChatState("closing");
+  }, [companionId, messages]);
+
+  // ─── Animation end handler ───────────────────────────────────────────────
+  const handleExitComplete = useCallback(() => {
+    isAnimatingClose.current = false;
+    setChatState((prev) => (prev === "closing" ? "history" : prev));
+  }, []);
+
+  // ─── New chat handler ────────────────────────────────────────────────────
+  const handleNewChat = useCallback(() => {
+    newChat();
+    setRestoredMessages([]);
+    saveCurrentMessages(companionId, []);
+  }, [companionId, newChat]);
+
+  // ─── Companion switch ────────────────────────────────────────────────────
+  const switchCompanion = useCallback((id: CompanionId) => {
+    // Save current conversation before switching
+    saveCurrentMessages(companionId, messages);
     setCompanionId(id);
     savePrefs({ companionId: id });
-    setPanelOpen(true);
-  };
+    // Tell the main process which companion is active (for system prompt)
+    try {
+      window.quip.setCompanion(id);
+    } catch {
+      /* non-fatal — main may not be ready */
+    }
+    // Load the new companion's last conversation
+    const restored = loadCurrentMessages(id);
+    setRestoredMessages(restored);
+    setChatState(restored.length > 0 ? "open" : "idle");
+  }, [companionId, messages]);
 
-  // Determine companion state for animation.
+  // ─── On mount: tell main which companion is active ──────────────────────
+  useEffect(() => {
+    try {
+      window.quip.setCompanion(companionId);
+    } catch {
+      /* non-fatal */
+    }
+  }, [companionId]);
+
+  // ─── Persist messages on every change (debounced via useChat) ────────────
+  useEffect(() => {
+    if (chatState === "open" && messages.length > 0) {
+      saveCurrentMessages(companionId, messages);
+    }
+  }, [messages, companionId, chatState]);
+
+  // ─── Companion animation state ───────────────────────────────────────────
   const isResponding =
     chatBusy &&
     messages.some((m) => m.role === "assistant" && m.streaming && m.content.length > 0);
@@ -62,6 +165,7 @@ export default function App() {
       : "idle";
 
   const theme = getCompanion(companionId);
+  const showPanel = chatState === "open" || chatState === "closing";
 
   return (
     <div
@@ -72,22 +176,47 @@ export default function App() {
         pointerEvents: "none",
       }}
     >
+      {/* ─── Tap-outside catcher (closes chat when tapping outside) ──────── */}
+      {showPanel && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            pointerEvents: "auto",
+            zIndex: 5,
+          }}
+          onPointerDown={(e) => {
+            // Only close if the click was on this backdrop itself
+            if (e.target === e.currentTarget) {
+              handleClose();
+            }
+          }}
+        />
+      )}
+
       {/* ─── Chat PANEL — toggles on companion tap ─────────────────────── */}
       <div
         style={{
           position: "absolute",
           right: 20,
-          bottom: 120, // above the companion sprite
+          bottom: 120,
           pointerEvents: "none",
+          zIndex: 10,
         }}
       >
-        <AnimatePresence>
-          {panelOpen && (
+        <AnimatePresence onExitComplete={handleExitComplete}>
+          {showPanel && (
             <motion.div
-              initial={{ opacity: 0, y: 20, scale: 0.96 }}
+              key="chat-panel"
+              initial={{ opacity: 0, y: 20, scale: 0.96, transformOrigin: "bottom right" }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 20, scale: 0.96 }}
-              transition={{ duration: 0.25, ease: "easeOut" }}
+              exit={{
+                opacity: 0,
+                y: 20,
+                scale: 0.96,
+                transition: { duration: CLOSE_ANIMATION_MS / 1000, ease: "easeIn" },
+              }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
               style={{
                 pointerEvents: "auto",
                 width: 400,
@@ -107,7 +236,8 @@ export default function App() {
                 companionId={companionId}
                 onCompanionChange={switchCompanion}
                 onSettingsToggle={() => setSettingsOpen(true)}
-                onNewChat={newChat}
+                onNewChat={handleNewChat}
+                onClose={handleClose}
               />
 
               {/* Error banner */}
@@ -160,6 +290,7 @@ export default function App() {
           pointerEvents: "auto",
           cursor: "grab",
           transition: "filter 200ms",
+          zIndex: 20,
         }}
         onPointerEnter={() => {
           setHovering(true);
@@ -170,7 +301,7 @@ export default function App() {
         onPointerMove={drag.onPointerMove}
         onPointerUp={(e) => {
           drag.onPointerUp(e);
-          handleCompanionClick();
+          handleCompanionTap();
         }}
       >
         <Companion id={companionId} state={pixState} size={64} />
@@ -205,7 +336,7 @@ export default function App() {
 
         {/* "Tap to open" hint when panel closed */}
         <AnimatePresence>
-          {!panelOpen && !chatBusy && (
+          {!showPanel && !chatBusy && (
             <motion.div
               initial={{ opacity: 0, scale: 0.8 }}
               animate={{ opacity: 1, scale: 1 }}

@@ -1,12 +1,10 @@
-```
 # Dependencies
 node_modules/
 
 # Build outputs
 dist/
 build/
-*.js
-*.ts
+dist-electron/
 
 # Logs and temp files
 *.log
@@ -48,5 +46,3 @@ coverage/
 # Testing
 *.test.js
 *.test.ts
-```dist-electron/
-dist-electron/

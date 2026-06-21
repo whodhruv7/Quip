@@ -48,6 +48,12 @@ import { environmentBrain } from "./brains/environment-brain";
 import { memoryBrain } from "./brains/memory-brain";
 import { computeSpatial, watchSpatial } from "./brains/spatial-brain";
 import { runTask } from "./brains/task-brain";
+import { knowledgeGraph } from "./brains/knowledge-graph";
+import { workspaceContext } from "./brains/workspace-context";
+import { relationshipEngine } from "./brains/relationship-engine";
+import { companionMood } from "./brains/companion-mood";
+import { companionEvolution } from "./brains/companion-evolution";
+import { runPrune, pinMemory, unpinMemory } from "./brains/memory-importance";
 
 import type {
   DeviceProfile,
@@ -68,6 +74,10 @@ let tray: Tray | null = null;
 let deviceProfile: DeviceProfile | null = null;
 let worldModel: WorldModel | null = null;
 let spatialConfig: SpatialConfig | null = null;
+
+// The currently active companion (set by renderer via IPC). Defaults to "pix".
+// Used by the system prompt to apply personality + mood.
+let currentCompanionId: "pix" | "kai" | "zee" = "pix";
 
 const pendingConfirmations = new Map<
   string,
@@ -110,22 +120,91 @@ function clampPosition(x: number, y: number, w: number, h: number) {
 
 function buildSystemPrompt(): string {
   const env = environmentBrain.get();
+
+  // ─── Companion identity ──────────────────────────────────────────────
+  const companionPersonalities: Record<string, string> = {
+    pix: "Pix — playful, energetic, creative. You bring enthusiasm and light humor. You help with social and creative tasks.",
+    kai: "Kai — calm, analytical, wise. You explain clearly and help with planning, research, and learning. You speak with depth and confidence.",
+    zee: "Zee — curious, empathetic, reflective. You remember personal details and offer thoughtful, supportive insights. You help with emotional and personal questions.",
+  };
+
   let prompt =
     "You are QUIP, a calm, friendly, concise AI companion living on the user's desktop. " +
     "Be warm and human, never robotic. Keep answers short and helpful unless asked for detail. " +
     "Use markdown when it improves clarity. You are playful yet thoughtful.\n\n";
+
+  prompt += `Right now you are ${companionPersonalities[currentCompanionId] ?? companionPersonalities.pix}\n`;
+
+  // ─── Device context ──────────────────────────────────────────────────
   if (deviceProfile) {
     prompt +=
       `Device: ${deviceProfile.platformLabel} ${deviceProfile.osVersion}, ` +
       `${deviceProfile.cpuCores} cores, ${deviceProfile.totalMemoryGB}GB RAM, ` +
       `${deviceProfile.primaryResolution.width}x${deviceProfile.primaryResolution.height}.\n`;
+    if (deviceProfile.defaultBrowser) {
+      prompt += `Default browser: ${deviceProfile.defaultBrowser}.\n`;
+    }
+    if (deviceProfile.apps.length > 0) {
+      const appList = deviceProfile.apps
+        .slice(0, 12)
+        .map((a) => a.name)
+        .join(", ");
+      prompt += `Installed apps: ${appList}.\n`;
+    }
   }
-  if (worldModel) prompt += `\n${worldModel.summary}\n`;
+
+  // ─── World model (what Quip can / cannot do) ─────────────────────────
+  if (worldModel) {
+    prompt += `\n${worldModel.summary}\n`;
+  }
+
+  // ─── Current environment ─────────────────────────────────────────────
   if (env.network.online === false) {
     prompt += "\nNOTE: The user is currently OFFLINE. Web actions may fail.\n";
   }
+  if (env.battery.supported && !env.battery.charging && env.battery.level < 0.2) {
+    prompt += `NOTE: Battery is low (${Math.round(env.battery.level * 100)}%). Keep responses brief.\n`;
+  }
+
+  // ─── Workspace context (what the user is doing right now) ────────────
+  const wsSummary = workspaceContext.getPromptSummary();
+  if (wsSummary) {
+    prompt += `\n${wsSummary}\n`;
+  }
+
+  // ─── Memory (what Quip knows about the user) ─────────────────────────
   const mem = memoryBrain.get();
-  if (mem.styleDigest) prompt += `\n${mem.styleDigest}\n`;
+  if (mem.styleDigest) {
+    prompt += `\n${mem.styleDigest}\n`;
+  }
+
+  // ─── Knowledge graph (entities in the user's world) ──────────────────
+  const kgSummary = knowledgeGraph.getPromptSummary();
+  if (kgSummary) {
+    prompt += `\n${kgSummary}\n`;
+  }
+
+  // ─── Communication style guide (relationship engine) ─────────────────
+  const styleGuide = relationshipEngine.getStyleGuide();
+  if (styleGuide) {
+    prompt += `\n${styleGuide}\n`;
+  }
+
+  // ─── Companion mood hint ─────────────────────────────────────────────
+  const moodHint = companionMood.getPromptHint(currentCompanionId);
+  if (moodHint) {
+    prompt += `\n${moodHint}\n`;
+  }
+
+  // ─── Behavioral rules ────────────────────────────────────────────────
+  prompt +=
+    "\nRules:\n" +
+    "- Never assume an app is installed — check the device context above.\n" +
+    "- If a task is impossible, explain why and suggest alternatives.\n" +
+    "- Always explain WHY you did something (trust layer).\n" +
+    "- Match the user's communication style.\n" +
+    "- Be concise. Long answers only when explicitly asked.\n";
+
   return prompt;
 }
 
@@ -280,6 +359,32 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
   const win = mainWindow;
   if (!win || win.isDestroyed()) return { ok: false };
 
+  // ─── Feed the relationship engine + companion mood + workspace ──────
+  // The last user message is the current input.
+  const lastUserMsg = payload.history
+    .slice()
+    .reverse()
+    .find((m) => m.role === "user");
+  if (lastUserMsg) {
+    try {
+      relationshipEngine.observeUserMessage(lastUserMsg.content);
+      relationshipEngine.observeCodePreference(lastUserMsg.content);
+      companionMood.observeUserMessage(lastUserMsg.content);
+      // Record a message + conversation for companion evolution
+      companionEvolution.recordMessage(currentCompanionId);
+      // Check if this is the start of a new conversation (heuristic: first user msg)
+      const userMsgCount = payload.history.filter((m) => m.role === "user").length;
+      if (userMsgCount === 1) {
+        companionEvolution.recordConversation(currentCompanionId);
+      }
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  // ─── Refresh workspace context (async, non-blocking) ───────────────
+  workspaceContext.refresh().catch(() => {});
+
   try {
     const { full } = await modelRouter.stream(systemPrompt, payload.history, {
       onChunk: (delta: string) => {
@@ -289,6 +394,13 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
         });
       },
     });
+
+    // ─── Observe the assistant response for relationship engine ──────
+    try {
+      relationshipEngine.observeAssistantResponse(full);
+    } catch {
+      /* non-fatal */
+    }
 
     sendToRenderer(IPC.CHAT_DONE, {
       requestId: payload.requestId,
@@ -320,6 +432,15 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
     });
 
     return { ok: false };
+  }
+});
+
+// ---------------------------------------------------------------------------
+// IPC — set current companion (so system prompt can adapt)
+// ---------------------------------------------------------------------------
+ipcMain.on("quip:set-companion", (_e, id: "pix" | "kai" | "zee") => {
+  if (id === "pix" || id === "kai" || id === "zee") {
+    currentCompanionId = id;
   }
 });
 
@@ -356,6 +477,15 @@ ipcMain.handle(
         });
       },
     });
+
+    // ─── Record task completion for companion evolution ───────────────
+    if (result.success && !result.plan?.isChat) {
+      try {
+        companionEvolution.recordTask(currentCompanionId);
+      } catch {
+        /* non-fatal */
+      }
+    }
 
     return result;
   }
@@ -406,7 +536,7 @@ ipcMain.handle(IPC.GET_SPATIAL_CONFIG, () => {
 });
 
 // ---------------------------------------------------------------------------
-// IPC — memory brain
+// IPC — memory brain (extended: pin + prune)
 // ---------------------------------------------------------------------------
 ipcMain.handle(IPC.GET_MEMORIES, () => {
   return memoryBrain.get();
@@ -414,6 +544,71 @@ ipcMain.handle(IPC.GET_MEMORIES, () => {
 
 ipcMain.handle(IPC.FORGET_MEMORY, (_e, id: string) => {
   memoryBrain.forget(id);
+});
+
+ipcMain.handle(IPC.PIN_MEMORY, (_e, id: string) => {
+  memoryBrain.pin(id);
+});
+
+ipcMain.handle(IPC.PRUNE_MEMORIES, () => {
+  const mem = memoryBrain.get();
+  const { retained, report } = runPrune(mem.memories);
+  // Bulk-replace with the retained set
+  memoryBrain.replaceAll(retained);
+  return {
+    total: report.totalMemories,
+    pruned: report.pruned,
+    retained: report.retained,
+  };
+});
+
+// ---------------------------------------------------------------------------
+// IPC — knowledge graph
+// ---------------------------------------------------------------------------
+ipcMain.handle(IPC.GET_KNOWLEDGE_GRAPH, () => {
+  return knowledgeGraph.get();
+});
+
+ipcMain.handle(IPC.REMOVE_ENTITY, (_e, id: string) => {
+  knowledgeGraph.removeEntity(id);
+});
+
+// ---------------------------------------------------------------------------
+// IPC — workspace context
+// ---------------------------------------------------------------------------
+ipcMain.handle(IPC.GET_WORKSPACE_CONTEXT, async () => {
+  return await workspaceContext.refresh();
+});
+
+// ---------------------------------------------------------------------------
+// IPC — relationship engine (communication DNA)
+// ---------------------------------------------------------------------------
+ipcMain.handle(IPC.GET_USER_PROFILE, () => {
+  return relationshipEngine.get();
+});
+
+ipcMain.handle(IPC.RESET_USER_PROFILE, () => {
+  relationshipEngine.reset();
+});
+
+// ---------------------------------------------------------------------------
+// IPC — companion mood
+// ---------------------------------------------------------------------------
+ipcMain.handle(IPC.GET_COMPANION_MOOD, (_e, id: string) => {
+  if (id !== "pix" && id !== "kai" && id !== "zee") return null;
+  return companionMood.getMood(id);
+});
+
+// ---------------------------------------------------------------------------
+// IPC — companion evolution
+// ---------------------------------------------------------------------------
+ipcMain.handle(IPC.GET_COMPANION_PROGRESSION, () => {
+  return companionEvolution.getAll();
+});
+
+// Wire the cosmetic unlock callback to push to renderer
+companionEvolution.onUnlock((unlock) => {
+  sendToRenderer(IPC.ON_COSMETIC_UNLOCK, unlock);
 });
 
 // ---------------------------------------------------------------------------
@@ -480,8 +675,17 @@ if (!app.requestSingleInstanceLock()) {
     }
 
     // Subscribe to environment changes and push to renderer.
+    // Also feed the companion mood + workspace context brains.
     environmentBrain.subscribe((env: EnvironmentState) => {
       sendToRenderer(IPC.ENVIRONMENT_CHANGE, env);
+      // Feed companion mood (throttled internally)
+      try {
+        companionMood.observeEnvironment(env);
+      } catch {
+        /* non-fatal */
+      }
+      // Refresh workspace context periodically (it reads the foreground window)
+      workspaceContext.refresh().catch(() => {});
     });
 
     // Create the window + tray.

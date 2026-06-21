@@ -12,10 +12,12 @@ interface TopBarProps {
   onCompanionChange: (id: CompanionId) => void;
   onSettingsToggle: () => void;
   onNewChat: () => void;
+  onClose?: () => void;
   onHideChat?: () => void;
 }
 
-export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onNewChat, onHideChat }: TopBarProps) {
+export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onNewChat, onClose, onHideChat }: TopBarProps) {
+  const handleClose = onClose ?? onHideChat;
   const [modelStatus, setModelStatus] = useState<ModelRouterStatus | null>(null);
 
   useEffect(() => {
@@ -115,7 +117,7 @@ export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onNew
 
       {/* Close button */}
       <button
-        onClick={onHideChat}
+        onClick={handleClose}
         className="flex h-7 w-7 items-center justify-center rounded-lg text-quip-gray transition-colors hover:bg-red-50 hover:text-red-500"
         title="Hide chat"
       >

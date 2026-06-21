@@ -32,6 +32,26 @@ export const IPC = {
   // Memory brain
   GET_MEMORIES: "quip:get-memories",
   FORGET_MEMORY: "quip:forget-memory",
+  PIN_MEMORY: "quip:pin-memory",
+  PRUNE_MEMORIES: "quip:prune-memories",
+
+  // Knowledge graph
+  GET_KNOWLEDGE_GRAPH: "quip:get-knowledge-graph",
+  REMOVE_ENTITY: "quip:remove-entity",
+
+  // Workspace context
+  GET_WORKSPACE_CONTEXT: "quip:get-workspace-context",
+
+  // Relationship engine (user profile / communication DNA)
+  GET_USER_PROFILE: "quip:get-user-profile",
+  RESET_USER_PROFILE: "quip:reset-user-profile",
+
+  // Companion mood
+  GET_COMPANION_MOOD: "quip:get-companion-mood",
+
+  // Companion evolution
+  GET_COMPANION_PROGRESSION: "quip:get-companion-progression",
+  ON_COSMETIC_UNLOCK: "quip:cosmetic-unlock",
 
   // Model router
   GET_MODEL_STATUS: "quip:get-model-status",

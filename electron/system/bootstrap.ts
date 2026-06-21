@@ -19,6 +19,11 @@ import { ensureWorldModel } from "../brains/world-model";
 import { environmentBrain } from "../brains/environment-brain";
 import { permissionSystem } from "./permission-system";
 import { memoryBrain } from "../brains/memory-brain";
+import { knowledgeGraph } from "../brains/knowledge-graph";
+import { workspaceContext } from "../brains/workspace-context";
+import { relationshipEngine } from "../brains/relationship-engine";
+import { companionMood } from "../brains/companion-mood";
+import { companionEvolution } from "../brains/companion-evolution";
 import { modelRouter } from "./model-router";
 import type {
   BootstrapProgress,
@@ -69,6 +74,11 @@ export async function bootstrap(onProgress: ProgressCb): Promise<BootstrapResult
   try {
     permissionSystem.init(userData);
     memoryBrain.init(userData);
+    knowledgeGraph.init(userData);
+    relationshipEngine.init(userData);
+    companionEvolution.init(userData);
+    // companionMood is stateless — no init needed
+    // workspaceContext is stateless — no init needed
   } catch (e) {
     // Non-fatal — continue with defaults.
   }

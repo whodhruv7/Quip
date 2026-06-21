@@ -176,3 +176,27 @@ body {
   color: rgba(var(--quip-text-soft), 0.85);
   font-weight: 500;
 }
+
+/* Trust-layer note (shown beneath assistant messages). */
+.trust-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 10px;
+  border-radius: 10px;
+  background: rgba(var(--quip-line), 0.03);
+  font-size: 11px;
+  line-height: 14px;
+  color: rgba(var(--quip-text-soft), 0.9);
+  font-weight: 500;
+  font-style: italic;
+}
+.trust-note-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  opacity: 0.7;
+}

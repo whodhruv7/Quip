@@ -147,7 +147,7 @@ export interface CapabilityResolution {
   capability: CapabilityId;
   available: boolean;
   implementation: CapabilityImplementation | null;
-  fallback?: { available: boolean; implementation: CapabilityImplementation } | null;
+  fallback?: { capability?: CapabilityId; available: boolean; implementation: CapabilityImplementation } | null;
 }
 
 // ─── Task Brain ─────────────────────────────────────────────────────────────
@@ -312,6 +312,7 @@ export type QuipAPI = {
     requestId: string;
     command: string;
   }) => Promise<TaskResultPayload>;
+  setCompanion: (id: CompanionId) => void;
   onTaskProgress: (cb: (p: TaskProgress) => void) => () => void;
   onConfirmationRequest: (cb: (req: ConfirmationRequest) => void) => () => void;
   resolveConfirmation: (id: string, approved: boolean) => void;
@@ -330,6 +331,26 @@ export type QuipAPI = {
   // Memory
   getMemories: () => Promise<UserKnowledge | null>;
   forgetMemory: (id: string) => Promise<void>;
+  pinMemory: (id: string) => Promise<void>;
+  pruneMemories: () => Promise<{ total: number; pruned: number; retained: number }>;
+
+  // Knowledge graph
+  getKnowledgeGraph: () => Promise<unknown | null>;
+  removeEntity: (id: string) => Promise<void>;
+
+  // Workspace context
+  getWorkspaceContext: () => Promise<unknown | null>;
+
+  // Relationship engine
+  getUserProfile: () => Promise<unknown | null>;
+  resetUserProfile: () => Promise<void>;
+
+  // Companion mood
+  getCompanionMood: (companionId: CompanionId) => Promise<unknown | null>;
+
+  // Companion evolution
+  getCompanionProgression: () => Promise<unknown | null>;
+  onCosmeticUnlock: (cb: (unlock: unknown) => void) => () => void;
 
   // Model
   getModelStatus: () => Promise<ModelRouterStatus | null>;

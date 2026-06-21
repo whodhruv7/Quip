@@ -114,6 +114,36 @@ class MemoryBrain {
     this.save();
   }
 
+  /** Pin a memory so it never decays. Sets weight high + importance high. */
+  pin(id: string): void {
+    const m = this.knowledge.memories.find((e) => e.id === id);
+    if (m) {
+      m.weight = 10;
+      m.importance = "high";
+      m.updatedAt = Date.now();
+      this.rebuildDigest();
+      this.save();
+    }
+  }
+
+  /** Unpin a memory — resets weight to 1 but keeps importance. */
+  unpin(id: string): void {
+    const m = this.knowledge.memories.find((e) => e.id === id);
+    if (m) {
+      m.weight = 1;
+      m.updatedAt = Date.now();
+      this.rebuildDigest();
+      this.save();
+    }
+  }
+
+  /** Bulk-replace memories (used by the prune operation). */
+  replaceAll(memories: MemoryEntry[]): void {
+    this.knowledge.memories = memories;
+    this.rebuildDigest();
+    this.save();
+  }
+
   /** Compressed prompt summary of what we know about the user. */
   private rebuildDigest(): void {
     const m = this.knowledge.memories;

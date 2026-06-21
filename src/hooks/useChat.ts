@@ -26,9 +26,12 @@ import {
 const uid = () =>
   Math.random().toString(36).slice(2) + Date.now().toString(36);
 
-export function useChat(companionId: CompanionId) {
-  const [messages, setMessages] = useState<ChatMessage[]>(() =>
-    loadCurrentMessages(companionId)
+export function useChat(
+  companionId: CompanionId,
+  initialMessages?: ChatMessage[]
+) {
+  const [messages, setMessages] = useState<ChatMessage[]>(
+    () => initialMessages ?? loadCurrentMessages(companionId)
   );
   const [sessions, setSessions] = useState<ChatSession[]>(() =>
     loadSessions().filter((s) => s.companionId === companionId)
@@ -50,6 +53,12 @@ export function useChat(companionId: CompanionId) {
     setError(null);
     setBusy(false);
     activeRequestId.current = null;
+    // Notify main process of companion switch (for system prompt personality/mood)
+    try {
+      window.quip.setCompanion(companionId);
+    } catch {
+      /* non-fatal */
+    }
   }, [companionId]);
 
   // Subscribe to streamed chat events + task events.
