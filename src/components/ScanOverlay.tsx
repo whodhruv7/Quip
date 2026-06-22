@@ -32,21 +32,21 @@ export function ScanOverlay({ companionId, onProgress, onDone }: ScanOverlayProp
   const theme = getCompanion(companionId as any);
 
   useEffect(() => {
+    // Fast fallback: 1.2s max — app should feel instant
     const fallback = setTimeout(() => {
       setVisible(false);
-      setTimeout(() => onDone?.(), 200);
-    }, 2500);
+      setTimeout(() => onDone?.(), 150);
+    }, 1200);
 
     const off = window.quip.onBootstrapProgress((p) => {
       setProgress(p);
       onProgress?.(p);
       if (p.done) {
-        // Small delay so the user sees "Ready" before it fades.
         clearTimeout(fallback);
         setTimeout(() => {
           setVisible(false);
-          setTimeout(() => onDone?.(), 300);
-        }, 500);
+          setTimeout(() => onDone?.(), 200);
+        }, 200);
       }
     });
     return () => {

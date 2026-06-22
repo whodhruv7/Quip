@@ -1,13 +1,13 @@
 // Quip V2 — application root.
 //
-// CRITICAL FIX (Companion Toggle):
-//   - Single tap opens chat. Next tap (or X, or tap-outside) closes it.
-//   - On close, conversation is saved to history (not lost).
-//   - No stacking: 200ms debounce prevents rapid-tap thrash.
-//   - On reopen, conversation restores from history.
+// SIMPLE LAYOUT:
+//   - Companion sprite: bottom-right corner, ALWAYS visible (zIndex 100)
+//   - Chat panel: floats ABOVE the companion (gap between them), toggles on tap
+//   - Tap companion = open chat. Tap again = close chat. Fast. Simple.
+//   - No tap-outside catcher (was causing companion tap issues)
+//   - X button in chat closes it too
 //
-// Layout: Companion is ALWAYS visible (bottom-right, floating, draggable).
-// Chat PANEL toggles open/closed. Settings overlays everything.
+// The companion is NEVER hidden by the chat panel — they're stacked vertically.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
@@ -20,8 +20,6 @@ import { ScanOverlay } from "@/components/ScanOverlay";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { useChat } from "@/hooks/useChat";
 import { useWindowDrag } from "@/hooks/useWindowDrag";
-import { useSpatialLayout } from "@/hooks/useSpatialLayout";
-import { useKeyboardShortcuts } from "@/hooks/useKeyboard";
 import {
   loadPrefs,
   savePrefs,
@@ -32,150 +30,76 @@ import {
 import { getCompanion } from "@/lib/companion-config";
 import type { ChatMessage, CompanionId, PixState } from "@/types";
 
-// ─── Chat State Machine ─────────────────────────────────────────────────────
-// idle     → chat closed, no recent conversation
-// open     → chat visible, accepting input
-// closing  → close animation playing (150ms), taps ignored
-// history  → chat closed, but conversation saved — reopen restores it
-type ChatState = "idle" | "open" | "closing" | "history";
+// ─── Layout constants ───────────────────────────────────────────────────────
+const COMPANION_SIZE = 72;
+const COMPANION_MARGIN = 24;        // distance from screen edge
+const PANEL_GAP = 12;               // gap between companion top and panel bottom
+const PANEL_WIDTH = 380;
+const PANEL_HEIGHT = 520;
 
-const TAP_DEBOUNCE_MS = 200;
-const CLOSE_ANIMATION_MS = 180;
+// Chat state: simple toggle. open = visible, closed = hidden.
+type ChatState = "closed" | "open";
 
 export default function App() {
   const [companionId, setCompanionId] = useState<CompanionId>(() => loadPrefs().companionId);
-  const [chatState, setChatState] = useState<ChatState>("idle");
+  const [chatState, setChatState] = useState<ChatState>("closed");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [scanDone, setScanDone] = useState(false);
   const [hovering, setHovering] = useState(false);
   const [moodSpeed, setMoodSpeed] = useState(1);
   const [cosmetics, setCosmetics] = useState<string[]>([]);
   const [unlockToast, setUnlockToast] = useState<string | null>(null);
-  const [companionScreenPos, setCompanionScreenPos] = useState<{ x: number; y: number } | null>(null);
 
-  // Restore messages from storage on mount (history persistence)
   const [restoredMessages, setRestoredMessages] = useState<ChatMessage[]>(() =>
     loadCurrentMessages(companionId)
   );
 
   const { messages, busy: chatBusy, error, send, newChat, clearError } = useChat(companionId, restoredMessages);
   const drag = useWindowDrag(true);
-  const spatial = useSpatialLayout();
 
-  // Debounce tracking — prevents rapid-tap stacking
-  const lastStateChange = useRef(0);
-  const isAnimatingClose = useRef(false);
+  // ─── Toggle: tap companion = open/close chat ───────────────────────────
+  const lastTap = useRef(0);
 
-  // ─── Toggle Handler ──────────────────────────────────────────────────────
-  // Single tap toggles. Debounced. During close animation, taps are ignored.
   const handleCompanionTap = useCallback(() => {
     // Ignore if this was a drag, not a tap
     if (drag.totalMoved() > 5) return;
 
-    // Debounce: ignore taps within TAP_DEBOUNCE_MS of the last state change
+    // Debounce: 150ms between taps (fast but no thrash)
     const now = Date.now();
-    if (now - lastStateChange.current < TAP_DEBOUNCE_MS) return;
-    lastStateChange.current = now;
+    if (now - lastTap.current < 150) return;
+    lastTap.current = now;
 
-    // Ignore taps during close animation
-    if (isAnimatingClose.current) return;
+    setChatState((prev) => (prev === "open" ? "closed" : "open"));
+  }, [drag]);
 
-    setChatState((prev) => {
-      switch (prev) {
-        case "idle":
-        case "history":
-          // Open: restore from history (messages are already in useChat)
-          return "open";
-        case "open":
-          // Close: save to history first, then animate close
-          saveCurrentMessages(companionId, messages);
-          archiveSession(companionId, messages);
-          isAnimatingClose.current = true;
-          return "closing";
-        case "closing":
-          // Already closing — ignore
-          return "closing";
-      }
-    });
-  }, [companionId, messages, drag]);
-
-  // ─── Close handler (from X button or tap-outside) ────────────────────────
+  // ─── Close chat (from X button) ────────────────────────────────────────
   const handleClose = useCallback(() => {
-    const now = Date.now();
-    if (now - lastStateChange.current < TAP_DEBOUNCE_MS) return;
-    lastStateChange.current = now;
-    if (isAnimatingClose.current) return;
-
+    setChatState("closed");
     saveCurrentMessages(companionId, messages);
-    archiveSession(companionId, messages);
-    isAnimatingClose.current = true;
-    setChatState("closing");
   }, [companionId, messages]);
 
-  // ─── Animation end handler ───────────────────────────────────────────────
-  const handleExitComplete = useCallback(() => {
-    isAnimatingClose.current = false;
-    setChatState((prev) => (prev === "closing" ? "history" : prev));
-  }, []);
-
-  // ─── New chat handler ────────────────────────────────────────────────────
+  // ─── New chat ──────────────────────────────────────────────────────────
   const handleNewChat = useCallback(() => {
     newChat();
     setRestoredMessages([]);
     saveCurrentMessages(companionId, []);
   }, [companionId, newChat]);
 
-  // ─── Companion switch ────────────────────────────────────────────────────
+  // ─── Switch companion ──────────────────────────────────────────────────
   const switchCompanion = useCallback((id: CompanionId) => {
-    // Save current conversation before switching
     saveCurrentMessages(companionId, messages);
     setCompanionId(id);
     savePrefs({ companionId: id });
-    // Tell the main process which companion is active (for system prompt)
     try {
       window.quip.setCompanion(id);
     } catch {
-      /* non-fatal — main may not be ready */
+      /* non-fatal */
     }
-    // Load the new companion's last conversation
     const restored = loadCurrentMessages(id);
     setRestoredMessages(restored);
-    setChatState(restored.length > 0 ? "open" : "idle");
   }, [companionId, messages]);
 
-  // ─── Keyboard shortcuts (wired after handlers are defined) ─────────────
-  useKeyboardShortcuts({
-    onToggleChat: handleCompanionTap,
-    onCloseChat: handleClose,
-    onOpenSettings: () => setSettingsOpen(true),
-    onNewChat: handleNewChat,
-    onSwitchCompanion: switchCompanion,
-    isSettingsOpen: settingsOpen,
-  });
-
-  // ─── Track companion screen position (for panel transformOrigin) ──────
-  const companionRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const updatePos = () => {
-      const el = companionRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      setCompanionScreenPos({
-        x: rect.left + rect.width / 2,
-        y: rect.top + rect.height / 2,
-      });
-    };
-    updatePos();
-    window.addEventListener("resize", updatePos);
-    // Also update after drag ends
-    const interval = setInterval(updatePos, 1000);
-    return () => {
-      window.removeEventListener("resize", updatePos);
-      clearInterval(interval);
-    };
-  }, []);
-
-  // ─── On mount: tell main which companion is active ──────────────────────
+  // ─── On mount: tell main which companion is active ─────────────────────
   useEffect(() => {
     try {
       window.quip.setCompanion(companionId);
@@ -184,7 +108,7 @@ export default function App() {
     }
   }, [companionId]);
 
-  // ─── Fetch companion mood (animation speed) + cosmetics ────────────────
+  // ─── Fetch mood + cosmetics ────────────────────────────────────────────
   useEffect(() => {
     let active = true;
     const fetchMood = async () => {
@@ -212,25 +136,20 @@ export default function App() {
     };
     fetchMood();
     fetchCosmetics();
-    const interval = setInterval(() => {
-      fetchMood();
-    }, 60_000); // refresh mood every minute
+    const interval = setInterval(fetchMood, 60_000);
     return () => {
       active = false;
       clearInterval(interval);
     };
   }, [companionId]);
 
-  // ─── Listen for cosmetic unlocks ────────────────────────────────────────
+  // ─── Listen for cosmetic unlocks ───────────────────────────────────────
   useEffect(() => {
     const off = window.quip.onCosmeticUnlock((unlock: any) => {
       if (unlock && unlock.companion === companionId) {
         setUnlockToast(unlock.name);
-        // Add to cosmetics list
         setCosmetics((prev) => [...prev, unlock.id]);
-        // Clear toast after 4 seconds
         setTimeout(() => setUnlockToast(null), 4000);
-        // Refresh full cosmetics list
         window.quip.getCompanionProgression().then((prog) => {
           if (prog) {
             const p = (prog as any)[companionId];
@@ -244,14 +163,7 @@ export default function App() {
     return off;
   }, [companionId]);
 
-  // ─── Persist messages on every change (debounced via useChat) ────────────
-  useEffect(() => {
-    if (chatState === "open" && messages.length > 0) {
-      saveCurrentMessages(companionId, messages);
-    }
-  }, [messages, companionId, chatState]);
-
-  // ─── Companion animation state ───────────────────────────────────────────
+  // ─── Companion animation state ─────────────────────────────────────────
   const isResponding =
     chatBusy &&
     messages.some((m) => m.role === "assistant" && m.streaming && m.content.length > 0);
@@ -264,16 +176,7 @@ export default function App() {
       : "idle";
 
   const theme = getCompanion(companionId);
-  const showPanel = chatState === "open" || chatState === "closing";
-  // During close animation, disable all pointer events inside the panel
-  // to prevent accidental sends / clicks while it's animating away.
-  const panelInteractive = chatState === "open";
-
-  // Dynamic transform origin: panel grows FROM the companion sprite's
-  // actual position on screen. Falls back to "bottom right" if unknown.
-  const transformOrigin = companionScreenPos
-    ? `${companionScreenPos.x}px ${companionScreenPos.y}px`
-    : "bottom right";
+  const showPanel = chatState === "open";
 
   return (
     <div
@@ -284,70 +187,52 @@ export default function App() {
         pointerEvents: "none",
       }}
     >
-      {/* ─── Tap-outside catcher (closes chat when tapping outside) ──────── */}
-      {showPanel && (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            pointerEvents: "auto",
-            zIndex: 5,
-          }}
-          onPointerDown={(e) => {
-            // Only close if the click was on this backdrop itself
-            if (e.target === e.currentTarget) {
-              handleClose();
-            }
-          }}
-        />
-      )}
-
-      {/* ─── Chat PANEL — toggles on companion tap ─────────────────────── */}
-      {/* Position from Spatial Brain — never overflows off-screen. */}
+      {/* ─── CHAT PANEL — floats above companion ────────────────────────── */}
+      {/* Positioned: bottom-right, offset UP so companion is visible below */}
       <div
         style={{
           position: "absolute",
-          right: 20,
-          bottom: 120,
+          right: COMPANION_MARGIN,
+          bottom: COMPANION_SIZE + COMPANION_MARGIN + PANEL_GAP,
           pointerEvents: "none",
-          zIndex: 10,
+          zIndex: 50,
         }}
       >
-        <AnimatePresence onExitComplete={handleExitComplete}>
+        <AnimatePresence>
           {showPanel && (
             <motion.div
               key="chat-panel"
-              initial={{ opacity: 0, y: 24, scale: 0.92, transformOrigin }}
+              initial={{ opacity: 0, y: 20, scale: 0.95 }}
               animate={{
                 opacity: 1,
                 y: 0,
                 scale: 1,
                 transition: {
                   type: "spring",
-                  stiffness: 380,
-                  damping: 32,
-                  mass: 0.8,
+                  stiffness: 400,
+                  damping: 30,
+                  mass: 0.7,
                 },
               }}
               exit={{
                 opacity: 0,
-                y: 16,
-                scale: 0.94,
-                transition: { duration: CLOSE_ANIMATION_MS / 1000, ease: [0.4, 0, 1, 1] },
+                y: 15,
+                scale: 0.96,
+                transition: { duration: 0.15, ease: [0.4, 0, 1, 1] },
               }}
               style={{
-                pointerEvents: panelInteractive ? "auto" : "none",
-                width: spatial?.chatPanel.width ?? 400,
-                height: spatial?.chatPanel.height ?? 560,
-                borderRadius: 18,
+                pointerEvents: "auto",
+                width: PANEL_WIDTH,
+                height: PANEL_HEIGHT,
+                borderRadius: 20,
                 overflow: "hidden",
                 display: "flex",
                 flexDirection: "column",
-                background: "rgba(255,255,255,0.65)",
-                backdropFilter: "blur(30px)",
-                WebkitBackdropFilter: "blur(30px)",
-                border: "1px solid rgba(255,255,255,0.5)",
-                boxShadow: "0 20px 60px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.03)",
+                background: "rgba(255,255,255,0.72)",
+                backdropFilter: "blur(30px) saturate(180%)",
+                WebkitBackdropFilter: "blur(30px) saturate(180%)",
+                border: "1px solid rgba(255,255,255,0.6)",
+                boxShadow: "0 20px 60px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.03)",
               }}
             >
               <TopBar
@@ -358,7 +243,7 @@ export default function App() {
                 onClose={handleClose}
               />
 
-              {/* Error banner — with dismiss + retry hint */}
+              {/* Error banner */}
               {error && (
                 <div
                   style={{
@@ -404,7 +289,7 @@ export default function App() {
               {/* Input */}
               <ChatInput onSend={send} busy={chatBusy} companionId={companionId} />
 
-              {/* Settings overlay (inside panel) */}
+              {/* Settings overlay */}
               <SettingsPanel
                 open={settingsOpen}
                 companionId={companionId}
@@ -416,22 +301,21 @@ export default function App() {
         </AnimatePresence>
       </div>
 
-      {/* ─── COMPANION SPRITE — ALWAYS visible ─────────────────────────── */}
+      {/* ─── COMPANION SPRITE — ALWAYS visible, bottom-right ─────────────── */}
+      {/* zIndex 100 = always on top of chat panel */}
       <div
-        ref={companionRef}
         role="button"
-        aria-label={`${theme.name} companion — tap to ${showPanel ? "close" : "open"} chat. Keyboard: Cmd+K`}
+        aria-label={`${theme.name} companion — tap to ${showPanel ? "close" : "open"} chat`}
         tabIndex={0}
         style={{
           position: "absolute",
-          right: 30,
-          bottom: 20,
-          width: 72,
-          height: 88,
+          right: COMPANION_MARGIN,
+          bottom: COMPANION_MARGIN,
+          width: COMPANION_SIZE + 8,
+          height: COMPANION_SIZE + 16,
           pointerEvents: "auto",
           cursor: "grab",
-          transition: "filter 200ms",
-          zIndex: 20,
+          zIndex: 100,
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -439,10 +323,7 @@ export default function App() {
             handleCompanionTap();
           }
         }}
-        onPointerEnter={() => {
-          setHovering(true);
-          (document.activeElement as HTMLElement)?.blur?.();
-        }}
+        onPointerEnter={() => setHovering(true)}
         onPointerLeave={() => setHovering(false)}
         onPointerDown={drag.onPointerDown}
         onPointerMove={drag.onPointerMove}
@@ -454,7 +335,7 @@ export default function App() {
         <Companion
           id={companionId}
           state={pixState}
-          size={64}
+          size={COMPANION_SIZE}
           unlockedCosmetics={cosmetics}
           moodSpeed={moodSpeed}
         />
@@ -522,7 +403,7 @@ export default function App() {
         <ScanOverlay companionId={companionId} onDone={() => setScanDone(true)} />
       )}
 
-      {/* Cosmetic unlock toast — celebratory feedback */}
+      {/* Cosmetic unlock toast */}
       <AnimatePresence>
         {unlockToast && (
           <motion.div
@@ -534,7 +415,7 @@ export default function App() {
               position: "absolute",
               bottom: 130,
               right: 20,
-              zIndex: 30,
+              zIndex: 200,
               pointerEvents: "none",
               background: "rgba(255,255,255,0.95)",
               backdropFilter: "blur(20px)",
