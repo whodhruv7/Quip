@@ -56,10 +56,13 @@ import { companionEvolution } from "./brains/companion-evolution";
 import { runPrune } from "./brains/memory-importance";
 import { observeMessages, resetExtractionCount } from "./brains/memory-extractor";
 
+<<<<<<< HEAD
 // Execution Engine V2
 import { orchestrator } from "./engine/orchestrator";
 import { permissionSystem as execPermissionSystem, type ApprovalRequest } from "./engine/permission-modes";
 
+=======
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 import type {
   DeviceProfile,
   WorldModel,
@@ -262,6 +265,7 @@ function buildSystemPrompt(userMessage?: string): string {
 }
 
 // ---------------------------------------------------------------------------
+<<<<<<< HEAD
 // Window
 // ---------------------------------------------------------------------------
 function createWindow() {
@@ -295,6 +299,22 @@ function createWindow() {
     height: h,
     x,
     y,
+=======
+// Window — FULL-SCREEN, transparent, click-through overlay.
+// The companion + chat panel float anywhere on screen. The empty area lets
+// clicks pass through to the desktop / apps behind. We toggle click-through
+// off when the chat panel is open (so the input + messages are interactive).
+// ---------------------------------------------------------------------------
+function createWindow() {
+  const display = screen.getPrimaryDisplay();
+  const area = display.bounds;
+
+  mainWindow = new BrowserWindow({
+    width: area.width,
+    height: area.height,
+    x: area.x,
+    y: area.y,
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
     frame: false,
     transparent: true,
     resizable: false,
@@ -318,13 +338,21 @@ function createWindow() {
   mainWindow.setVisibleOnAllWorkspaces(true, {
     visibleOnFullScreen: true,
   });
+<<<<<<< HEAD
+=======
+  // Keep the window interactive by default so the companion can always be tapped.
+  setClickThrough(false);
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   mainWindow.showInactive();
   mainWindow.moveTop();
 
   mainWindow.once("ready-to-show", () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.show();
+<<<<<<< HEAD
       mainWindow.focus();
+=======
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
       mainWindow.moveTop();
     }
   });
@@ -334,6 +362,7 @@ function createWindow() {
   } else if (isDev) {
     mainWindow.loadURL("http://localhost:5173");
   } else {
+<<<<<<< HEAD
     mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
   }
 
@@ -343,6 +372,11 @@ function createWindow() {
     writePosition(px, py);
   });
 
+=======
+    mainWindow.loadFile(path.join(__dirname, "../../dist/index.html"));
+  }
+
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   if (isDev) {
     mainWindow.webContents.on("did-finish-load", () => {
       mainWindow?.webContents.openDevTools({ mode: "detach" });
@@ -350,6 +384,18 @@ function createWindow() {
   }
 }
 
+<<<<<<< HEAD
+=======
+// Toggle whether the whole window ignores mouse events. When click-through is
+// ON, only elements with explicit pointer-events:auto receive clicks.
+function setClickThrough(enabled: boolean) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  // We intentionally do not use click-through in the default interaction model.
+  // If this is ever enabled again, do it without forwarding so taps stay sane.
+  mainWindow.setIgnoreMouseEvents(enabled, { forward: false });
+}
+
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 function focusMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
@@ -364,6 +410,14 @@ function sendToRenderer(channel: string, data: unknown) {
   }
 }
 
+<<<<<<< HEAD
+=======
+function syncWindowToSpatial(_cfg: SpatialConfig | null) {
+  // NO-OP: window is full-screen overlay. Companion position is handled
+  // locally in the renderer via React state + pointer-events.
+}
+
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 // ---------------------------------------------------------------------------
 // Tray
 // ---------------------------------------------------------------------------
@@ -404,6 +458,16 @@ ipcMain.handle(IPC.GET_WINDOW_POSITION, () => {
   return { x, y };
 });
 
+<<<<<<< HEAD
+=======
+// Renderer toggles click-through: when the chat panel is open we need the
+// panel area to receive clicks (but the rest of the overlay still passes
+// through). We keep forward:true so the companion stays hoverable.
+ipcMain.on(IPC.SET_IGNORE_MOUSE, (_e, ignore: boolean) => {
+  setClickThrough(ignore);
+});
+
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 // ---------------------------------------------------------------------------
 // IPC — chat streaming (via model router)
 // ---------------------------------------------------------------------------
@@ -508,12 +572,17 @@ ipcMain.on("quip:set-companion", (_e, id: "pix" | "kai" | "zee") => {
 });
 
 // ---------------------------------------------------------------------------
+<<<<<<< HEAD
 // IPC — task execution (via Execution Engine V2 orchestrator)
+=======
+// IPC — task execution (via task brain)
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 // ---------------------------------------------------------------------------
 ipcMain.handle(
   IPC.TASK_EXECUTE,
   async (_e, payload: TaskExecutePayload): Promise<TaskResultPayload> => {
     const profile = deviceProfile ?? (await ensureProfile(app.getPath("userData")));
+<<<<<<< HEAD
     const platform = profile.platform;
 
     // Set up approval callback — forwards to renderer
@@ -535,6 +604,37 @@ ipcMain.handle(
 
     // Record task completion for companion evolution
     if (result.success && result.stepsTotal > 0) {
+=======
+    const env = environmentBrain.get();
+
+    const result = await runTask(payload.command, payload.requestId, profile, env, {
+      onProgress: (step, total, description) => {
+        sendToRenderer(IPC.TASK_PROGRESS, {
+          requestId: payload.requestId,
+          step,
+          total,
+          description,
+        } as TaskProgressPayload);
+      },
+      requestConfirmation: (description, capability) => {
+        return new Promise<boolean>((resolve) => {
+          const id = `confirm-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          pendingConfirmations.set(id, { resolve });
+
+          const req: ConfirmationRequest = {
+            id,
+            requestId: payload.requestId,
+            description,
+            capability,
+          };
+          sendToRenderer(IPC.CONFIRMATION_REQUEST, req);
+        });
+      },
+    });
+
+    // ─── Record task completion for companion evolution ───────────────
+    if (result.success && !result.plan?.isChat) {
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
       try {
         companionEvolution.recordTask(currentCompanionId);
       } catch {
@@ -542,6 +642,7 @@ ipcMain.handle(
       }
     }
 
+<<<<<<< HEAD
     return {
       requestId: payload.requestId,
       success: result.success,
@@ -586,6 +687,12 @@ ipcMain.handle("quip:cycle-permission-mode", () => {
   return { mode: execPermissionSystem.getMode(), label: execPermissionSystem.getModeLabel() };
 });
 
+=======
+    return result;
+  }
+);
+
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 ipcMain.on(
   IPC.CONFIRMATION_RESOLVE,
   (_e, payload: ConfirmationResolvePayload) => {
@@ -720,6 +827,18 @@ ipcMain.handle(IPC.GET_PERMISSIONS, () => {
   return permissionSystem.listRules();
 });
 
+<<<<<<< HEAD
+=======
+ipcMain.handle(IPC.GET_PERMISSION_MODE, () => {
+  return permissionSystem.getMode();
+});
+
+ipcMain.handle(IPC.SET_PERMISSION_MODE, (_e, mode: "ask" | "task" | "full") => {
+  permissionSystem.setMode(mode);
+  return permissionSystem.getMode();
+});
+
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 ipcMain.handle(
   IPC.UPDATE_PERMISSION,
   (_e, { capability, granted }: { capability: string; granted: boolean }) => {
@@ -736,12 +855,17 @@ function sendBootstrapProgress(p: BootstrapProgress) {
 }
 
 // ---------------------------------------------------------------------------
+<<<<<<< HEAD
 // App lifecycle — bootstrap on ready
+=======
+// App lifecycle — window FIRST, then bootstrap in background
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 // ---------------------------------------------------------------------------
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.whenReady().then(async () => {
+<<<<<<< HEAD
     // Run the full bootstrap pipeline.
     let bootResult: BootstrapResult;
     try {
@@ -774,11 +898,48 @@ if (!app.requestSingleInstanceLock()) {
     environmentBrain.subscribe((env: EnvironmentState) => {
       sendToRenderer(IPC.ENVIRONMENT_CHANGE, env);
       // Feed companion mood (throttled internally)
+=======
+    // Create window IMMEDIATELY so the user sees the companion right away.
+    // Bootstrap runs in background and doesn't block the UI.
+    createWindow();
+    createTray();
+
+    // Run bootstrap in background — non-blocking.
+    bootstrap(sendBootstrapProgress)
+      .then((bootResult) => {
+        if (bootResult.profile) {
+          deviceProfile = bootResult.profile;
+        }
+        if (bootResult.worldModel) {
+          worldModel = bootResult.worldModel;
+        }
+
+        if (deviceProfile) {
+          spatialConfig = computeSpatial(deviceProfile);
+          syncWindowToSpatial(spatialConfig);
+          watchSpatial(deviceProfile, (cfg) => {
+            spatialConfig = cfg;
+            syncWindowToSpatial(cfg);
+            sendToRenderer(IPC.SPATIAL_CHANGE, cfg);
+          });
+          // Notify renderer that spatial config is ready
+          sendToRenderer(IPC.SPATIAL_CHANGE, spatialConfig);
+        }
+      })
+      .catch(() => {
+        // Non-fatal — app still works without bootstrap
+      });
+
+    // Subscribe to environment changes immediately.
+    environmentBrain.subscribe((env: EnvironmentState) => {
+      sendToRenderer(IPC.ENVIRONMENT_CHANGE, env);
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
       try {
         companionMood.observeEnvironment(env);
       } catch {
         /* non-fatal */
       }
+<<<<<<< HEAD
       // Refresh workspace context periodically (it reads the foreground window)
       workspaceContext.refresh().catch(() => {});
     });
@@ -787,6 +948,11 @@ if (!app.requestSingleInstanceLock()) {
     createWindow();
     createTray();
 
+=======
+      workspaceContext.refresh().catch(() => {});
+    });
+
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });

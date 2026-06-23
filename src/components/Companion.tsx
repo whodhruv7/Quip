@@ -14,6 +14,10 @@
 import { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { CompanionId, PixState } from "@/types";
+<<<<<<< HEAD
+=======
+import { Pix3D } from "@/components/Pix3D";
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 
 // ---------------------------------------------------------------------------
 // Motion variants — subtle, calm, alive
@@ -267,11 +271,24 @@ export function Companion({ id, state, size = 80, unlockedCosmetics = [], moodSp
   const [blink, setBlink] = useState(false);
   const [eyeOffset, setEyeOffset] = useState({ x: 0, y: 0 });
   const [wakingUp, setWakingUp] = useState(false);
+<<<<<<< HEAD
+=======
+  const [pix3dFailed, setPix3dFailed] = useState(false);
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   const containerRef = useRef<HTMLDivElement>(null);
   const theme = COMPANIONS.find((c) => c.id === id)!;
   const asleep = state === "sleeping";
   const prevState = useRef(state);
 
+<<<<<<< HEAD
+=======
+  useEffect(() => {
+    if (id === "pix") {
+      setPix3dFailed(false);
+    }
+  }, [id]);
+
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   // Eye tracking: eyes follow cursor when nearby
   useEffect(() => {
     if (asleep) return;
@@ -381,6 +398,7 @@ export function Companion({ id, state, size = 80, unlockedCosmetics = [], moodSp
         }}
       />
 
+<<<<<<< HEAD
       <svg
         viewBox="-2 -4 36 38"
         width={size}
@@ -422,6 +440,57 @@ export function Companion({ id, state, size = 80, unlockedCosmetics = [], moodSp
           </motion.g>
         )}
       </svg>
+=======
+      {id === "pix" && !pix3dFailed ? (
+        <Pix3D
+          state={state}
+          moodSpeed={moodSpeed}
+          onLoadError={() => setPix3dFailed(true)}
+        />
+      ) : (
+        <svg
+          viewBox="-2 -4 36 38"
+          width={size}
+          height={size + 8}
+          style={{ position: "relative", display: "block", overflow: "visible" }}
+        >
+          <defs>
+            <radialGradient id={`face-${id}`} cx="50%" cy="42%" r="65%">
+              <stop offset="0%" stopColor={theme.dark} />
+              <stop offset="100%" stopColor="#000" stopOpacity="0.15" />
+            </radialGradient>
+          </defs>
+
+          {/* Shadow */}
+          <ellipse cx="16" cy="32" rx="8" ry="1.8" fill="rgba(0,0,0,0.08)" />
+
+          <Body t={theme} asleep={asleep} blinking={blink} eyeOffset={eyeOffset} />
+
+          {/* ─── Cosmetic upgrades (rendered on top of body) ──────────── */}
+          <Cosmetics id={id} unlocked={unlockedCosmetics} theme={theme} />
+
+          {/* Thinking/responding mouth glow */}
+          {(state === "thinking" || state === "responding") && !asleep && (
+            <motion.rect
+              x="14" y="19.5" width="4" height="1.8" rx="0.9"
+              fill={theme.mouthThinking}
+              animate={{ opacity: [0.5, 1, 0.5] }}
+              transition={{ duration: 1 / moodSpeed, repeat: Infinity }}
+            />
+          )}
+
+          {/* Sleeping Z's */}
+          {asleep && (
+            <motion.g
+              animate={{ y: -3, opacity: [0, 0.6, 0] }}
+              transition={{ duration: 2.5, repeat: Infinity }}
+            >
+              <text x="26" y="8" fontSize="6" fill={theme.primary} fontWeight="bold" fontFamily="monospace">z</text>
+            </motion.g>
+          )}
+        </svg>
+      )}
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
     </motion.div>
   );
 }

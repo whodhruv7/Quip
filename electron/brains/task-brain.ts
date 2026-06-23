@@ -204,11 +204,20 @@ export function parseIntent(raw: string): ParsedIntent {
   }
 
   // --- Open editor ---
+<<<<<<< HEAD
   if (contains(text, ["vscode", "vs code", "visual studio code", "cursor", "editor", "code editor"])) {
     const isCursor = contains(text, ["cursor"]);
     return {
       type: "open_app",
       target: isCursor ? "cursor" : "vscode",
+=======
+  if (contains(text, ["vscode", "vs code", "visual studio code", "cursor", "editor", "code editor", "codex"])) {
+    const isCursor = contains(text, ["cursor"]);
+    const isCodex = contains(text, ["codex"]);
+    return {
+      type: "open_app",
+      target: isCursor ? "cursor" : isCodex ? "codex" : "vscode",
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
       query: null,
       confidence: 0.85,
       verbs,
@@ -242,6 +251,26 @@ export function parseIntent(raw: string): ParsedIntent {
     };
   }
 
+<<<<<<< HEAD
+=======
+  // --- Open a direct file/folder path ---
+  if (
+    /^[a-z]:[\\/]/i.test(raw.trim()) ||
+    raw.trim().startsWith("\\\\") ||
+    raw.trim().startsWith("/") ||
+    /\.[a-z0-9]{1,6}$/i.test(raw.trim())
+  ) {
+    return {
+      type: "navigate",
+      target: "files",
+      query: raw.trim(),
+      confidence: 0.88,
+      verbs,
+      raw: text,
+    };
+  }
+
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   // --- Open terminal ---
   if (contains(text, ["terminal", "cmd", "command prompt", "powershell"])) {
     return {
@@ -262,6 +291,27 @@ export function parseIntent(raw: string): ParsedIntent {
     return { type: "open_app", target: "notepad", query: null, confidence: 0.8, verbs, raw: text };
   }
 
+<<<<<<< HEAD
+=======
+  // --- Generic open app fallback ---
+  if (contains(text, ["open", "launch", "start", "run", "khol", "kholo", "chala", "chalao"])) {
+    const target = extractTopic(raw, [
+      "open", "launch", "start", "run", "app", "application", "program", "software",
+      "please", "can", "you", "my", "the", "this", "that", "khol", "kholo", "chala", "chalao",
+    ]);
+    if (target) {
+      return {
+        type: "open_app",
+        target,
+        query: null,
+        confidence: 0.7,
+        verbs,
+        raw: text,
+      };
+    }
+  }
+
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   // --- Default: chat (let the LLM handle it) ---
   return {
     type: "chat",
@@ -384,6 +434,7 @@ function buildPlan(
 
     case "open_app": {
       const target = intent.target ?? "";
+<<<<<<< HEAD
       const idMap: Record<string, { cap: CapabilityId; cat: string; pref: string | null }> = {
         vscode: { cap: "openEditor", cat: "editor", pref: "vscode" },
         cursor: { cap: "openEditor", cat: "editor", pref: "cursor" },
@@ -391,18 +442,53 @@ function buildPlan(
         calc: { cap: "noop", cat: "system", pref: null },
         notepad: { cap: "noop", cat: "notes", pref: null },
       };
+=======
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
       if (target === "calc") {
         add("systemControl", "Open Calculator", { appId: "calc" }, false);
         summary = "Opened Calculator";
       } else if (target === "notepad") {
         add("openFiles", "Open Notepad", { appId: "notepad" }, false);
         summary = "Opened Notepad";
+<<<<<<< HEAD
       } else if (idMap[target]) {
         const m = idMap[target];
         add(m.cap, `Open ${target}`, { appId: target, appName: target }, false);
         summary = `Opened ${target}`;
       } else {
         isChat = true;
+=======
+      } else {
+        const cap = resolveCapability("launchApp", ctx, { appId: target, appName: target });
+        if (cap.available && cap.implementation) {
+          add(
+            "launchApp",
+            `Open ${cap.implementation.label}`,
+            {
+              appId: cap.implementation.params.appId ?? target,
+              appName: cap.implementation.params.appName ?? cap.implementation.label,
+              launchId: cap.implementation.params.launchId ?? null,
+            },
+            false
+          );
+          summary = `Opened ${cap.implementation.label}`;
+        } else {
+          // Fallback: try to launch ANY app by name on Windows (Start-Process).
+          // This lets "open codex", "open steam", "open anything" work even if
+          // the app isn't in the scanned profile.
+          if (profile.platform === "win32") {
+            add(
+              "launchApp",
+              `Open ${target}`,
+              { appId: target, appName: target },
+              false
+            );
+            summary = `Opened ${target}`;
+          } else {
+            isChat = true;
+          }
+        }
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
       }
       break;
     }
@@ -510,6 +596,19 @@ export async function executePlan(
     }
 
     const result = await executeImplementation(impl, profile);
+<<<<<<< HEAD
+=======
+    if (!result.success && resolution.fallback?.implementation && resolution.fallback.implementation.label !== impl.label) {
+      const fallbackResult = await executeImplementation(resolution.fallback.implementation, profile);
+      if (fallbackResult.success) {
+        sub.status = "done";
+        sub.output = fallbackResult.output;
+        notes.push(`(Used fallback: ${resolution.fallback.implementation.label})`);
+        notes.push(fallbackResult.note);
+        continue;
+      }
+    }
+>>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
     sub.status = result.success ? "done" : "failed";
     sub.output = result.output;
     notes.push(result.note);
