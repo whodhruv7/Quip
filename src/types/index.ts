@@ -313,6 +313,13 @@ export type QuipAPI = {
     command: string;
   }) => Promise<TaskResultPayload>;
   setCompanion: (id: CompanionId) => void;
+
+  // Execution Engine V2 — Permission modes
+  getPermissionMode: () => Promise<{ mode: string; label: string }>;
+  setPermissionMode: (mode: string) => Promise<{ mode: string; label: string }>;
+  cyclePermissionMode: () => Promise<{ mode: string; label: string }>;
+  onApprovalRequest: (cb: (request: unknown) => void) => () => void;
+  resolveApproval: (id: string, approved: boolean) => void;
   onTaskProgress: (cb: (p: TaskProgress) => void) => () => void;
   onConfirmationRequest: (cb: (req: ConfirmationRequest) => void) => () => void;
   resolveConfirmation: (id: string, approved: boolean) => void;

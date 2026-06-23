@@ -58,6 +58,21 @@ const api = {
   // ─── Set active companion (so the system prompt adapts personality/mood) ─
   setCompanion: (id: "pix" | "kai" | "zee") =>
     ipcRenderer.send("quip:set-companion", id),
+
+  // ─── Execution Engine V2 — Permission modes ────────────────────────
+  getPermissionMode: () =>
+    ipcRenderer.invoke("quip:get-permission-mode"),
+  setPermissionMode: (mode: string) =>
+    ipcRenderer.invoke("quip:set-permission-mode", mode),
+  cyclePermissionMode: () =>
+    ipcRenderer.invoke("quip:cycle-permission-mode"),
+  onApprovalRequest: (cb: (request: any) => void) => {
+    const handler = (_e: unknown, data: any) => cb(data);
+    ipcRenderer.on("quip:approval-request", handler as any);
+    return () => ipcRenderer.removeListener("quip:approval-request", handler as any);
+  },
+  resolveApproval: (id: string, approved: boolean) =>
+    ipcRenderer.send("quip:approval-resolve", { id, approved }),
   onTaskProgress: (cb: (p: any) => void) => {
     const handler = (_e: unknown, data: any) => cb(data);
     ipcRenderer.on(IPC.TASK_PROGRESS, handler as any);

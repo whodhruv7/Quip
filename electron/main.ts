@@ -56,6 +56,10 @@ import { companionEvolution } from "./brains/companion-evolution";
 import { runPrune } from "./brains/memory-importance";
 import { observeMessages, resetExtractionCount } from "./brains/memory-extractor";
 
+// Execution Engine V2
+import { orchestrator } from "./engine/orchestrator";
+import { permissionSystem as execPermissionSystem, type ApprovalRequest } from "./engine/permission-modes";
+
 import type {
   DeviceProfile,
   WorldModel,
@@ -504,41 +508,33 @@ ipcMain.on("quip:set-companion", (_e, id: "pix" | "kai" | "zee") => {
 });
 
 // ---------------------------------------------------------------------------
-// IPC — task execution (via task brain)
+// IPC — task execution (via Execution Engine V2 orchestrator)
 // ---------------------------------------------------------------------------
 ipcMain.handle(
   IPC.TASK_EXECUTE,
   async (_e, payload: TaskExecutePayload): Promise<TaskResultPayload> => {
     const profile = deviceProfile ?? (await ensureProfile(app.getPath("userData")));
-    const env = environmentBrain.get();
+    const platform = profile.platform;
 
-    const result = await runTask(payload.command, payload.requestId, profile, env, {
-      onProgress: (step, total, description) => {
+    // Set up approval callback — forwards to renderer
+    execPermissionSystem.onApprovalRequested = (request: ApprovalRequest) => {
+      sendToRenderer("quip:approval-request", request);
+    };
+
+    const result = await orchestrator.execute(payload.command, {
+      platform,
+      onProgress: (update) => {
         sendToRenderer(IPC.TASK_PROGRESS, {
           requestId: payload.requestId,
-          step,
-          total,
-          description,
+          step: update.step,
+          total: update.total,
+          description: update.description,
         } as TaskProgressPayload);
-      },
-      requestConfirmation: (description, capability) => {
-        return new Promise<boolean>((resolve) => {
-          const id = `confirm-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-          pendingConfirmations.set(id, { resolve });
-
-          const req: ConfirmationRequest = {
-            id,
-            requestId: payload.requestId,
-            description,
-            capability,
-          };
-          sendToRenderer(IPC.CONFIRMATION_REQUEST, req);
-        });
       },
     });
 
-    // ─── Record task completion for companion evolution ───────────────
-    if (result.success && !result.plan?.isChat) {
+    // Record task completion for companion evolution
+    if (result.success && result.stepsTotal > 0) {
       try {
         companionEvolution.recordTask(currentCompanionId);
       } catch {
@@ -546,9 +542,49 @@ ipcMain.handle(
       }
     }
 
-    return result;
+    return {
+      requestId: payload.requestId,
+      success: result.success,
+      summary: result.summary,
+      notes: result.notes,
+      plan: {
+        id: payload.requestId,
+        requestId: payload.requestId,
+        intent: { type: "open_app", target: null, query: null, confidence: 0, verbs: [], raw: payload.command },
+        subtasks: [],
+        summary: result.summary,
+        isChat: result.stepsTotal === 0,
+        createdAt: Date.now(),
+      } as any,
+    };
   }
 );
+
+// ---------------------------------------------------------------------------
+// IPC — approval resolution (user taps Approve/Reject)
+// ---------------------------------------------------------------------------
+ipcMain.on("quip:approval-resolve", (_e, { id, approved }: { id: string; approved: boolean }) => {
+  execPermissionSystem.resolveApproval(id, approved);
+});
+
+// ---------------------------------------------------------------------------
+// IPC — permission mode control
+// ---------------------------------------------------------------------------
+ipcMain.handle("quip:get-permission-mode", () => {
+  return { mode: execPermissionSystem.getMode(), label: execPermissionSystem.getModeLabel() };
+});
+
+ipcMain.handle("quip:set-permission-mode", (_e, mode: string) => {
+  if (mode === "ask_every_time" || mode === "approve_task" || mode === "full_access") {
+    execPermissionSystem.setMode(mode);
+  }
+  return { mode: execPermissionSystem.getMode(), label: execPermissionSystem.getModeLabel() };
+});
+
+ipcMain.handle("quip:cycle-permission-mode", () => {
+  execPermissionSystem.cycleMode();
+  return { mode: execPermissionSystem.getMode(), label: execPermissionSystem.getModeLabel() };
+});
 
 ipcMain.on(
   IPC.CONFIRMATION_RESOLVE,
