@@ -1,0 +1,233 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Quip V2 — Premium theme system (Apple × Arc × Linear)
+   --------------------------------------------------------------------------
+   The Electron window is transparent + frameless, so the body is transparent.
+   Quip and the chat panel render as floating glass elements over the desktop.
+   Theme is driven by CSS custom properties so we can swap light/aqua/pink/dark. */
+
+:root {
+  /* Default = Light. Override via [data-theme="..."] below. */
+  --quip-bg: 255, 255, 255;          /* panel background */
+  --quip-bg-soft: 250, 251, 252;     /* subtle inset */
+  --quip-text: 10, 11, 15;           /* primary text */
+  --quip-text-soft: 122, 131, 139;   /* secondary text */
+  --quip-line: 10, 11, 15;           /* borders (with alpha) */
+  --quip-accent: 111, 214, 255;      /* aqua */
+  --quip-accent-2: 255, 159, 239;    /* pink */
+  --quip-glow: 111, 214, 255;
+  --quip-radius: 28px;
+}
+
+[data-theme="aqua"] {
+  --quip-bg: 240, 249, 255;
+  --quip-bg-soft: 226, 242, 252;
+  --quip-text: 12, 30, 48;
+  --quip-accent: 63, 184, 239;
+  --quip-accent-2: 111, 214, 255;
+}
+
+[data-theme="pink"] {
+  --quip-bg: 255, 245, 250;
+  --quip-bg-soft: 252, 233, 245;
+  --quip-text: 48, 12, 36;
+  --quip-accent: 244, 114, 214;
+  --quip-accent-2: 255, 159, 239;
+}
+
+[data-theme="black"] {
+  --quip-bg: 18, 19, 24;
+  --quip-bg-soft: 26, 29, 38;
+  --quip-text: 240, 242, 246;
+  --quip-text-soft: 168, 176, 184;
+  --quip-line: 255, 255, 255;
+  --quip-accent: 111, 214, 255;
+  --quip-accent-2: 255, 159, 239;
+  --quip-glow: 111, 214, 255;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  background: transparent;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-family: Inter, "SF Pro Text", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", system-ui, sans-serif;
+  font-feature-settings: "cv11", "ss01";
+  letter-spacing: -0.01em;
+}
+
+body {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+/* Allow selection only inside chat bubbles (for copying answers). */
+.quip-md {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Premium scrollbars — thin, calm, theme-aware. */
+.quip-scroll::-webkit-scrollbar,
+.overflow-y-auto::-webkit-scrollbar {
+  width: 6px;
+}
+.quip-scroll::-webkit-scrollbar-thumb,
+.overflow-y-auto::-webkit-scrollbar-thumb {
+  background: rgba(var(--quip-line), 0.12);
+  border-radius: 6px;
+}
+.quip-scroll::-webkit-scrollbar-thumb:hover,
+.overflow-y-auto::-webkit-scrollbar-thumb:hover {
+  background: rgba(var(--quip-line), 0.22);
+}
+.quip-scroll::-webkit-scrollbar-track,
+.overflow-y-auto::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Glass panel utility. */
+.quip-glass {
+  background: rgba(var(--quip-bg), 0.72);
+  backdrop-filter: blur(32px) saturate(180%);
+  -webkit-backdrop-filter: blur(32px) saturate(180%);
+}
+
+/* Skeleton shimmer for loading states. */
+.quip-skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(var(--quip-line), 0.04) 25%,
+    rgba(var(--quip-line), 0.09) 37%,
+    rgba(var(--quip-line), 0.04) 63%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+
+/* Markdown polish inside bubbles. */
+.quip-md p {
+  margin: 0 0 0.5em;
+}
+.quip-md p:last-child {
+  margin-bottom: 0;
+}
+.quip-md ul,
+.quip-md ol {
+  margin: 0.3em 0 0.6em;
+  padding-left: 1.2em;
+}
+.quip-md li {
+  margin: 0.15em 0;
+}
+.quip-md code {
+  background: rgba(var(--quip-line), 0.06);
+  padding: 0.1em 0.35em;
+  border-radius: 5px;
+  font-size: 0.86em;
+  font-family: "SF Mono", "JetBrains Mono", ui-monospace, monospace;
+}
+.quip-md pre {
+  background: rgb(var(--quip-text));
+  color: rgb(var(--quip-bg));
+  padding: 0.8em 1em;
+  border-radius: 14px;
+  overflow-x: auto;
+  margin: 0.5em 0;
+  font-size: 0.82em;
+  line-height: 1.5;
+}
+.quip-md pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+.quip-md a {
+  color: rgb(var(--quip-accent-deep, 30, 140, 190));
+  text-decoration: none;
+}
+.quip-md a:hover {
+  text-decoration: underline;
+}
+.quip-md strong {
+  font-weight: 600;
+}
+.quip-md blockquote {
+  border-left: 3px solid rgba(var(--quip-accent), 0.5);
+  margin: 0.4em 0;
+  padding: 0.1em 0 0.1em 0.8em;
+  color: rgba(var(--quip-text), 0.6);
+}
+
+/* Trust-layer note styling. */
+.quip-note {
+  font-size: 11px;
+  line-height: 15px;
+  color: rgba(var(--quip-text-soft), 0.85);
+  font-weight: 500;
+}
+
+/* Trust-layer note (shown beneath assistant messages). */
+.trust-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 10px;
+  border-radius: 10px;
+  background: rgba(var(--quip-line), 0.03);
+  font-size: 11px;
+  line-height: 14px;
+  color: rgba(var(--quip-text-soft), 0.9);
+  font-weight: 500;
+  font-style: italic;
+}
+.trust-note-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+/* ─── Accessibility: reduced motion ───────────────────────────────────
+   Users who prefer reduced motion get instant transitions (no animations).
+   This respects the OS-level setting. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ─── Accessibility: focus visibility ─────────────────────────────────
+   Ensure keyboard focus is always visible (not just on mouse hover). */
+:focus-visible {
+  outline: 2px solid rgb(var(--quip-accent));
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ─── Code block polish ─────────────────────────────────────────────── */
+.quip-md pre {
+  position: relative;
+}
+.quip-md pre code {
+  display: block;
+  padding: 0;
+}
