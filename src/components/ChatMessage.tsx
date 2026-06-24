@@ -44,11 +44,7 @@ function MessageBase({ message, index = 0 }: { message: ChatMessageType; index?:
           className="max-w-[82%] rounded-2xl rounded-br-md px-4 py-2.5 text-[14px] leading-relaxed text-white"
           style={{
             background: `linear-gradient(135deg, ${theme.primary}, ${theme.secondary})`,
-<<<<<<< HEAD
             boxShadow: `0 2px 12px ${theme.primary}25`,
-=======
-            boxShadow: `0 8px 24px ${theme.primary}28`,
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
           }}
         >
           <p className="whitespace-pre-wrap break-words">{message.content}</p>
@@ -85,19 +81,11 @@ function MessageBase({ message, index = 0 }: { message: ChatMessageType; index?:
                   border: "1px solid rgba(200,50,50,0.12)",
                 }
               : {
-<<<<<<< HEAD
                   background: "rgba(255,255,255,0.85)",
                   color: "#111111",
                   border: "1px solid rgba(0,0,0,0.04)",
                   backdropFilter: "blur(12px)",
                   WebkitBackdropFilter: "blur(12px)",
-=======
-                  background: "rgba(255,255,255,0.96)",
-                  color: "#111111",
-                  border: "1px solid rgba(0,0,0,0.05)",
-                  backdropFilter: "blur(10px)",
-                  WebkitBackdropFilter: "blur(10px)",
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
                 }
           }
         >

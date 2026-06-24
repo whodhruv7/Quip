@@ -5,10 +5,6 @@ export const IPC = {
   // Window movement
   MOVE_WINDOW: "quip:move-window",
   GET_WINDOW_POSITION: "quip:get-window-position",
-<<<<<<< HEAD
-=======
-  SET_IGNORE_MOUSE: "quip:set-ignore-mouse",
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 
   // Chat streaming
   CHAT_SEND: "quip:chat-send",
@@ -62,11 +58,6 @@ export const IPC = {
 
   // Permission system
   GET_PERMISSIONS: "quip:get-permissions",
-<<<<<<< HEAD
-=======
-  GET_PERMISSION_MODE: "quip:get-permission-mode",
-  SET_PERMISSION_MODE: "quip:set-permission-mode",
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   UPDATE_PERMISSION: "quip:update-permission",
 
   // Bootstrap

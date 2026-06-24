@@ -7,11 +7,7 @@
 
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-<<<<<<< HEAD
 import type { CompanionId, DeviceProfile, UserKnowledge } from "@/types";
-=======
-import type { CompanionId, DeviceProfile, PermissionMode, UserKnowledge } from "@/types";
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 import { CompanionSwitch } from "./CompanionSwitch";
 import { ModelSwitch } from "./ModelSwitch";
 import { ConfirmModal } from "./ConfirmModal";
@@ -38,10 +34,6 @@ export function SettingsPanel({
   const [profile, setProfile] = useState<any>(null);
   const [progression, setProgression] = useState<any>(null);
   const [pruning, setPruning] = useState(false);
-<<<<<<< HEAD
-=======
-  const [permissionMode, setPermissionMode] = useState<PermissionMode>("task");
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   const [confirmResetDNA, setConfirmResetDNA] = useState(false);
   const [confirmPrune, setConfirmPrune] = useState(false);
 
@@ -51,10 +43,6 @@ export function SettingsPanel({
     window.quip.getMemories().then(setMemory).catch(() => {});
     window.quip.getUserProfile().then(setProfile).catch(() => {});
     window.quip.getCompanionProgression().then(setProgression).catch(() => {});
-<<<<<<< HEAD
-=======
-    window.quip.getPermissionMode().then(setPermissionMode).catch(() => {});
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   }, [open]);
 
   const handleRescan = async () => {
@@ -104,18 +92,6 @@ export function SettingsPanel({
     setProfile(fresh);
   };
 
-<<<<<<< HEAD
-=======
-  const handlePermissionMode = async (mode: PermissionMode) => {
-    setPermissionMode(mode);
-    try {
-      await window.quip.setPermissionMode(mode);
-    } catch {
-      /* ignore */
-    }
-  };
-
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   if (!open) return null;
 
   return (
@@ -188,40 +164,6 @@ export function SettingsPanel({
               </label>
               <ModelSwitch />
             </div>
-<<<<<<< HEAD
-=======
-            <div>
-              <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-quip-gray">
-                Permission mode
-              </label>
-              <div className="grid grid-cols-3 gap-2">
-                {([
-                  ["ask", "Ask every time", "Every action asks before it runs."],
-                  ["task", "Approve for task", "Ask once per task, then run the plan."],
-                  ["full", "Full access", "Safe and medium actions run automatically."],
-                ] as const).map(([mode, label, helper]) => {
-                  const active = permissionMode === mode;
-                  return (
-                    <button
-                      key={mode}
-                      onClick={() => handlePermissionMode(mode)}
-                      className="rounded-2xl px-3 py-2 text-left transition-all"
-                      style={{
-                        border: active ? "1px solid rgba(15,23,42,0.16)" : "1px solid rgba(0,0,0,0.06)",
-                        background: active ? "rgba(15,23,42,0.04)" : "rgba(255,255,255,0.8)",
-                        boxShadow: active ? "0 10px 24px rgba(15,23,42,0.08)" : "none",
-                      }}
-                    >
-                      <div style={{ fontSize: 11, fontWeight: 700, color: "#111" }}>{label}</div>
-                      <div style={{ marginTop: 4, fontSize: 10, lineHeight: 1.35, color: "#6b7280" }}>
-                        {helper}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
           </div>
         )}
 

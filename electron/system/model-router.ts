@@ -288,11 +288,7 @@ class ModelRouter {
       ? "groq"
       : this.fallback?.isConfigured()
         ? "openrouter"
-<<<<<<< HEAD
         : "groq";
-=======
-        : "local";
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   }
 
   /** Stream a chat completion, trying primary then fallback. */
@@ -321,14 +317,8 @@ class ModelRouter {
       }
     }
 
-<<<<<<< HEAD
     const msg = describeError(lastErr);
     throw new Error(msg);
-=======
-    const full = buildLocalFallback(history, lastErr);
-    this.activeProvider = "local";
-    return { full, provider: "local" };
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   }
 
   status(): ModelRouterStatus {
@@ -336,34 +326,15 @@ class ModelRouter {
     const fallback = this.fallback
       ? { ...this.fallback.config, available: this.fallback.isConfigured() }
       : null;
-<<<<<<< HEAD
     const active =
       this.activeProvider === "openrouter" && fallback
         ? fallback
         : primary;
-=======
-    const localActive: ModelConfig = {
-      provider: "local",
-      model: "local-fallback",
-      label: "Local fallback",
-      available: true,
-    };
-    const active =
-      this.activeProvider === "openrouter" && fallback
-        ? fallback
-        : this.activeProvider === "local"
-          ? localActive
-          : primary;
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
     return {
       primary,
       fallback,
       active,
-<<<<<<< HEAD
       healthy: primary.available || !!fallback?.available,
-=======
-      healthy: primary.available || !!fallback?.available || this.activeProvider === "local",
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
     };
   }
 
@@ -390,35 +361,10 @@ class ModelRouter {
         // fall through to next provider
       }
     }
-<<<<<<< HEAD
     throw lastErr ?? new Error("No AI provider configured");
   }
 }
 
-=======
-    this.activeProvider = "local";
-    return "";
-  }
-}
-
-function buildLocalFallback(
-  history: { role: "user" | "assistant"; content: string }[],
-  err: unknown
-): string {
-  const lastUser = [...history].reverse().find((m) => m.role === "user")?.content?.trim();
-  const reason = describeError(err);
-  if (!lastUser) {
-    return "I am running in local fallback mode right now, so I cannot reach the AI provider. You can still use local actions like opening apps, searching, and moving the window.";
-  }
-  return [
-    "I could not reach the AI provider just now, so I am using local fallback mode.",
-    "I can still handle local actions like opening apps, searching, and window control.",
-    `You asked: ${lastUser}`,
-    `Status: ${reason}`,
-  ].join(" ");
-}
-
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 function describeError(err: unknown): string {
   if (!err) return "Chat is unavailable right now.";
   const msg = (err as Error)?.message ?? String(err);

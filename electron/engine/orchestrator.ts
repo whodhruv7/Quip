@@ -18,7 +18,7 @@
 //   - Trust layer notes
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { parseIntentV2, type ParsedIntentV2, type IntentStep } from "./intent-parser-v2";
+import { parseIntentV2, type ParsedIntent, type TaskStep } from "./intent-parser-v2";
 import { permissionSystem, type ApprovalRequest } from "./permission-modes";
 import { executeTool, type ToolResult, type ToolContext } from "./tool-registry";
 
@@ -164,7 +164,7 @@ class Orchestrator {
    * Execute a single step with retry logic.
    */
   private async executeWithRetry(
-    step: IntentStep,
+    step: TaskStep,
     ctx: ToolContext,
     maxRetries: number
   ): Promise<ToolResult> {
@@ -201,7 +201,7 @@ class Orchestrator {
    * Generate a human-friendly summary.
    */
   private generateSummary(
-    intent: ParsedIntentV2,
+    intent: ParsedIntent,
     allSuccess: boolean,
     stepsCompleted: number
   ): string {

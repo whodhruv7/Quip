@@ -22,20 +22,12 @@ import type {
 } from "../../src/types";
 
 const FILENAME = "permissions.json";
-<<<<<<< HEAD
-=======
-export type PermissionMode = "ask" | "task" | "full";
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 
 // Default risk classification per capability. These are conservative defaults.
 const DEFAULT_RISK: Record<CapabilityId, PermissionLevel> = {
   openBrowser: "safe",
   openUrl: "safe",
   webSearch: "safe",
-<<<<<<< HEAD
-=======
-  launchApp: "safe",
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   openEditor: "safe",
   openTerminal: "safe",
   openFiles: "safe",
@@ -52,18 +44,10 @@ const DEFAULT_RISK: Record<CapabilityId, PermissionLevel> = {
 interface PermissionStore {
   // Persisted grants: capability -> granted (always allow).
   grants: Record<string, boolean>;
-<<<<<<< HEAD
 }
 
 class PermissionSystem {
   private store: PermissionStore = { grants: {} };
-=======
-  mode: PermissionMode;
-}
-
-class PermissionSystem {
-  private store: PermissionStore = { grants: {}, mode: "task" };
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   private filePath: string | null = null;
 
   init(userDataDir: string): void {
@@ -79,12 +63,6 @@ class PermissionSystem {
         if (data && typeof data.grants === "object") {
           this.store.grants = data.grants;
         }
-<<<<<<< HEAD
-=======
-        if (data && (data.mode === "ask" || data.mode === "task" || data.mode === "full")) {
-          this.store.mode = data.mode;
-        }
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
       }
     } catch {
       /* corrupt file — start fresh */
@@ -105,26 +83,9 @@ class PermissionSystem {
     return DEFAULT_RISK[capability] ?? "medium";
   }
 
-<<<<<<< HEAD
   /** Does this capability require a confirmation prompt right now? */
   requiresConfirmation(capability: CapabilityId): boolean {
     const risk = this.riskFor(capability);
-=======
-  getMode(): PermissionMode {
-    return this.store.mode;
-  }
-
-  setMode(mode: PermissionMode): void {
-    this.store.mode = mode;
-    this.save();
-  }
-
-  /** Does this capability require a confirmation prompt right now? */
-  requiresConfirmation(capability: CapabilityId): boolean {
-    const risk = this.riskFor(capability);
-    if (this.store.mode === "ask") return true;
-    if (this.store.mode === "full") return risk === "dangerous";
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
     if (risk === "safe") return false;
     // medium/dangerous: only skip if user previously granted always-allow.
     return !this.store.grants[capability];

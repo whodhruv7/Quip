@@ -41,13 +41,6 @@ function shellOpen(url: string): Promise<void> {
   return shell.openExternal(url);
 }
 
-<<<<<<< HEAD
-=======
-function shellOpenPath(target: string): Promise<string> {
-  return shell.openPath(target);
-}
-
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 // YouTube autoplay helper — when we open a YouTube search, attempt to click
 // the first result so playback actually starts.
 async function youtubeAutoplay(url: string, label: string): Promise<ExecResult> {
@@ -166,7 +159,6 @@ export async function executeImplementation(
 
     // -----------------------------------------------------------------------
     case "launch-app": {
-<<<<<<< HEAD
       const cmd = launchCommand(p.appId as string, platform);
       if (!cmd) {
         return {
@@ -180,94 +172,13 @@ export async function executeImplementation(
         return {
           success: true,
           output: `Launched ${p.appName}`,
-=======
-      const appName = (p.appName as string | undefined) ?? (p.appId as string | undefined) ?? "app";
-      const launchId = (p.launchId as string | null | undefined) ?? null;
-      const cmd = launchId
-        ? platform === "win32"
-          ? /^[a-z]:[\\/]/i.test(launchId) || launchId.startsWith("\\\\")
-            ? `start "" "${launchId}"`
-            : `explorer.exe "shell:AppsFolder\\${launchId}"`
-          : platform === "darwin"
-            ? /^(?:[A-Za-z]:|https?:|\/)/.test(launchId)
-              ? `open "${launchId}"`
-              : `open -b "${launchId}"`
-            : /^(?:[A-Za-z]:|https?:|\/)/.test(launchId)
-              ? `xdg-open "${launchId}"`
-              : `xdg-open "${launchId}"`
-        : launchCommand(p.appId as string, platform);
-      const tryLaunchByName = async () => {
-        if (platform === "win32") {
-          const safeName = appName.replace(/'/g, "''");
-          try {
-            await run(`powershell -NoProfile -Command "Start-Process '${safeName}'"`, 6000);
-            return true;
-          } catch {
-            try {
-              await run(`start "" "${appName}"`, 5000);
-              return true;
-            } catch {
-              return false;
-            }
-          }
-        }
-        if (platform === "darwin") {
-          try {
-            await run(`open -a "${appName}"`, 5000);
-            return true;
-          } catch {
-            return false;
-          }
-        }
-        try {
-          await run(`xdg-open "${appName}"`, 5000);
-          return true;
-        } catch {
-          return false;
-        }
-      };
-      try {
-        if (cmd) {
-          try {
-            await run(cmd);
-          } catch {
-            if (!(await tryLaunchByName())) {
-              throw new Error(`No launch command for ${appName}`);
-            }
-          }
-        } else if (launchId) {
-          const opened = await shellOpenPath(launchId);
-          if (opened) {
-            if (platform === "win32") {
-              try {
-                await run(`explorer.exe "shell:AppsFolder\\${launchId}"`, 5000);
-              } catch {
-                throw new Error(opened);
-              }
-            } else {
-              throw new Error(opened);
-            }
-          }
-        } else {
-          if (!(await tryLaunchByName())) {
-            throw new Error(`No launch command for ${appName}`);
-          }
-        }
-        return {
-          success: true,
-          output: `Launched ${appName}`,
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
           note: `Opened ${impl.label}`,
         };
       } catch (e: any) {
         return {
           success: false,
           output: `Failed: ${e?.message ?? e}`,
-<<<<<<< HEAD
           note: `Couldn't launch ${p.appName}`,
-=======
-          note: `Couldn't launch ${appName}`,
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
         };
       }
     }
@@ -299,7 +210,6 @@ export async function executeImplementation(
     // -----------------------------------------------------------------------
     case "open-files": {
       const loc = p.location as string | null;
-<<<<<<< HEAD
       const cmd =
         platform === "win32"
           ? loc === "downloads"
@@ -316,53 +226,6 @@ export async function executeImplementation(
             : "xdg-open .";
       try {
         await run(cmd);
-=======
-      try {
-        if (loc && !["downloads", "desktop", "documents", "pictures", "videos", "music", "home"].includes(loc.toLowerCase())) {
-          const expanded =
-            loc.startsWith("~")
-              ? loc.replace(/^~/, process.env.USERPROFILE || process.env.HOME || "")
-              : loc;
-          const opened = await shellOpenPath(expanded);
-          if (opened) throw new Error(opened);
-        } else {
-          const cmd =
-            platform === "win32"
-              ? loc === "downloads"
-                ? 'explorer "%USERPROFILE%\\Downloads"'
-                : loc === "desktop"
-                  ? 'explorer "%USERPROFILE%\\Desktop"'
-                  : loc === "documents"
-                    ? 'explorer "%USERPROFILE%\\Documents"'
-                    : loc === "pictures"
-                      ? 'explorer "%USERPROFILE%\\Pictures"'
-                      : loc === "videos"
-                        ? 'explorer "%USERPROFILE%\\Videos"'
-                        : loc === "music"
-                          ? 'explorer "%USERPROFILE%\\Music"'
-                          : loc === "home"
-                            ? 'explorer "%USERPROFILE%"'
-                            : "explorer ."
-              : platform === "darwin"
-                ? loc === "downloads"
-                  ? "open ~/Downloads"
-                  : loc === "desktop"
-                    ? "open ~/Desktop"
-                    : loc === "documents"
-                      ? "open ~/Documents"
-                      : loc === "pictures"
-                        ? "open ~/Pictures"
-                        : loc === "videos"
-                          ? "open ~/Movies"
-                          : loc === "music"
-                            ? "open ~/Music"
-                            : loc === "home"
-                              ? "open ~"
-                              : "open ."
-                : "xdg-open .";
-          await run(cmd);
-        }
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
         return {
           success: true,
           output: "Opened files",

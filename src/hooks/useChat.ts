@@ -25,10 +25,6 @@ import {
 
 const uid = () =>
   Math.random().toString(36).slice(2) + Date.now().toString(36);
-<<<<<<< HEAD
-=======
-const SEND_TIMEOUT_MS = 15_000;
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 
 export function useChat(
   companionId: CompanionId,
@@ -43,10 +39,6 @@ export function useChat(
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const activeRequestId = useRef<string | null>(null);
-<<<<<<< HEAD
-=======
-  const pendingAssistantId = useRef<string | null>(null);
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 
   // Persist for THIS companion.
   useEffect(() => {
@@ -58,22 +50,12 @@ export function useChat(
     const loaded = loadCurrentMessages(companionId);
     setMessages(loaded);
     setSessions(loadSessions().filter((s) => s.companionId === companionId));
-<<<<<<< HEAD
     setError(null);
     setBusy(false);
     activeRequestId.current = null;
     // Notify main process of companion switch (for system prompt personality/mood)
     try {
       window.quip.setCompanion(companionId);
-=======
-      setError(null);
-      setBusy(false);
-      activeRequestId.current = null;
-      pendingAssistantId.current = null;
-      // Notify main process of companion switch (for system prompt personality/mood)
-      try {
-        window.quip.setCompanion(companionId);
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
     } catch {
       /* non-fatal */
     }
@@ -155,30 +137,6 @@ export function useChat(
       // Always add the user message immediately.
       setMessages((prev) => [...prev, userMsg]);
       setBusy(true);
-<<<<<<< HEAD
-=======
-      const timeoutId = window.setTimeout(() => {
-        const stuckId = activeRequestId.current ?? pendingAssistantId.current;
-        if (stuckId) {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === stuckId
-                ? {
-                    ...m,
-                    streaming: false,
-                    error: true,
-                    content: "Quip got stuck on that request. Try again.",
-                  }
-                : m
-            )
-          );
-        }
-        setBusy(false);
-        activeRequestId.current = null;
-        pendingAssistantId.current = null;
-        setError("Quip got stuck on that request. Try again.");
-      }, SEND_TIMEOUT_MS);
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 
       // First, try executing as a task (local, fast).
       const taskId = uid();
@@ -210,10 +168,6 @@ export function useChat(
         };
         setMessages((prev) => [...prev, assistantMsg]);
         setBusy(false);
-<<<<<<< HEAD
-=======
-        window.clearTimeout(timeoutId);
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
         return;
       }
 
@@ -228,10 +182,6 @@ export function useChat(
       };
 
       activeRequestId.current = assistantMsg.id;
-<<<<<<< HEAD
-=======
-      pendingAssistantId.current = assistantMsg.id;
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
       setMessages((prev) => [...prev, assistantMsg]);
 
       const history = [...messages, userMsg].map((m) => ({
@@ -247,11 +197,6 @@ export function useChat(
       } catch {
         // Error will come through the event listener.
       }
-<<<<<<< HEAD
-=======
-      window.clearTimeout(timeoutId);
-      pendingAssistantId.current = null;
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
     },
     [busy, messages, companionId]
   );
@@ -262,10 +207,6 @@ export function useChat(
     setMessages([]);
     setSessions(loadSessions().filter((s) => s.companionId === companionId));
     setError(null);
-<<<<<<< HEAD
-=======
-    pendingAssistantId.current = null;
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   }, [companionId, messages]);
 
   const newChat = useCallback(() => {
@@ -277,10 +218,6 @@ export function useChat(
     setMessages([]);
     setError(null);
     activeRequestId.current = null;
-<<<<<<< HEAD
-=======
-    pendingAssistantId.current = null;
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
     setBusy(false);
   }, [companionId, messages]);
 
@@ -293,10 +230,6 @@ export function useChat(
       setError(null);
       setBusy(false);
       activeRequestId.current = null;
-<<<<<<< HEAD
-=======
-      pendingAssistantId.current = null;
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
     },
     [companionId]
   );
