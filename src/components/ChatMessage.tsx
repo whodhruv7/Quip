@@ -60,7 +60,6 @@ function MessageBase({ message, index = 0 }: { message: ChatMessageType; index?:
       transition={{ duration: 0.25, ease: "easeOut", delay: Math.min(index * 0.03, 0.2) }}
       className="flex justify-start gap-2 group"
     >
-      {/* Companion dot */}
       <div
         className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1 ring-white/60"
         style={{
@@ -106,7 +105,6 @@ function MessageBase({ message, index = 0 }: { message: ChatMessageType; index?:
             </div>
           )}
 
-          {/* Copy button — appears on hover, only for non-streaming assistant messages */}
           {!empty && !message.streaming && !message.error && (
             <button
               onClick={handleCopy}
@@ -119,7 +117,6 @@ function MessageBase({ message, index = 0 }: { message: ChatMessageType; index?:
           )}
         </div>
 
-        {/* Trust-layer note — fades in after the message (feels like an afterthought) */}
         {message.contextNote && (
           <motion.div
             initial={{ opacity: 0, y: -4 }}
@@ -132,7 +129,6 @@ function MessageBase({ message, index = 0 }: { message: ChatMessageType; index?:
           </motion.div>
         )}
 
-        {/* Action badge */}
         {message.action && (
           <div
             className="inline-flex w-fit items-center gap-1.5 rounded-full px-2 py-0.5"

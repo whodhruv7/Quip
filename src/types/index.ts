@@ -123,6 +123,7 @@ export type CapabilityId =
   | "openBrowser"
   | "openUrl"
   | "webSearch"
+  | "launchApp"
   | "openEditor"
   | "openTerminal"
   | "openFiles"
@@ -131,6 +132,9 @@ export type CapabilityId =
   | "openMusic"
   | "openSettings"
   | "systemControl"
+  | "systemLock"
+  | "systemPower"
+  | "systemPrivilege"
   | "composeMail"
   | "openMail"
   | "noop";
@@ -222,6 +226,8 @@ export interface PermissionRule {
   level: PermissionLevel;
   granted: boolean;
 }
+
+export type PermissionMode = "ask" | "task" | "full";
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 export type BootstrapStage =

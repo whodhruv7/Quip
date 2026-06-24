@@ -13,7 +13,6 @@ import type {
   CompanionId,
   TaskProgress,
   TaskResultPayload,
-  ConfirmationRequest,
 } from "@/types";
 import {
   loadCurrentMessages,
@@ -40,12 +39,10 @@ export function useChat(
   const [error, setError] = useState<string | null>(null);
   const activeRequestId = useRef<string | null>(null);
 
-  // Persist for THIS companion.
   useEffect(() => {
     saveCurrentMessages(companionId, messages);
   }, [messages, companionId]);
 
-  // Load messages when companion changes.
   useEffect(() => {
     const loaded = loadCurrentMessages(companionId);
     setMessages(loaded);
@@ -53,7 +50,6 @@ export function useChat(
     setError(null);
     setBusy(false);
     activeRequestId.current = null;
-    // Notify main process of companion switch (for system prompt personality/mood)
     try {
       window.quip.setCompanion(companionId);
     } catch {
@@ -61,9 +57,7 @@ export function useChat(
     }
   }, [companionId]);
 
-  // Subscribe to streamed chat events + task events.
   useEffect(() => {
-    // --- Chat streaming ---
     const offChunk = window.quip.onChatChunk((delta, requestId) => {
       if (requestId !== activeRequestId.current) return;
       setMessages((prev) =>
@@ -98,17 +92,12 @@ export function useChat(
       setBusy(false);
     });
 
-    // --- Task progress ---
     const offTaskProgress = window.quip.onTaskProgress((_p: TaskProgress) => {
-      // Could show live progress; for now the task result covers it.
+      /* intentionally unused */
     });
 
-    // --- Confirmation requests ---
-    const offConfirm = window.quip.onConfirmationRequest((req: ConfirmationRequest) => {
-      // Auto-approve safe tasks, ask for medium/dangerous.
-      // For now, we auto-approve all to keep the prototype snappy.
-      // The trust-layer note shows WHY we did it.
-      window.quip.resolveConfirmation(req.id, true);
+    const offConfirm = window.quip.onApprovalRequest((req: any) => {
+      window.quip.resolveApproval(req.id, true);
     });
 
     return () => {
@@ -134,11 +123,9 @@ export function useChat(
         companionId,
       };
 
-      // Always add the user message immediately.
       setMessages((prev) => [...prev, userMsg]);
       setBusy(true);
 
-      // First, try executing as a task (local, fast).
       const taskId = uid();
       let taskResult: TaskResultPayload | null = null;
       try {
@@ -147,10 +134,9 @@ export function useChat(
           command: trimmed,
         });
       } catch {
-        // Task execution failed, fall through to chat.
+        /* fall through to chat */
       }
 
-      // If the task was an action (not just chat fallback), handle the result.
       if (taskResult && taskResult.summary && !taskResult.plan?.isChat) {
         const trustNote = taskResult.notes.join("\n");
         const assistantMsg: ChatMessage = {
@@ -171,7 +157,6 @@ export function useChat(
         return;
       }
 
-      // Otherwise, it's a chat — stream to the LLM.
       const assistantMsg: ChatMessage = {
         id: uid(),
         role: "assistant",
@@ -195,7 +180,7 @@ export function useChat(
           history,
         });
       } catch {
-        // Error will come through the event listener.
+        /* event listener handles errors */
       }
     },
     [busy, messages, companionId]
