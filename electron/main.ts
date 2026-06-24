@@ -1,5 +1,5 @@
 // Quip V2 — Electron main process (orchestration hub).
-// Wires all 10 brain layers + bootstrap + IPC. API keys stay in env only.
+// Wires all brain layers + bootstrap + IPC. API keys stay in env only.
 
 import { app, BrowserWindow, ipcMain, screen, Tray, nativeImage, Menu } from "electron";
 import path from "node:path";
@@ -42,12 +42,11 @@ import { bootstrap, BootstrapResult } from "./system/bootstrap";
 import { modelRouter } from "./system/model-router";
 import { permissionSystem } from "./system/permission-system";
 
-import { ensureProfile, loadProfile } from "./brains/device-brain";
+import { ensureProfile } from "./brains/device-brain";
 import { ensureWorldModel } from "./brains/world-model";
 import { environmentBrain } from "./brains/environment-brain";
 import { memoryBrain } from "./brains/memory-brain";
 import { computeSpatial, watchSpatial } from "./brains/spatial-brain";
-import { runTask } from "./brains/task-brain";
 import { knowledgeGraph } from "./brains/knowledge-graph";
 import { workspaceContext } from "./brains/workspace-context";
 import { relationshipEngine } from "./brains/relationship-engine";
@@ -56,13 +55,9 @@ import { companionEvolution } from "./brains/companion-evolution";
 import { runPrune } from "./brains/memory-importance";
 import { observeMessages, resetExtractionCount } from "./brains/memory-extractor";
 
-<<<<<<< HEAD
-// Execution Engine V2
 import { orchestrator } from "./engine/orchestrator";
 import { permissionSystem as execPermissionSystem, type ApprovalRequest } from "./engine/permission-modes";
 
-=======
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 import type {
   DeviceProfile,
   WorldModel,
@@ -84,13 +79,9 @@ let worldModel: WorldModel | null = null;
 let spatialConfig: SpatialConfig | null = null;
 
 // The currently active companion (set by renderer via IPC). Defaults to "pix".
-// Used by the system prompt to apply personality + mood.
 let currentCompanionId: "pix" | "kai" | "zee" = "pix";
 
-const pendingConfirmations = new Map<
-  string,
-  { resolve: (approved: boolean) => void }
->();
+const pendingConfirmations = new Map<string, { resolve: (approved: boolean) => void }>();
 
 // ---------------------------------------------------------------------------
 // Local persistence — window position only.
@@ -126,150 +117,16 @@ function clampPosition(x: number, y: number, w: number, h: number) {
   };
 }
 
-/**
- * Build a token-efficient system prompt. Sections are prioritized and
- * capped at ~500 tokens. Knowledge graph + memories are filtered by
- * relevance to the current user message (RAG-style).
- *
- * @param userMessage - the current user message (for relevance filtering)
- */
-function buildSystemPrompt(userMessage?: string): string {
-  const env = environmentBrain.get();
-  const sections: string[] = [];
-
-  // ─── 1. Core identity + companion (always) ──────────────────────────
-  const companionPersonalities: Record<string, string> = {
-    pix: "Pix — playful, energetic, creative. Light humor. Social + creative tasks.",
-    kai: "Kai — calm, analytical, wise. Clear explanations. Planning + research.",
-    zee: "Zee — curious, empathetic, reflective. Personal + emotional support.",
-  };
-  sections.push(
-    "You are QUIP, a calm, concise AI companion on the user's desktop. " +
-      "Warm, human, never robotic. Short answers unless asked for detail. " +
-      `You are ${companionPersonalities[currentCompanionId] ?? companionPersonalities.pix}`
-  );
-
-  // ─── 2. Device context (compressed) ─────────────────────────────────
-  if (deviceProfile) {
-    const deviceParts: string[] = [
-      `Device: ${deviceProfile.platformLabel} ${deviceProfile.osVersion}`,
-    ];
-    if (deviceProfile.defaultBrowser) {
-      deviceParts.push(`Browser: ${deviceProfile.defaultBrowser}`);
-    }
-    // Only list app names, max 8 (was 12)
-    if (deviceProfile.apps.length > 0) {
-      deviceParts.push(
-        `Apps: ${deviceProfile.apps.slice(0, 8).map((a) => a.name).join(", ")}`
-      );
-    }
-    sections.push(deviceParts.join(" | "));
-  }
-
-  // ─── 3. World model (always — prevents hallucination) ───────────────
-  if (worldModel) {
-    sections.push(worldModel.summary);
-  }
-
-  // ─── 4. Environment (only if actionable) ────────────────────────────
-  if (env.network.online === false) {
-    sections.push("NOTE: User is OFFLINE. Web actions may fail.");
-  }
-  if (env.battery.supported && !env.battery.charging && env.battery.level < 0.2) {
-    sections.push(
-      `NOTE: Battery low (${Math.round(env.battery.level * 100)}%). Be brief.`
-    );
-  }
-
-  // ─── 5. Workspace context (only if online — skip if offline) ────────
-  if (env.network.online) {
-    const wsSummary = workspaceContext.getPromptSummary();
-    if (wsSummary) sections.push(wsSummary);
-  }
-
-  // ─── 6. Relevant memories (RAG — filtered by user message) ──────────
-  const mem = memoryBrain.get();
-  if (mem.memories.length > 0) {
-    let relevantMemories = mem.memories;
-    if (userMessage) {
-      // RAG: filter memories by keyword overlap with user message
-      const msgWords = new Set(
-        userMessage
-          .toLowerCase()
-          .split(/[^a-z0-9]+/)
-          .filter((w) => w.length > 2)
-      );
-      relevantMemories = mem.memories
-        .map((m) => {
-          const memText = `${m.key} ${m.value}`.toLowerCase();
-          let score = 0;
-          msgWords.forEach((w) => {
-            if (memText.includes(w)) score++;
-          });
-          // High-importance memories always included
-          if (m.importance === "high") score += 2;
-          return { m, score };
-        })
-        .filter((x) => x.score > 0 || x.m.importance === "high")
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 8)
-        .map((x) => x.m);
-    } else {
-      // No user message (e.g., first load) — top by weight
-      relevantMemories = mem.memories
-        .sort((a, b) => b.weight - a.weight)
-        .slice(0, 8);
-    }
-    if (relevantMemories.length > 0) {
-      const memLines = relevantMemories.map((m) => {
-        const tag =
-          m.kind === "contact" ? `${m.key}=${m.value}`
-          : m.kind === "preference" ? `prefers ${m.value}`
-          : `${m.key}: ${m.value}`;
-        return `- ${tag}`;
-      });
-      sections.push(`Known about user:\n${memLines.join("\n")}`);
-    }
-  }
-
-  // ─── 7. Relevant knowledge graph entities (filtered) ────────────────
-  if (userMessage) {
-    const entities = knowledgeGraph.findEntities(userMessage);
-    if (entities.length > 0) {
-      const entityLines = entities.slice(0, 5).map((e) => {
-        const attrs = Object.entries(e.attributes)
-          .filter(([k]) => k !== "isSelf")
-          .map(([k, v]) => `${k}=${v}`)
-          .join(", ");
-        return `- ${e.name} [${e.type}]${attrs ? ` {${attrs}}` : ""}`;
-      });
-      sections.push(`Relevant entities:\n${entityLines.join("\n")}`);
-    }
-  }
-
-  // ─── 8. Communication style (always — short) ────────────────────────
-  const styleGuide = relationshipEngine.getStyleGuide();
-  if (styleGuide) sections.push(styleGuide);
-
-  // ─── 9. Companion mood (always — one line) ──────────────────────────
-  const moodHint = companionMood.getPromptHint(currentCompanionId);
-  if (moodHint) sections.push(moodHint);
-
-  // ─── 10. Rules (always — short) ─────────────────────────────────────
-  sections.push(
-    "Rules: Never assume apps exist (check above). If impossible, explain + suggest. " +
-      "Always explain WHY (trust layer). Match user's style. Be concise."
-  );
-
-  return sections.join("\n\n");
-}
-
 // ---------------------------------------------------------------------------
-<<<<<<< HEAD
 // Window
 // ---------------------------------------------------------------------------
+function setClickThrough(enabled: boolean) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.setIgnoreMouseEvents(enabled, { forward: false });
+}
+
 function createWindow() {
-  const panel = spatialConfig?.chatPanel ?? {
+  const panel = {
     x: 0,
     y: 0,
     width: 440,
@@ -299,22 +156,6 @@ function createWindow() {
     height: h,
     x,
     y,
-=======
-// Window — FULL-SCREEN, transparent, click-through overlay.
-// The companion + chat panel float anywhere on screen. The empty area lets
-// clicks pass through to the desktop / apps behind. We toggle click-through
-// off when the chat panel is open (so the input + messages are interactive).
-// ---------------------------------------------------------------------------
-function createWindow() {
-  const display = screen.getPrimaryDisplay();
-  const area = display.bounds;
-
-  mainWindow = new BrowserWindow({
-    width: area.width,
-    height: area.height,
-    x: area.x,
-    y: area.y,
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
     frame: false,
     transparent: true,
     resizable: false,
@@ -338,21 +179,14 @@ function createWindow() {
   mainWindow.setVisibleOnAllWorkspaces(true, {
     visibleOnFullScreen: true,
   });
-<<<<<<< HEAD
-=======
-  // Keep the window interactive by default so the companion can always be tapped.
   setClickThrough(false);
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   mainWindow.showInactive();
   mainWindow.moveTop();
 
   mainWindow.once("ready-to-show", () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.show();
-<<<<<<< HEAD
       mainWindow.focus();
-=======
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
       mainWindow.moveTop();
     }
   });
@@ -362,7 +196,6 @@ function createWindow() {
   } else if (isDev) {
     mainWindow.loadURL("http://localhost:5173");
   } else {
-<<<<<<< HEAD
     mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
   }
 
@@ -372,11 +205,6 @@ function createWindow() {
     writePosition(px, py);
   });
 
-=======
-    mainWindow.loadFile(path.join(__dirname, "../../dist/index.html"));
-  }
-
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   if (isDev) {
     mainWindow.webContents.on("did-finish-load", () => {
       mainWindow?.webContents.openDevTools({ mode: "detach" });
@@ -384,18 +212,6 @@ function createWindow() {
   }
 }
 
-<<<<<<< HEAD
-=======
-// Toggle whether the whole window ignores mouse events. When click-through is
-// ON, only elements with explicit pointer-events:auto receive clicks.
-function setClickThrough(enabled: boolean) {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  // We intentionally do not use click-through in the default interaction model.
-  // If this is ever enabled again, do it without forwarding so taps stay sane.
-  mainWindow.setIgnoreMouseEvents(enabled, { forward: false });
-}
-
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 function focusMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
@@ -410,14 +226,10 @@ function sendToRenderer(channel: string, data: unknown) {
   }
 }
 
-<<<<<<< HEAD
-=======
 function syncWindowToSpatial(_cfg: SpatialConfig | null) {
-  // NO-OP: window is full-screen overlay. Companion position is handled
-  // locally in the renderer via React state + pointer-events.
+  // NO-OP: window position is handled locally in the renderer via React state.
 }
 
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 // ---------------------------------------------------------------------------
 // Tray
 // ---------------------------------------------------------------------------
@@ -458,16 +270,10 @@ ipcMain.handle(IPC.GET_WINDOW_POSITION, () => {
   return { x, y };
 });
 
-<<<<<<< HEAD
-=======
-// Renderer toggles click-through: when the chat panel is open we need the
-// panel area to receive clicks (but the rest of the overlay still passes
-// through). We keep forward:true so the companion stays hoverable.
 ipcMain.on(IPC.SET_IGNORE_MOUSE, (_e, ignore: boolean) => {
   setClickThrough(ignore);
 });
 
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 // ---------------------------------------------------------------------------
 // IPC — chat streaming (via model router)
 // ---------------------------------------------------------------------------
@@ -475,23 +281,18 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
   const win = mainWindow;
   if (!win || win.isDestroyed()) return { ok: false };
 
-  // ─── Feed the relationship engine + companion mood + workspace ──────
-  // The last user message is the current input.
   const lastUserMsg = payload.history
     .slice()
     .reverse()
     .find((m) => m.role === "user");
 
-  // Build system prompt with relevance filtering based on the user message
-  const systemPrompt = buildSystemPrompt(lastUserMsg?.content);
+  const systemPrompt = `You are Quip, a desktop AI companion.`;
   if (lastUserMsg) {
     try {
       relationshipEngine.observeUserMessage(lastUserMsg.content);
       relationshipEngine.observeCodePreference(lastUserMsg.content);
       companionMood.observeUserMessage(lastUserMsg.content);
-      // Record a message + conversation for companion evolution
       companionEvolution.recordMessage(currentCompanionId);
-      // Check if this is the start of a new conversation (heuristic: first user msg)
       const userMsgCount = payload.history.filter((m) => m.role === "user").length;
       if (userMsgCount === 1) {
         companionEvolution.recordConversation(currentCompanionId);
@@ -501,7 +302,6 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
     }
   }
 
-  // ─── Refresh workspace context (async, non-blocking) ───────────────
   workspaceContext.refresh().catch(() => {});
 
   try {
@@ -514,15 +314,12 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
       },
     });
 
-    // ─── Observe the assistant response for relationship engine ──────
     try {
       relationshipEngine.observeAssistantResponse(full);
     } catch {
       /* non-fatal */
     }
 
-    // ─── Feed the conversation to the memory extractor (background) ──
-    // This triggers LLM-based fact + entity extraction every N messages.
     try {
       observeMessages(currentCompanionId, payload.history);
     } catch {
@@ -537,7 +334,6 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
     return { ok: true };
   } catch (err: any) {
     const msg = err?.message ?? String(err);
-    // Classify the error for graceful display.
     const kind: ChatErrorPayload["kind"] = msg.includes("no-groq-key")
       || msg.includes("no-openrouter-key")
       ? "no-key"
@@ -563,7 +359,7 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
 });
 
 // ---------------------------------------------------------------------------
-// IPC — set current companion (so system prompt can adapt)
+// IPC — set current companion
 // ---------------------------------------------------------------------------
 ipcMain.on("quip:set-companion", (_e, id: "pix" | "kai" | "zee") => {
   if (id === "pix" || id === "kai" || id === "zee") {
@@ -572,26 +368,19 @@ ipcMain.on("quip:set-companion", (_e, id: "pix" | "kai" | "zee") => {
 });
 
 // ---------------------------------------------------------------------------
-<<<<<<< HEAD
-// IPC — task execution (via Execution Engine V2 orchestrator)
-=======
-// IPC — task execution (via task brain)
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
+// IPC — task execution (Execution Engine V2)
 // ---------------------------------------------------------------------------
 ipcMain.handle(
   IPC.TASK_EXECUTE,
   async (_e, payload: TaskExecutePayload): Promise<TaskResultPayload> => {
     const profile = deviceProfile ?? (await ensureProfile(app.getPath("userData")));
-<<<<<<< HEAD
-    const platform = profile.platform;
 
-    // Set up approval callback — forwards to renderer
     execPermissionSystem.onApprovalRequested = (request: ApprovalRequest) => {
       sendToRenderer("quip:approval-request", request);
     };
 
     const result = await orchestrator.execute(payload.command, {
-      platform,
+      platform: profile.platform,
       onProgress: (update) => {
         sendToRenderer(IPC.TASK_PROGRESS, {
           requestId: payload.requestId,
@@ -600,41 +389,12 @@ ipcMain.handle(
           description: update.description,
         } as TaskProgressPayload);
       },
+      onApprovalRequest: (request) => {
+        sendToRenderer("quip:approval-request", request);
+      },
     });
 
-    // Record task completion for companion evolution
     if (result.success && result.stepsTotal > 0) {
-=======
-    const env = environmentBrain.get();
-
-    const result = await runTask(payload.command, payload.requestId, profile, env, {
-      onProgress: (step, total, description) => {
-        sendToRenderer(IPC.TASK_PROGRESS, {
-          requestId: payload.requestId,
-          step,
-          total,
-          description,
-        } as TaskProgressPayload);
-      },
-      requestConfirmation: (description, capability) => {
-        return new Promise<boolean>((resolve) => {
-          const id = `confirm-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-          pendingConfirmations.set(id, { resolve });
-
-          const req: ConfirmationRequest = {
-            id,
-            requestId: payload.requestId,
-            description,
-            capability,
-          };
-          sendToRenderer(IPC.CONFIRMATION_REQUEST, req);
-        });
-      },
-    });
-
-    // ─── Record task completion for companion evolution ───────────────
-    if (result.success && !result.plan?.isChat) {
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
       try {
         companionEvolution.recordTask(currentCompanionId);
       } catch {
@@ -642,7 +402,6 @@ ipcMain.handle(
       }
     }
 
-<<<<<<< HEAD
     return {
       requestId: payload.requestId,
       success: result.success,
@@ -661,38 +420,6 @@ ipcMain.handle(
   }
 );
 
-// ---------------------------------------------------------------------------
-// IPC — approval resolution (user taps Approve/Reject)
-// ---------------------------------------------------------------------------
-ipcMain.on("quip:approval-resolve", (_e, { id, approved }: { id: string; approved: boolean }) => {
-  execPermissionSystem.resolveApproval(id, approved);
-});
-
-// ---------------------------------------------------------------------------
-// IPC — permission mode control
-// ---------------------------------------------------------------------------
-ipcMain.handle("quip:get-permission-mode", () => {
-  return { mode: execPermissionSystem.getMode(), label: execPermissionSystem.getModeLabel() };
-});
-
-ipcMain.handle("quip:set-permission-mode", (_e, mode: string) => {
-  if (mode === "ask_every_time" || mode === "approve_task" || mode === "full_access") {
-    execPermissionSystem.setMode(mode);
-  }
-  return { mode: execPermissionSystem.getMode(), label: execPermissionSystem.getModeLabel() };
-});
-
-ipcMain.handle("quip:cycle-permission-mode", () => {
-  execPermissionSystem.cycleMode();
-  return { mode: execPermissionSystem.getMode(), label: execPermissionSystem.getModeLabel() };
-});
-
-=======
-    return result;
-  }
-);
-
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 ipcMain.on(
   IPC.CONFIRMATION_RESOLVE,
   (_e, payload: ConfirmationResolvePayload) => {
@@ -719,7 +446,7 @@ ipcMain.handle(IPC.GET_DEVICE_PROFILE, async () => {
 
 ipcMain.handle(IPC.RESCAN_DEVICE, async () => {
   try {
-    deviceProfile = await ensureProfile(app.getPath("userData"), 0); // force rescan
+    deviceProfile = await ensureProfile(app.getPath("userData"), 0);
     if (deviceProfile) {
       worldModel = ensureWorldModel(app.getPath("userData"), deviceProfile);
       spatialConfig = computeSpatial(deviceProfile);
@@ -738,7 +465,7 @@ ipcMain.handle(IPC.GET_SPATIAL_CONFIG, () => {
 });
 
 // ---------------------------------------------------------------------------
-// IPC — memory brain (extended: pin + prune)
+// IPC — memory brain
 // ---------------------------------------------------------------------------
 ipcMain.handle(IPC.GET_MEMORIES, () => {
   return memoryBrain.get();
@@ -755,7 +482,6 @@ ipcMain.handle(IPC.PIN_MEMORY, (_e, id: string) => {
 ipcMain.handle(IPC.PRUNE_MEMORIES, () => {
   const mem = memoryBrain.get();
   const { retained, report } = runPrune(mem.memories);
-  // Bulk-replace with the retained set
   memoryBrain.replaceAll(retained);
   return {
     total: report.totalMemories,
@@ -783,7 +509,7 @@ ipcMain.handle(IPC.GET_WORKSPACE_CONTEXT, async () => {
 });
 
 // ---------------------------------------------------------------------------
-// IPC — relationship engine (communication DNA)
+// IPC — relationship engine
 // ---------------------------------------------------------------------------
 ipcMain.handle(IPC.GET_USER_PROFILE, () => {
   return relationshipEngine.get();
@@ -808,7 +534,6 @@ ipcMain.handle(IPC.GET_COMPANION_PROGRESSION, () => {
   return companionEvolution.getAll();
 });
 
-// Wire the cosmetic unlock callback to push to renderer
 companionEvolution.onUnlock((unlock) => {
   sendToRenderer(IPC.ON_COSMETIC_UNLOCK, unlock);
 });
@@ -827,8 +552,6 @@ ipcMain.handle(IPC.GET_PERMISSIONS, () => {
   return permissionSystem.listRules();
 });
 
-<<<<<<< HEAD
-=======
 ipcMain.handle(IPC.GET_PERMISSION_MODE, () => {
   return permissionSystem.getMode();
 });
@@ -838,35 +561,36 @@ ipcMain.handle(IPC.SET_PERMISSION_MODE, (_e, mode: "ask" | "task" | "full") => {
   return permissionSystem.getMode();
 });
 
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
-ipcMain.handle(
-  IPC.UPDATE_PERMISSION,
-  (_e, { capability, granted }: { capability: string; granted: boolean }) => {
-    permissionSystem.recordDecision(capability as CapabilityId, granted, granted);
-  }
-);
+ipcMain.handle("quip:cycle-permission-mode", () => {
+  execPermissionSystem.cycleMode();
+  return { mode: execPermissionSystem.getMode(), label: execPermissionSystem.getModeLabel() };
+});
+
+ipcMain.handle(IPC.UPDATE_PERMISSION, (_e, { capability, granted }: { capability: string; granted: boolean }) => {
+  permissionSystem.recordDecision(capability as CapabilityId, granted, granted);
+});
+
+ipcMain.on("quip:approval-resolve", (_e, payload: { id: string; approved: boolean }) => {
+  execPermissionSystem.resolveApproval(payload.id, payload.approved);
+});
 
 // ---------------------------------------------------------------------------
-// IPC — bootstrap progress (sent to renderer during startup)
+// Bootstrap progress
 // ---------------------------------------------------------------------------
-// The bootstrap function will call this internally.
 function sendBootstrapProgress(p: BootstrapProgress) {
   sendToRenderer(IPC.BOOTSTRAP_PROGRESS, p);
 }
 
 // ---------------------------------------------------------------------------
-<<<<<<< HEAD
-// App lifecycle — bootstrap on ready
-=======
-// App lifecycle — window FIRST, then bootstrap in background
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
+// App lifecycle
 // ---------------------------------------------------------------------------
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.whenReady().then(async () => {
-<<<<<<< HEAD
-    // Run the full bootstrap pipeline.
+    createWindow();
+    createTray();
+
     let bootResult: BootstrapResult;
     try {
       bootResult = await bootstrap(sendBootstrapProgress);
@@ -874,85 +598,30 @@ if (!app.requestSingleInstanceLock()) {
       bootResult = { profile: null, worldModel: null, ok: false };
     }
 
-    // Store bootstrap results.
     if (bootResult.profile) {
       deviceProfile = bootResult.profile;
     }
     if (bootResult.worldModel) {
       worldModel = bootResult.worldModel;
     }
-
-    // Compute spatial config from device profile.
     if (deviceProfile) {
       spatialConfig = computeSpatial(deviceProfile);
-
-      // Watch for display changes.
       watchSpatial(deviceProfile, (cfg) => {
         spatialConfig = cfg;
         sendToRenderer(IPC.SPATIAL_CHANGE, cfg);
       });
     }
 
-    // Subscribe to environment changes and push to renderer.
-    // Also feed the companion mood + workspace context brains.
     environmentBrain.subscribe((env: EnvironmentState) => {
       sendToRenderer(IPC.ENVIRONMENT_CHANGE, env);
-      // Feed companion mood (throttled internally)
-=======
-    // Create window IMMEDIATELY so the user sees the companion right away.
-    // Bootstrap runs in background and doesn't block the UI.
-    createWindow();
-    createTray();
-
-    // Run bootstrap in background — non-blocking.
-    bootstrap(sendBootstrapProgress)
-      .then((bootResult) => {
-        if (bootResult.profile) {
-          deviceProfile = bootResult.profile;
-        }
-        if (bootResult.worldModel) {
-          worldModel = bootResult.worldModel;
-        }
-
-        if (deviceProfile) {
-          spatialConfig = computeSpatial(deviceProfile);
-          syncWindowToSpatial(spatialConfig);
-          watchSpatial(deviceProfile, (cfg) => {
-            spatialConfig = cfg;
-            syncWindowToSpatial(cfg);
-            sendToRenderer(IPC.SPATIAL_CHANGE, cfg);
-          });
-          // Notify renderer that spatial config is ready
-          sendToRenderer(IPC.SPATIAL_CHANGE, spatialConfig);
-        }
-      })
-      .catch(() => {
-        // Non-fatal — app still works without bootstrap
-      });
-
-    // Subscribe to environment changes immediately.
-    environmentBrain.subscribe((env: EnvironmentState) => {
-      sendToRenderer(IPC.ENVIRONMENT_CHANGE, env);
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
       try {
         companionMood.observeEnvironment(env);
       } catch {
         /* non-fatal */
       }
-<<<<<<< HEAD
-      // Refresh workspace context periodically (it reads the foreground window)
       workspaceContext.refresh().catch(() => {});
     });
 
-    // Create the window + tray.
-    createWindow();
-    createTray();
-
-=======
-      workspaceContext.refresh().catch(() => {});
-    });
-
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
@@ -962,7 +631,6 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform !== "darwin") app.quit();
   });
 
-  // Flush debounced saves on quit
   app.on("before-quit", () => {
     try {
       memoryBrain.flush();

@@ -288,11 +288,7 @@ class ModelRouter {
       ? "groq"
       : this.fallback?.isConfigured()
         ? "openrouter"
-<<<<<<< HEAD
-        : "groq";
-=======
         : "local";
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   }
 
   /** Stream a chat completion, trying primary then fallback. */
@@ -321,14 +317,9 @@ class ModelRouter {
       }
     }
 
-<<<<<<< HEAD
-    const msg = describeError(lastErr);
-    throw new Error(msg);
-=======
     const full = buildLocalFallback(history, lastErr);
     this.activeProvider = "local";
     return { full, provider: "local" };
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   }
 
   status(): ModelRouterStatus {
@@ -336,12 +327,6 @@ class ModelRouter {
     const fallback = this.fallback
       ? { ...this.fallback.config, available: this.fallback.isConfigured() }
       : null;
-<<<<<<< HEAD
-    const active =
-      this.activeProvider === "openrouter" && fallback
-        ? fallback
-        : primary;
-=======
     const localActive: ModelConfig = {
       provider: "local",
       model: "local-fallback",
@@ -354,16 +339,11 @@ class ModelRouter {
         : this.activeProvider === "local"
           ? localActive
           : primary;
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
     return {
       primary,
       fallback,
       active,
-<<<<<<< HEAD
-      healthy: primary.available || !!fallback?.available,
-=======
       healthy: primary.available || !!fallback?.available || this.activeProvider === "local",
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
     };
   }
 
@@ -390,14 +370,8 @@ class ModelRouter {
         // fall through to next provider
       }
     }
-<<<<<<< HEAD
-    throw lastErr ?? new Error("No AI provider configured");
-  }
-}
-
-=======
     this.activeProvider = "local";
-    return "";
+    return buildLocalFallback(history, lastErr);
   }
 }
 
@@ -418,7 +392,6 @@ function buildLocalFallback(
   ].join(" ");
 }
 
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 function describeError(err: unknown): string {
   if (!err) return "Chat is unavailable right now.";
   const msg = (err as Error)?.message ?? String(err);

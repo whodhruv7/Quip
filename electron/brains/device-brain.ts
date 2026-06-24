@@ -117,7 +117,6 @@ function discoverDisplays(): {
 // Windows-specific probes
 // ---------------------------------------------------------------------------
 
-<<<<<<< HEAD
 // Known app fingerprints for Windows. The "check" command is fast & silent.
 // We only mark an app present if its binary responds. This is detection,
 // NOT hardcoding behavior — capability-registry maps these to capabilities.
@@ -141,7 +140,6 @@ const WIN_APP_PROBES: { id: string; name: string; category: AppCategory; check: 
   { id: "calc", name: "Calculator", category: "system", check: "where calc 2>nul" },
   { id: "notepad", name: "Notepad", category: "notes", check: "where notepad 2>nul" },
 ];
-=======
 function classifyWindowsApp(name: string, appId: string): AppCategory {
   const text = `${name} ${appId}`.toLowerCase();
   if (
@@ -185,7 +183,6 @@ function fallbackWindowsAppName(appId: string): string {
   const parts = trimmed.split(".");
   return (parts[parts.length - 1] || trimmed).replace(/^[a-z]/, (c) => c.toUpperCase());
 }
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 
 // Default-handler queries (Windows). The registry UserChoice key tells us
 // the user's actual default browser / mail client.
@@ -237,7 +234,6 @@ function inferWindowsTaskbar(primary: DisplayInfo): {
 
 async function scanWindows(): Promise<Partial<DeviceProfile>> {
   const probed = await parallel({
-<<<<<<< HEAD
     // Installed app detection — run all probes concurrently.
     appResults: (async () => {
       const results = await Promise.all(
@@ -248,13 +244,11 @@ async function scanWindows(): Promise<Partial<DeviceProfile>> {
       );
       return results.filter((r) => r.present);
     })(),
-=======
     // Installed apps — Start Menu scan is the broadest and most reliable.
     startApps: run(
       "powershell -NoProfile -Command \"Get-StartApps | Select-Object DisplayName,AppID | ConvertTo-Json -Compress\"",
       6000
     ),
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
     defaultBrowser: run(WIN_DEFAULT_BROWSER_CMD, 3000),
     defaultMailApp: run(WIN_DEFAULT_MAIL_CMD, 3000),
     storage: run(
@@ -263,15 +257,13 @@ async function scanWindows(): Promise<Partial<DeviceProfile>> {
     ),
   });
 
-<<<<<<< HEAD
-  const apps: InstalledApp[] = (probed.appResults ?? []).map(
+  const probeApps: InstalledApp[] = (probed.appResults ?? []).map(
     ({ probe }) => ({
       id: probe.id,
       name: probe.name,
       category: probe.category,
     })
   );
-=======
   let startApps: Array<{ DisplayName?: string; AppID?: string }> = [];
   const rawStartApps = (probed.startApps ?? "").trim();
   if (rawStartApps) {
@@ -283,7 +275,7 @@ async function scanWindows(): Promise<Partial<DeviceProfile>> {
     }
   }
 
-  const apps: InstalledApp[] = startApps
+  const startMenuApps: InstalledApp[] = startApps
     .map((app) => {
       const appId = (app.AppID ?? "").trim();
       if (/^https?:\/\//i.test(appId)) return null;
@@ -297,7 +289,6 @@ async function scanWindows(): Promise<Partial<DeviceProfile>> {
       };
     })
     .filter(Boolean) as InstalledApp[];
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 
   const defaultBrowser =
     decodeWindowsBrowser((probed.defaultBrowser ?? "").trim()) || null;
@@ -316,6 +307,8 @@ async function scanWindows(): Promise<Partial<DeviceProfile>> {
       };
     }
   }
+
+  const apps = [...probeApps, ...startMenuApps];
 
   return { apps, defaultBrowser, defaultMailApp, storage };
 }

@@ -54,7 +54,7 @@ function getSmartPlaceholder(companionId?: CompanionId): string {
 export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
   const [value, setValue] = useState("");
   const [history, setHistory] = useState<string[]>(() => loadHistory());
-  const [historyIndex, setHistoryIndex] = useState(-1); // -1 = current input
+  const [historyIndex, setHistoryIndex] = useState(-1);
   const [urlChip, setUrlChip] = useState<string | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
 
@@ -68,20 +68,18 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
     el.style.height = Math.min(el.scrollHeight, 110) + "px";
   }, [value]);
 
-  // Check clipboard for URL on focus (paste detection)
   const checkClipboard = useCallback(async () => {
     try {
       const text = await navigator.clipboard.readText();
       if (text && text.length < 500) {
         const trimmed = text.trim();
-        // URL detection
         if (/^https?:\/\/\S+$/i.test(trimmed)) {
           setUrlChip(trimmed);
           return;
         }
       }
     } catch {
-      // Clipboard API not available or permission denied — silent
+      /* silent */
     }
   }, []);
 
@@ -89,7 +87,6 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
     const text = (overrideText ?? value).trim();
     if (!text || busy) return;
     onSend(text);
-    // Add to history
     const newHistory = [...history, text];
     setHistory(newHistory);
     saveHistory(newHistory);
@@ -99,14 +96,12 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Enter to send
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       submit();
       return;
     }
 
-    // Up arrow: navigate history (only when at start of input or empty)
     if (e.key === "ArrowUp" && history.length > 0) {
       const el = e.currentTarget;
       if (el.selectionStart === 0 || value === "") {
@@ -114,7 +109,6 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
         const newIndex = historyIndex === -1 ? history.length - 1 : Math.max(0, historyIndex - 1);
         setHistoryIndex(newIndex);
         setValue(history[newIndex]);
-        // Move cursor to end
         setTimeout(() => {
           const e2 = ref.current;
           if (e2) {
@@ -124,7 +118,6 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
       }
     }
 
-    // Down arrow: navigate history forward
     if (e.key === "ArrowDown" && historyIndex !== -1) {
       e.preventDefault();
       const newIndex = historyIndex + 1;
@@ -137,7 +130,6 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
       }
     }
 
-    // Escape: clear input
     if (e.key === "Escape" && value) {
       e.preventDefault();
       setValue("");
@@ -150,18 +142,11 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
       className="flex flex-col px-3 py-2.5"
       style={{
         borderTop: "1px solid rgba(0,0,0,0.05)",
-<<<<<<< HEAD
         background: "rgba(255,255,255,0.55)",
         backdropFilter: "blur(20px)",
         WebkitBackdropFilter: "blur(20px)",
-=======
-        background: "rgba(252,253,255,0.96)",
-        backdropFilter: "blur(18px)",
-        WebkitBackdropFilter: "blur(18px)",
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
       }}
     >
-      {/* URL paste chip */}
       {urlChip && (
         <button
           onClick={() => submit(urlChip)}
@@ -192,7 +177,6 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
         </button>
       )}
 
-      {/* Input row */}
       <div className="flex items-end gap-2">
         <div className="relative flex-1">
           <textarea
@@ -215,11 +199,7 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
             }}
             placeholder={getSmartPlaceholder(companionId)}
             aria-label="Message Quip"
-<<<<<<< HEAD
             className="w-full resize-none rounded-2xl border border-black/[0.07] bg-white/80 px-4 py-2.5 text-[14px] text-quip-ink placeholder:text-quip-gray/60 focus:outline-none"
-=======
-            className="w-full resize-none rounded-2xl border border-black/[0.08] bg-white px-4 py-2.5 text-[14px] text-quip-ink placeholder:text-quip-gray/60 focus:outline-none"
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
             style={{
               transition: "border-color 200ms, box-shadow 200ms",
             }}

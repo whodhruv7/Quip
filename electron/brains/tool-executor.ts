@@ -41,13 +41,10 @@ function shellOpen(url: string): Promise<void> {
   return shell.openExternal(url);
 }
 
-<<<<<<< HEAD
-=======
 function shellOpenPath(target: string): Promise<string> {
   return shell.openPath(target);
 }
 
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 // YouTube autoplay helper — when we open a YouTube search, attempt to click
 // the first result so playback actually starts.
 async function youtubeAutoplay(url: string, label: string): Promise<ExecResult> {
@@ -166,21 +163,6 @@ export async function executeImplementation(
 
     // -----------------------------------------------------------------------
     case "launch-app": {
-<<<<<<< HEAD
-      const cmd = launchCommand(p.appId as string, platform);
-      if (!cmd) {
-        return {
-          success: false,
-          output: `No launch command for ${p.appName}`,
-          note: `Couldn't launch ${p.appName}`,
-        };
-      }
-      try {
-        await run(cmd);
-        return {
-          success: true,
-          output: `Launched ${p.appName}`,
-=======
       const appName = (p.appName as string | undefined) ?? (p.appId as string | undefined) ?? "app";
       const launchId = (p.launchId as string | null | undefined) ?? null;
       const cmd = launchId
@@ -248,26 +230,19 @@ export async function executeImplementation(
               throw new Error(opened);
             }
           }
-        } else {
-          if (!(await tryLaunchByName())) {
-            throw new Error(`No launch command for ${appName}`);
-          }
+        } else if (!(await tryLaunchByName())) {
+          throw new Error(`No launch command for ${appName}`);
         }
         return {
           success: true,
           output: `Launched ${appName}`,
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
           note: `Opened ${impl.label}`,
         };
       } catch (e: any) {
         return {
           success: false,
           output: `Failed: ${e?.message ?? e}`,
-<<<<<<< HEAD
-          note: `Couldn't launch ${p.appName}`,
-=======
           note: `Couldn't launch ${appName}`,
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
         };
       }
     }
@@ -299,24 +274,6 @@ export async function executeImplementation(
     // -----------------------------------------------------------------------
     case "open-files": {
       const loc = p.location as string | null;
-<<<<<<< HEAD
-      const cmd =
-        platform === "win32"
-          ? loc === "downloads"
-            ? 'explorer "%USERPROFILE%\\Downloads"'
-            : loc === "desktop"
-              ? 'explorer "%USERPROFILE%\\Desktop"'
-              : "explorer ."
-          : platform === "darwin"
-            ? loc === "downloads"
-              ? "open ~/Downloads"
-              : loc === "desktop"
-                ? "open ~/Desktop"
-                : "open ."
-            : "xdg-open .";
-      try {
-        await run(cmd);
-=======
       try {
         if (loc && !["downloads", "desktop", "documents", "pictures", "videos", "music", "home"].includes(loc.toLowerCase())) {
           const expanded =
@@ -362,7 +319,6 @@ export async function executeImplementation(
                 : "xdg-open .";
           await run(cmd);
         }
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
         return {
           success: true,
           output: "Opened files",

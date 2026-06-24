@@ -32,37 +32,20 @@ export function ScanOverlay({ companionId, onProgress, onDone }: ScanOverlayProp
   const theme = getCompanion(companionId as any);
 
   useEffect(() => {
-<<<<<<< HEAD
-    // Fast fallback: 1.2s max — app should feel instant
     const fallback = setTimeout(() => {
       setVisible(false);
       setTimeout(() => onDone?.(), 150);
     }, 1200);
-=======
-    const fallback = setTimeout(() => {
-      setVisible(false);
-      setTimeout(() => onDone?.(), 200);
-    }, 2500);
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 
     const off = window.quip.onBootstrapProgress((p) => {
       setProgress(p);
       onProgress?.(p);
       if (p.done) {
-<<<<<<< HEAD
         clearTimeout(fallback);
         setTimeout(() => {
           setVisible(false);
           setTimeout(() => onDone?.(), 200);
         }, 200);
-=======
-        // Small delay so the user sees "Ready" before it fades.
-        clearTimeout(fallback);
-        setTimeout(() => {
-          setVisible(false);
-          setTimeout(() => onDone?.(), 300);
-        }, 500);
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
       }
     });
     return () => {
@@ -86,7 +69,6 @@ export function ScanOverlay({ companionId, onProgress, onDone }: ScanOverlayProp
           }}
         >
           <div className="flex flex-col items-center gap-6">
-            {/* Companion glow with pulse */}
             <div className="relative">
               <motion.div
                 animate={{
@@ -126,7 +108,6 @@ export function ScanOverlay({ companionId, onProgress, onDone }: ScanOverlayProp
               </motion.div>
             </div>
 
-            {/* Stage label */}
             <div className="flex flex-col items-center gap-2">
               <motion.div
                 key={progress?.stage ?? "idle"}
@@ -158,7 +139,6 @@ export function ScanOverlay({ companionId, onProgress, onDone }: ScanOverlayProp
               )}
             </div>
 
-            {/* Progress bar */}
             <div
               style={{
                 width: 200,

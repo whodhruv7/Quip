@@ -20,13 +20,10 @@ const api = {
       x: number;
       y: number;
     } | null>,
-<<<<<<< HEAD
-=======
   // Toggle whole-window click-through. When true the empty overlay lets clicks
   // fall through to the desktop; our visible elements still capture their own.
   setIgnoreMouseEvents: (ignore: boolean) =>
     ipcRenderer.send(IPC.SET_IGNORE_MOUSE, ignore),
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 
   // ─── Chat streaming ──────────────────────────────────────────────────
   chatSend: (payload: ChatSendPayload) =>
@@ -65,7 +62,6 @@ const api = {
   // ─── Set active companion (so the system prompt adapts personality/mood) ─
   setCompanion: (id: "pix" | "kai" | "zee") =>
     ipcRenderer.send("quip:set-companion", id),
-<<<<<<< HEAD
 
   // ─── Execution Engine V2 — Permission modes ────────────────────────
   getPermissionMode: () =>
@@ -81,8 +77,6 @@ const api = {
   },
   resolveApproval: (id: string, approved: boolean) =>
     ipcRenderer.send("quip:approval-resolve", { id, approved }),
-=======
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   onTaskProgress: (cb: (p: any) => void) => {
     const handler = (_e: unknown, data: any) => cb(data);
     ipcRenderer.on(IPC.TASK_PROGRESS, handler as any);
@@ -170,13 +164,6 @@ const api = {
   // ─── Permission system ──────────────────────────────────────────────
   getPermissions: () =>
     ipcRenderer.invoke(IPC.GET_PERMISSIONS),
-<<<<<<< HEAD
-=======
-  getPermissionMode: () =>
-    ipcRenderer.invoke(IPC.GET_PERMISSION_MODE),
-  setPermissionMode: (mode: "ask" | "task" | "full") =>
-    ipcRenderer.invoke(IPC.SET_PERMISSION_MODE, mode),
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   updatePermission: (capability: string, granted: boolean) =>
     ipcRenderer.invoke(IPC.UPDATE_PERMISSION, { capability, granted }),
 

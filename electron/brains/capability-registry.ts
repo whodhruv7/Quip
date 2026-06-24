@@ -61,8 +61,6 @@ export function launchCommand(appId: string, platform: string): string | null {
     iterm: { win: "", mac: 'open -a "iTerm"', linux: "" },
     calc: { win: "start calc", mac: 'open -a "Calculator"', linux: "gnome-calculator" },
     notepad: { win: "start notepad", mac: 'open -a "TextEdit"', linux: "gedit" },
-<<<<<<< HEAD
-=======
     codex: { win: "start codex", mac: 'open -a "Codex"', linux: "codex" },
     word: { win: "start winword", mac: 'open -a "Microsoft Word"', linux: "" },
     excel: { win: "start excel", mac: 'open -a "Microsoft Excel"', linux: "" },
@@ -76,7 +74,6 @@ export function launchCommand(appId: string, platform: string): string | null {
     discord: { win: "start discord", mac: 'open -a "Discord"', linux: "discord" },
     slack: { win: "start slack", mac: 'open -a "Slack"', linux: "slack" },
     obs: { win: "start obs64", mac: 'open -a "OBS"', linux: "obs" },
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   };
 
   const entry = map[appId];
@@ -157,8 +154,6 @@ function resolveOpenBrowser(ctx: RegistryContext): CapabilityResolution {
   return { capability: "openBrowser", available: false, implementation: null };
 }
 
-<<<<<<< HEAD
-=======
 function normalizeAppText(value: string | null | undefined): string {
   return (value ?? "")
     .trim()
@@ -209,7 +204,6 @@ function resolveLaunchApp(
   };
 }
 
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 function resolveOpenApp(
   capability: CapabilityId,
   category: "editor" | "music" | "mail" | "terminal",
@@ -389,10 +383,7 @@ export interface ResolveOptions {
   query?: string;
   appId?: string | null;
   appName?: string | null;
-<<<<<<< HEAD
-=======
   launchId?: string | null;
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   to?: string;
   subject?: string;
   body?: string;
@@ -413,12 +404,9 @@ export function resolveCapability(
     case "openBrowser":
       return resolveOpenBrowser(ctx);
 
-<<<<<<< HEAD
-=======
     case "launchApp":
       return resolveLaunchApp(opts.appId ?? null, opts.appName ?? null, opts.launchId ?? null, ctx);
 
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
     case "openEditor":
       return resolveOpenApp("openEditor", "editor", opts.appId ?? null, opts.appName ?? null, ctx);
 

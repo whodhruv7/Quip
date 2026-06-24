@@ -204,20 +204,12 @@ export function parseIntent(raw: string): ParsedIntent {
   }
 
   // --- Open editor ---
-<<<<<<< HEAD
   if (contains(text, ["vscode", "vs code", "visual studio code", "cursor", "editor", "code editor"])) {
-    const isCursor = contains(text, ["cursor"]);
-    return {
-      type: "open_app",
-      target: isCursor ? "cursor" : "vscode",
-=======
-  if (contains(text, ["vscode", "vs code", "visual studio code", "cursor", "editor", "code editor", "codex"])) {
     const isCursor = contains(text, ["cursor"]);
     const isCodex = contains(text, ["codex"]);
     return {
       type: "open_app",
       target: isCursor ? "cursor" : isCodex ? "codex" : "vscode",
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
       query: null,
       confidence: 0.85,
       verbs,
@@ -251,8 +243,6 @@ export function parseIntent(raw: string): ParsedIntent {
     };
   }
 
-<<<<<<< HEAD
-=======
   // --- Open a direct file/folder path ---
   if (
     /^[a-z]:[\\/]/i.test(raw.trim()) ||
@@ -270,7 +260,6 @@ export function parseIntent(raw: string): ParsedIntent {
     };
   }
 
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   // --- Open terminal ---
   if (contains(text, ["terminal", "cmd", "command prompt", "powershell"])) {
     return {
@@ -291,8 +280,6 @@ export function parseIntent(raw: string): ParsedIntent {
     return { type: "open_app", target: "notepad", query: null, confidence: 0.8, verbs, raw: text };
   }
 
-<<<<<<< HEAD
-=======
   // --- Generic open app fallback ---
   if (contains(text, ["open", "launch", "start", "run", "khol", "kholo", "chala", "chalao"])) {
     const target = extractTopic(raw, [
@@ -311,7 +298,6 @@ export function parseIntent(raw: string): ParsedIntent {
     }
   }
 
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   // --- Default: chat (let the LLM handle it) ---
   return {
     type: "chat",
@@ -434,30 +420,21 @@ function buildPlan(
 
     case "open_app": {
       const target = intent.target ?? "";
-<<<<<<< HEAD
-      const idMap: Record<string, { cap: CapabilityId; cat: string; pref: string | null }> = {
-        vscode: { cap: "openEditor", cat: "editor", pref: "vscode" },
-        cursor: { cap: "openEditor", cat: "editor", pref: "cursor" },
-        terminal: { cap: "openTerminal", cat: "terminal", pref: null },
-        calc: { cap: "noop", cat: "system", pref: null },
-        notepad: { cap: "noop", cat: "notes", pref: null },
+      const idMap: Record<string, CapabilityId> = {
+        vscode: "openEditor",
+        cursor: "openEditor",
+        terminal: "openTerminal",
       };
-=======
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
       if (target === "calc") {
         add("systemControl", "Open Calculator", { appId: "calc" }, false);
         summary = "Opened Calculator";
       } else if (target === "notepad") {
-        add("openFiles", "Open Notepad", { appId: "notepad" }, false);
+        add("launchApp", "Open Notepad", { appId: "notepad", appName: "Notepad" }, false);
         summary = "Opened Notepad";
-<<<<<<< HEAD
       } else if (idMap[target]) {
-        const m = idMap[target];
-        add(m.cap, `Open ${target}`, { appId: target, appName: target }, false);
+        const cap = idMap[target];
+        add(cap, `Open ${target}`, { appId: target, appName: target }, false);
         summary = `Opened ${target}`;
-      } else {
-        isChat = true;
-=======
       } else {
         const cap = resolveCapability("launchApp", ctx, { appId: target, appName: target });
         if (cap.available && cap.implementation) {
@@ -488,7 +465,6 @@ function buildPlan(
             isChat = true;
           }
         }
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
       }
       break;
     }
@@ -596,8 +572,6 @@ export async function executePlan(
     }
 
     const result = await executeImplementation(impl, profile);
-<<<<<<< HEAD
-=======
     if (!result.success && resolution.fallback?.implementation && resolution.fallback.implementation.label !== impl.label) {
       const fallbackResult = await executeImplementation(resolution.fallback.implementation, profile);
       if (fallbackResult.success) {
@@ -608,7 +582,6 @@ export async function executePlan(
         continue;
       }
     }
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
     sub.status = result.success ? "done" : "failed";
     sub.output = result.output;
     notes.push(result.note);
