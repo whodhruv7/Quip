@@ -7,11 +7,7 @@
 
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-<<<<<<< HEAD
-import type { CompanionId, DeviceProfile, UserKnowledge } from "@/types";
-=======
 import type { CompanionId, DeviceProfile, PermissionMode, UserKnowledge } from "@/types";
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
 import { CompanionSwitch } from "./CompanionSwitch";
 import { ModelSwitch } from "./ModelSwitch";
 import { ConfirmModal } from "./ConfirmModal";
@@ -38,10 +34,7 @@ export function SettingsPanel({
   const [profile, setProfile] = useState<any>(null);
   const [progression, setProgression] = useState<any>(null);
   const [pruning, setPruning] = useState(false);
-<<<<<<< HEAD
-=======
   const [permissionMode, setPermissionMode] = useState<PermissionMode>("task");
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   const [confirmResetDNA, setConfirmResetDNA] = useState(false);
   const [confirmPrune, setConfirmPrune] = useState(false);
 
@@ -51,10 +44,7 @@ export function SettingsPanel({
     window.quip.getMemories().then(setMemory).catch(() => {});
     window.quip.getUserProfile().then(setProfile).catch(() => {});
     window.quip.getCompanionProgression().then(setProgression).catch(() => {});
-<<<<<<< HEAD
-=======
     window.quip.getPermissionMode().then(setPermissionMode).catch(() => {});
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   }, [open]);
 
   const handleRescan = async () => {
@@ -104,8 +94,6 @@ export function SettingsPanel({
     setProfile(fresh);
   };
 
-<<<<<<< HEAD
-=======
   const handlePermissionMode = async (mode: PermissionMode) => {
     setPermissionMode(mode);
     try {
@@ -115,7 +103,6 @@ export function SettingsPanel({
     }
   };
 
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
   if (!open) return null;
 
   return (
@@ -188,8 +175,6 @@ export function SettingsPanel({
               </label>
               <ModelSwitch />
             </div>
-<<<<<<< HEAD
-=======
             <div>
               <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-quip-gray">
                 Permission mode
@@ -221,7 +206,6 @@ export function SettingsPanel({
                 })}
               </div>
             </div>
->>>>>>> 0e1a87d69b30e3c81fc25e2628e0dc69dfe3e276
           </div>
         )}
 
