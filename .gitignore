@@ -1,16 +1,17 @@
+```
 # Dependencies
 node_modules/
 
-# Build outputs
+# Build artifacts
 dist/
 build/
-dist-electron/
+target/
 
 # Logs and temp files
 *.log
 *.tmp
 
-# Environment variables
+# Environment
 .env
 .env.local
 *.env.*
@@ -19,30 +20,55 @@ dist-electron/
 .vscode/
 .idea/
 
-# OS generated files
-.DS_Store
-Thumbs.db
-
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# Node.js
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# Compiled files
+*.o
+*.obj
+*.so
+*.a
+*.dll
+*.exe
 
-# Electron specific
-release/
-out/
-*.asar
-
-# Coverage reports
+# Coverage
 coverage/
-*.lcov
+htmlcov/
+.coverage
 
-# Testing
-*.test.js
-*.test.ts
+# MyPy
+.mypy_cache/
+
+# Pytest
+.pytest_cache/
+
+# Gradle
+.gradle/
+
+# Compressed files
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
+```
