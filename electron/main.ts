@@ -58,6 +58,12 @@ import { companionEvolution } from "./brains/companion-evolution";
 import { runPrune } from "./brains/memory-importance";
 import { MemoryExtractorBrain } from "./brains/memory-extractor";
 import { timelineBrain } from "./brains/timeline-brain";
+// Phase 2
+import { communicationDNA } from "./brains/communication-dna";
+import { proactiveEngine } from "./brains/proactive-engine";
+import { weeklyReflection } from "./brains/weekly-reflection";
+// Phase 3
+import { swarmManager } from "./brains/swarm-manager";
 
 const memoryExtractor = new MemoryExtractorBrain({
   modelRouter,
@@ -254,7 +260,7 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
     }
   }
 
-  // ─── 8. Communication style (always — short) ────────────────────────
+  // ─── 8. Communication style (relationship engine) ───────────────────
   const styleGuide = relationshipEngine.getStyleGuide();
   if (styleGuide) sections.push(styleGuide);
 
@@ -264,9 +270,17 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
     sections.push(`Recent Activity: ${timelineSummary}`);
   }
 
-  // ─── 9. Companion mood (always — one line) ──────────────────────────
+  // ─── 9. Companion mood ─────────────────────────────────────────────
   const moodHint = companionMood.getPromptHint(companionId);
   if (moodHint) sections.push(moodHint);
+
+  // ─── Phase 2: Communication DNA (injected after style guide) ───────
+  const memState = memoryBrain.get();
+  const userProfile = relationshipEngine.get();
+  const dna = communicationDNA.compute(userProfile, memState);
+  if (dna.promptFragment) {
+    sections.push(`Communication Style:\n${dna.promptFragment}`);
+  }
 
   // ─── 10. Rules (always — short) ─────────────────────────────────────
   sections.push(
@@ -651,29 +665,79 @@ ipcMain.on(
 
 
 // ---------------------------------------------------------------------------
-// IPC — Swarm Mode
+// IPC — Phase 3: Swarm Mode (managed by SwarmManager)
 // ---------------------------------------------------------------------------
-ipcMain.handle(IPC.SPAWN_COMPANION, (_e, { companionId }: { companionId: "pix" | "kai" | "ren" }) => {
-  // spawn slightly offset
-  const offsetCount = windows.size;
-  createWindow(companionId, offsetCount * 40, offsetCount * 40);
+ipcMain.handle(IPC.SPAWN_COMPANION, (_e, payload: { companionId: "pix" | "kai" | "ren"; headless?: boolean; autoTask?: string }) => {
+  const winId = swarmManager.spawn(payload.companionId, {
+    headless: payload.headless ?? false,
+    autoTask: payload.autoTask,
+  });
+  return { winId };
 });
 
-ipcMain.on(IPC.INTER_COMPANION_MSG, (_e, { to, message }: { to: "pix" | "kai" | "ren", message: string }) => {
-  const fromWin = BrowserWindow.fromWebContents(_e.sender);
-  const fromId = fromWin ? windowCompanionMap.get(fromWin.id) : "unknown";
-  
-  // Find target window
-  for (const [id, compId] of windowCompanionMap.entries()) {
-    if (compId === to) {
-      const win = windows.get(id);
-      if (win) {
-        win.webContents.send(IPC.INTER_COMPANION_MSG, { from: fromId, message });
-        return;
-      }
-    }
-  }
+ipcMain.handle(IPC.DISMISS_COMPANION, (_e, { winId }: { winId: number }) => {
+  swarmManager.dismiss(winId);
 });
+
+ipcMain.handle(IPC.GET_SWARM_INSTANCES, () => {
+  return swarmManager.getInstances();
+});
+
+ipcMain.on(IPC.INTER_COMPANION_MSG, (_e, payload: { to: "pix" | "kai" | "ren"; message: string }) => {
+  const fromWin = BrowserWindow.fromWebContents(_e.sender);
+  if (!fromWin) return;
+  swarmManager.routeMessage(fromWin.id, payload.to, payload.message);
+});
+
+// ---------------------------------------------------------------------------
+// IPC — Phase 2: Proactive Suggestions
+// ---------------------------------------------------------------------------
+ipcMain.on(IPC.DISMISS_PROACTIVE, () => {
+  // No-op — just acknowledged by renderer. Could log if needed.
+});
+
+// ---------------------------------------------------------------------------
+// IPC — Phase 2: Weekly Reflection
+// ---------------------------------------------------------------------------
+ipcMain.handle(IPC.GET_WEEKLY_DIGEST, () => {
+  const events = timelineBrain.getAllEvents();
+  const memories = memoryBrain.get();
+  const profile = relationshipEngine.get();
+  return weeklyReflection.buildDigest(events, memories, profile);
+});
+
+ipcMain.handle(IPC.RECORD_REFLECTION_FEEDBACK, (_e, payload: { feedback: string }) => {
+  const events = timelineBrain.getAllEvents();
+  const memories = memoryBrain.get();
+  const profile = relationshipEngine.get();
+  const digest = weeklyReflection.buildDigest(events, memories, profile);
+  weeklyReflection.recordReflection(digest.naturalSummary, payload.feedback);
+  return { ok: true };
+});
+
+ipcMain.handle(IPC.TRIGGER_WEEKLY_REFLECTION, () => {
+  const events = timelineBrain.getAllEvents();
+  const memories = memoryBrain.get();
+  const profile = relationshipEngine.get();
+  return weeklyReflection.buildDigest(events, memories, profile);
+});
+
+// ---------------------------------------------------------------------------
+// IPC — Phase 2: Communication DNA
+// ---------------------------------------------------------------------------
+ipcMain.handle(IPC.GET_COMMUNICATION_DNA, () => {
+  const profile = relationshipEngine.get();
+  const memories = memoryBrain.get();
+  const dna = communicationDNA.compute(profile, memories);
+  return {
+    toneLabel: dna.toneLabel,
+    preferredLength: dna.preferredLength,
+    usesEmoji: dna.usesEmoji,
+    prefersCode: dna.prefersCode,
+    styleFacts: dna.styleFacts,
+  };
+});
+
 
 // ---------------------------------------------------------------------------
 // IPC — device brain
@@ -850,6 +914,25 @@ if (!app.requestSingleInstanceLock()) {
     // Initialize Timeline Brain
     timelineBrain.init(app.getPath("userData"));
 
+    // Initialize Phase 2 brains
+    weeklyReflection.init(app.getPath("userData"));
+    proactiveEngine.start();
+
+    // Configure Phase 3 SwarmManager with correct asset paths
+    swarmManager.configure(
+      path.join(__dirname, "preload.js"),
+      path.join(__dirname, "../dist")
+    );
+
+    // Check if weekly reflection is due (on startup)
+    const lastReflectionMs = weeklyReflection.getLastReflectionMs();
+    proactiveEngine.checkWeeklyReflection(lastReflectionMs);
+
+    // Subscribe proactive engine to emit suggestions to all windows
+    proactiveEngine.subscribe((suggestion) => {
+      broadcastToRenderers(IPC.PROACTIVE_SUGGESTION, suggestion);
+    });
+
     // Subscribe to environment changes and push to renderer.
     // Also feed the companion mood + workspace context brains.
     environmentBrain.subscribe((env: EnvironmentState) => {
@@ -860,12 +943,18 @@ if (!app.requestSingleInstanceLock()) {
       } catch {
         /* non-fatal */
       }
+      // Phase 2: Check battery for proactive suggestions
+      try {
+        proactiveEngine.checkBatteryCritical(env.battery.level, env.battery.charging);
+      } catch {
+        /* non-fatal */
+      }
       // Refresh workspace context periodically (it reads the foreground window)
       workspaceContext.refresh().catch(() => {});
     });
 
-    // Create the window + tray.
-    createWindow();
+    // Phase 3: Create the initial window via SwarmManager
+    swarmManager.spawn(defaultCompanionId);
     createTray();
 
     app.on("activate", () => {

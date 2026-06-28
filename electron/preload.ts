@@ -59,17 +59,6 @@ const api = {
   setCompanion: (id: "pix" | "kai" | "ren") =>
     ipcRenderer.send("quip:set-companion", id),
   
-  // ─── Swarm Mode ────────────────────────────────────────────────────────
-  spawnCompanion: (companionId: "pix" | "kai" | "ren") =>
-    ipcRenderer.invoke(IPC.SPAWN_COMPANION, { companionId }),
-  onInterCompanionMsg: (cb: (msg: { from: string; message: string }) => void) => {
-    const handler = (_e: unknown, data: any) => cb(data);
-    ipcRenderer.on(IPC.INTER_COMPANION_MSG, handler as any);
-    return () => ipcRenderer.removeListener(IPC.INTER_COMPANION_MSG, handler as any);
-  },
-  sendInterCompanionMsg: (to: "pix" | "kai" | "ren", message: string) =>
-    ipcRenderer.send(IPC.INTER_COMPANION_MSG, { to, message }),
-
   // ─── Execution Engine V2 — Permission modes ────────────────────────
   getPermissionMode: () =>
     ipcRenderer.invoke("quip:get-permission-mode"),
@@ -181,7 +170,49 @@ const api = {
     return () =>
       ipcRenderer.removeListener(IPC.BOOTSTRAP_PROGRESS, handler as any);
   },
+
+  // ─── Phase 2: Communication DNA ──────────────────────────────────────
+  getCommunicationDNA: () =>
+    ipcRenderer.invoke(IPC.GET_COMMUNICATION_DNA),
+
+  // ─── Phase 2: Proactive Suggestions ──────────────────────────────────
+  onProactiveSuggestion: (cb: (suggestion: any) => void) => {
+    const handler = (_e: unknown, data: any) => cb(data);
+    ipcRenderer.on(IPC.PROACTIVE_SUGGESTION, handler as any);
+    return () => ipcRenderer.removeListener(IPC.PROACTIVE_SUGGESTION, handler as any);
+  },
+  dismissProactive: () =>
+    ipcRenderer.send(IPC.DISMISS_PROACTIVE),
+
+  // ─── Phase 2: Weekly Reflection ──────────────────────────────────────
+  getWeeklyDigest: () =>
+    ipcRenderer.invoke(IPC.GET_WEEKLY_DIGEST),
+  triggerWeeklyReflection: () =>
+    ipcRenderer.invoke(IPC.TRIGGER_WEEKLY_REFLECTION),
+  recordReflectionFeedback: (feedback: string) =>
+    ipcRenderer.invoke(IPC.RECORD_REFLECTION_FEEDBACK, { feedback }),
+
+  // ─── Phase 3: Swarm Mode ─────────────────────────────────────────────
+  spawnCompanion: (companionId: "pix" | "kai" | "ren", headless?: boolean, autoTask?: string) =>
+    ipcRenderer.invoke(IPC.SPAWN_COMPANION, { companionId, headless, autoTask }),
+  dismissCompanion: (winId: number) =>
+    ipcRenderer.invoke(IPC.DISMISS_COMPANION, { winId }),
+  getSwarmInstances: () =>
+    ipcRenderer.invoke(IPC.GET_SWARM_INSTANCES),
+  sendInterCompanionMsg: (to: "pix" | "kai" | "ren", message: string) =>
+    ipcRenderer.send(IPC.INTER_COMPANION_MSG, { to, message }),
+  onInterCompanionMsg: (cb: (msg: { from: string; to: string; message: string }) => void) => {
+    const handler = (_e: unknown, data: any) => cb(data);
+    ipcRenderer.on(IPC.INTER_COMPANION_MSG, handler as any);
+    return () => ipcRenderer.removeListener(IPC.INTER_COMPANION_MSG, handler as any);
+  },
+  onAutoTask: (cb: (payload: { task: string }) => void) => {
+    const handler = (_e: unknown, data: any) => cb(data);
+    ipcRenderer.on(IPC.AUTO_TASK, handler as any);
+    return () => ipcRenderer.removeListener(IPC.AUTO_TASK, handler as any);
+  },
 };
+
 
 contextBridge.exposeInMainWorld("quip", api);
 

@@ -71,6 +71,13 @@ class TimelineBrain {
   }
 
   /**
+   * Get all timeline events.
+   */
+  getAllEvents(): TimelineEvent[] {
+    return [...this.state.events];
+  }
+
+  /**
    * Generate a summary of today's activities.
    */
   getTodaySummary(): string {
