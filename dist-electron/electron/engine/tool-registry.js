@@ -114,16 +114,34 @@ exports.FileTool = {
 // ─── Media Tool ──────────────────────────────────────────────────────────────
 exports.MediaTool = {
     async execute(params, ctx) {
-        const url = params.url;
+        let url = params.url;
         if (!url)
             return { success: false, output: "No URL", note: "No media URL" };
+        let isPlayingAutoplay = false;
         try {
+            // Auto-play enhancement for YouTube: scrape first video ID
+            if (params.youtube === "true" && params.query) {
+                try {
+                    const res = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(params.query)}`);
+                    const html = await res.text();
+                    const match = html.match(/"videoId":"([a-zA-Z0-9_-]{11})"/);
+                    if (match && match[1]) {
+                        url = `https://www.youtube.com/watch?v=${match[1]}`;
+                        isPlayingAutoplay = true;
+                    }
+                }
+                catch (e) {
+                    // silently fallback to search page
+                }
+            }
             await shellOpen(url);
             const label = params.youtube === "true" ? "YouTube" : "Spotify";
             return {
                 success: true,
                 output: `Opened ${url}`,
-                note: `Playing on ${label} — search results opened in your browser`,
+                note: isPlayingAutoplay
+                    ? `Playing ${params.query} on ${label}`
+                    : `Playing on ${label} — search results opened in your browser`,
             };
         }
         catch (e) {
