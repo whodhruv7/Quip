@@ -1,0 +1,115 @@
+import type { DeviceProfile, WorldModel } from "../../src/types";
+
+export const SCHEMA_VERSION = 1;
+export const MAX_CANDO_SUMMARY = 8;
+export const MAX_CANNOTDO_SUMMARY = 4;
+
+function getBrowserCapabilities(profile: DeviceProfile) {
+  const canDo = [];
+  const cannotDo = [];
+  if (profile.browsers.length > 0) {
+    canDo.push(
+      "open websites",
+      "search the web",
+      `open URLs in ${profile.defaultBrowser ?? "your default browser"}`
+    );
+  } else {
+    cannotDo.push("open websites (no browser detected)");
+  }
+  return { canDo, cannotDo };
+}
+
+function getMediaCapabilities(profile: DeviceProfile) {
+  const canDo = [];
+  const cannotDo = [];
+  if (profile.musicApps.length > 0 || profile.browsers.length > 0) {
+    const where = profile.musicApps.some((m) => m.id === "spotify") ? "Spotify" : "YouTube";
+    canDo.push(`play music and media (via ${where})`);
+  } else {
+    cannotDo.push("play media (no music app or browser detected)");
+  }
+  return { canDo, cannotDo };
+}
+
+function getMailCapabilities(profile: DeviceProfile) {
+  const canDo = [];
+  const needsPermission = [];
+  if (profile.mailApps.length > 0 || profile.browsers.length > 0) {
+    canDo.push("draft emails");
+    needsPermission.push("send emails");
+  }
+  return { canDo, needsPermission };
+}
+
+export function generateWorldModel(profile: DeviceProfile): WorldModel {
+  let canDo: string[] = [
+    "have a conversation",
+    "answer questions",
+    "use markdown in replies",
+  ];
+  let needsPermission: string[] = [];
+  let cannotDo: string[] = [
+    "delete files without explicit confirmation",
+    "make payments",
+    "access passwords or private keys",
+    "send messages on your behalf without approval",
+  ];
+
+  const browserCaps = getBrowserCapabilities(profile);
+  canDo = canDo.concat(browserCaps.canDo);
+  cannotDo = cannotDo.concat(browserCaps.cannotDo);
+
+  const mediaCaps = getMediaCapabilities(profile);
+  canDo = canDo.concat(mediaCaps.canDo);
+  cannotDo = cannotDo.concat(mediaCaps.cannotDo);
+
+  const mailCaps = getMailCapabilities(profile);
+  canDo = canDo.concat(mailCaps.canDo);
+  needsPermission = needsPermission.concat(mailCaps.needsPermission);
+
+  if (profile.editors.length > 0) {
+    canDo.push(`open your editor (${profile.defaultEditor ?? "code editor"})`);
+  }
+
+  canDo.push(
+    "open system settings",
+    "open file explorer",
+    "open the terminal",
+    "open the calculator",
+    "open the notes app"
+  );
+
+  needsPermission.push(
+    "change system settings",
+    "open sensitive apps",
+    "compose and send emails"
+  );
+
+  const hw = [
+    `${profile.platformLabel} ${profile.osVersion}`,
+    `${profile.cpuCores} cores, ${profile.totalMemoryGB}GB RAM`,
+    `${profile.monitorCount} display(s) at ${profile.primaryResolution.width}x${profile.primaryResolution.height}`,
+  ].join(", ");
+
+  let canDoStr = canDo.slice(0, MAX_CANDO_SUMMARY).join(", ");
+  if (canDo.length > MAX_CANDO_SUMMARY) canDoStr += " (and more)";
+  
+  let cannotDoStr = cannotDo.slice(0, MAX_CANNOTDO_SUMMARY).join(", ");
+  if (cannotDo.length > MAX_CANNOTDO_SUMMARY) cannotDoStr += " (and more)";
+
+  const summary =
+    `You are running on: ${hw}. ` +
+    `You CAN: ${canDoStr}. ` +
+    `You NEED PERMISSION for: ${needsPermission.join(", ")}. ` +
+    `You CANNOT: ${cannotDoStr}. ` +
+    `Never claim a capability you don't have. If asked for something you cannot do, say so plainly and suggest an alternative.`;
+
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    generatedAt: Date.now(),
+    canDo,
+    needsPermission,
+    cannotDo,
+    summary,
+  };
+}

@@ -10,12 +10,13 @@ interface TopBarProps {
   companionId: CompanionId;
   onCompanionChange: (id: CompanionId) => void;
   onSettingsToggle: () => void;
+  onReflectionToggle: () => void;
   onNewChat: () => void;
   onClose?: () => void;
   onHideChat?: () => void;
 }
 
-export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onNewChat, onClose, onHideChat }: TopBarProps) {
+export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onReflectionToggle, onNewChat, onClose, onHideChat }: TopBarProps) {
   const handleClose = onClose ?? onHideChat;
 
   return (
@@ -70,6 +71,18 @@ export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onNew
       >
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
           <path d="M12 5v14M5 12h14" />
+        </svg>
+      </button>
+
+      {/* Reflection */}
+      <button
+        onClick={onReflectionToggle}
+        className="flex h-6 w-6 items-center justify-center rounded-md text-quip-gray transition-colors hover:bg-black/[0.04]"
+        title="Weekly Reflection"
+        aria-label="Weekly Reflection"
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <path d="M3 3v18h18M7 14l5-5 4 4 5-5" />
         </svg>
       </button>
 

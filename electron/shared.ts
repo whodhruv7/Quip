@@ -62,6 +62,10 @@ export const IPC = {
 
   // Bootstrap
   BOOTSTRAP_PROGRESS: "quip:bootstrap-progress",
+
+  // Swarm Mode (Multi-Instance)
+  SPAWN_COMPANION: "quip:spawn-companion",
+  INTER_COMPANION_MSG: "quip:inter-companion-msg",
 } as const;
 
 // ─── Chat payloads ─────────────────────────────────────────────────────────

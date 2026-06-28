@@ -39,6 +39,10 @@ const DEFAULT_RISK: Record<CapabilityId, PermissionLevel> = {
   composeMail: "medium",
   openMail: "medium",
   noop: "safe",
+  launchApp: "safe",
+  systemLock: "medium",
+  systemPower: "dangerous",
+  systemPrivilege: "dangerous",
 };
 
 interface PermissionStore {

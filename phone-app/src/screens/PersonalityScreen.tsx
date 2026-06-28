@@ -10,11 +10,25 @@ import { CompanionSprite } from "@/components/companion/CompanionSprite";
 import { StatusBar } from "@/components/phone/StatusBar";
 import { HomeIndicator } from "@/components/phone/HomeIndicator";
 import { TabBar } from "@/components/phone/TabBar";
+import React from "react";
+import { DNA_THRESHOLDS, generateInsights, UserProfile, Topic } from "@/lib/personality/insights";
+import { Card, DNABar, StatCard, SectionTitle } from "@/components/personality/PersonalityComponents";
 
 export function PersonalityScreen() {
-  const { state, theme } = useStore();
-  const { profile } = state;
+  const { state, theme } = useStore() as any;
+  
+  if (!state || !state.profile) {
+    return <div style={{ background: colors.bg, position: "absolute", inset: 0 }}>Loading...</div>;
+  }
+
+  const profile = state.profile as UserProfile;
   const companion = getCompanion(state.companionId);
+
+  if (!companion) {
+    return <div style={{ background: colors.bg, position: "absolute", inset: 0 }}>Invalid Companion</div>;
+  }
+
+  const insights = generateInsights(profile);
 
   return (
     <motion.div
@@ -31,7 +45,7 @@ export function PersonalityScreen() {
     >
       <StatusBar />
 
-      <div style={{ padding: "54px 20px 16px" }}>
+      <div style={{ padding: `${space.xl}px ${space.base}px ${space.md}px` }}>
         <h1 style={{ fontSize: typography.sizes.title, fontWeight: typography.weights.bold, color: colors.textPrimary, letterSpacing: -0.02, margin: 0 }}>
           You
         </h1>
@@ -52,53 +66,46 @@ export function PersonalityScreen() {
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.24 }}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: space.base,
-            padding: space.base,
-            borderRadius: radius.lg,
-            background: colors.card,
-            border: `0.5px solid ${colors.border}`,
-            marginBottom: space.xl,
-          }}
+          style={{ marginBottom: space.xl }}
         >
-          <CompanionSprite companion={companion} size={48} />
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: typography.sizes.body, fontWeight: typography.weights.bold, color: colors.textPrimary }}>{companion.name}</div>
-            <div style={{ fontSize: typography.sizes.caption, color: colors.textTertiary }}>{companion.personality}</div>
-          </div>
+          <Card style={{ display: "flex", alignItems: "center", gap: space.base }}>
+            <CompanionSprite companion={companion} size={48} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: typography.sizes.body, fontWeight: typography.weights.bold, color: colors.textPrimary }}>{companion.name}</div>
+              <div style={{ fontSize: typography.sizes.caption, color: colors.textTertiary }}>{companion.personality}</div>
+            </div>
+          </Card>
         </motion.div>
 
         {/* DNA bars */}
-        <Label>Communication DNA</Label>
+        <SectionTitle>Communication DNA</SectionTitle>
         <div style={{ display: "flex", flexDirection: "column", gap: space.lg, marginBottom: space.xl }}>
-          <DNABar label="Response length" value={profile.preferredLength} max={300} display={`${Math.round(profile.preferredLength)} words`} color={theme.primary} />
-          <DNABar label="Formality" value={profile.formality * 100} max={100} display={profile.formality < 0.3 ? "Casual" : profile.formality < 0.7 ? "Balanced" : "Formal"} color={theme.primary} />
-          <DNABar label="Emoji usage" value={profile.emojiUsage * 100} max={100} display={profile.emojiUsage < 0.3 ? "Rarely" : profile.emojiUsage < 0.6 ? "Sometimes" : "Often"} color={theme.primary} />
-          <DNABar label="Humor" value={profile.humorLevel * 100} max={100} display={profile.humorLevel < 0.3 ? "Serious" : profile.humorLevel < 0.6 ? "Light" : "Playful"} color={theme.primary} />
+          <DNABar label="Response length" value={profile.preferredLength} max={DNA_THRESHOLDS.maxWords} display={`${Math.round(profile.preferredLength)} words`} color={theme.primary} />
+          <DNABar label="Formality" value={profile.formality * 100} max={100} display={profile.formality < DNA_THRESHOLDS.formality.low ? "Casual" : profile.formality < DNA_THRESHOLDS.formality.high ? "Balanced" : "Formal"} color={theme.primary} />
+          <DNABar label="Emoji usage" value={profile.emojiUsage * 100} max={100} display={profile.emojiUsage < DNA_THRESHOLDS.emoji.low ? "Rarely" : profile.emojiUsage < DNA_THRESHOLDS.emoji.high ? "Sometimes" : "Often"} color={theme.primary} />
+          <DNABar label="Humor" value={profile.humorLevel * 100} max={100} display={profile.humorLevel < DNA_THRESHOLDS.humor.low ? "Serious" : profile.humorLevel < DNA_THRESHOLDS.humor.high ? "Light" : "Playful"} color={theme.primary} />
         </div>
 
         {/* Stats */}
-        <Label>Stats</Label>
+        <SectionTitle>Stats</SectionTitle>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: space.sm, marginBottom: space.xl }}>
           <StatCard label="Interactions" value={profile.totalInteractions} />
-          <StatCard label="Memories" value={state.memories.length} />
+          <StatCard label="Memories" value={state.memories?.length ?? 0} />
         </div>
 
         {/* Top topics */}
-        {profile.topTopics.length > 0 && (
+        {profile.topTopics && profile.topTopics.length > 0 && (
           <>
-            <Label>Top topics</Label>
+            <SectionTitle>Top topics</SectionTitle>
             <div style={{ display: "flex", flexWrap: "wrap", gap: space.sm, marginBottom: space.xl }}>
-              {profile.topTopics.map((t) => (
+              {profile.topTopics.map((t: Topic) => (
                 <div
                   key={t.topic}
                   style={{
                     padding: `${space.sm}px ${space.md}px`,
                     borderRadius: radius.full,
-                    background: `${theme.primary}10`,
-                    border: `0.5px solid ${theme.primary}20`,
+                    background: `${theme.primary}22`,
+                    border: `0.5px solid ${theme.primary}44`,
                     fontSize: typography.sizes.caption,
                     fontWeight: typography.weights.medium,
                     color: theme.primary,
@@ -111,32 +118,20 @@ export function PersonalityScreen() {
           </>
         )}
 
-        {/* Insights — no emojis, clean text */}
-        <Label>Insights</Label>
+        {/* Insights */}
+        <SectionTitle>Insights</SectionTitle>
         <div style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
-          {[
-            "You prefer shorter, direct responses",
-            "You use emojis frequently in your messages",
-            "You're most active in the evenings",
-            "Coding is your top topic — 23 conversations",
-          ].map((insight, i) => (
+          {insights.map((insight, i) => (
             <motion.div
               key={i}
               initial={{ opacity: 0, x: -8 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: i * 0.06, duration: 0.18 }}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: space.md,
-                padding: `${space.md}px ${space.base}px`,
-                borderRadius: radius.md,
-                background: colors.card,
-                border: `0.5px solid ${colors.border}`,
-              }}
             >
-              <div style={{ width: 6, height: 6, borderRadius: "50%", background: theme.primary, flexShrink: 0 }} />
-              <span style={{ fontSize: typography.sizes.caption, color: colors.textSecondary, lineHeight: 1.4 }}>{insight}</span>
+              <Card style={{ display: "flex", alignItems: "center", gap: space.md }}>
+                <div style={{ width: 6, height: 6, borderRadius: "50%", background: theme.primary, flexShrink: 0 }} />
+                <span style={{ fontSize: typography.sizes.caption, color: colors.textSecondary, lineHeight: 1.4 }}>{insight}</span>
+              </Card>
             </motion.div>
           ))}
         </div>
@@ -145,49 +140,5 @@ export function PersonalityScreen() {
       <TabBar />
       <HomeIndicator />
     </motion.div>
-  );
-}
-
-function DNABar({ label, value, max, display, color }: { label: string; value: number; max: number; display: string; color: string }) {
-  const pct = Math.min(100, (value / max) * 100);
-  return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-        <span style={{ fontSize: typography.sizes.caption, color: colors.textSecondary }}>{label}</span>
-        <span style={{ fontSize: typography.sizes.caption, fontWeight: typography.weights.medium, color: colors.textPrimary }}>{display}</span>
-      </div>
-      <div style={{ height: 4, borderRadius: 2, background: colors.glassLight, overflow: "hidden" }}>
-        <motion.div
-          initial={{ width: 0 }}
-          animate={{ width: `${pct}%` }}
-          transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
-          style={{ height: "100%", borderRadius: 2, background: color }}
-        />
-      </div>
-    </div>
-  );
-}
-
-function StatCard({ label, value }: { label: string; value: number }) {
-  return (
-    <div
-      style={{
-        padding: `${space.md}px ${space.base}px`,
-        borderRadius: radius.md,
-        background: colors.card,
-        border: `0.5px solid ${colors.border}`,
-      }}
-    >
-      <div style={{ fontSize: typography.sizes.small, fontWeight: typography.weights.semibold, color: colors.textTertiary, letterSpacing: 0.01, textTransform: "uppercase" }}>{label}</div>
-      <div style={{ fontSize: typography.sizes.title, fontWeight: typography.weights.bold, color: colors.textPrimary, marginTop: 2 }}>{value}</div>
-    </div>
-  );
-}
-
-function Label({ children }: { children: React.ReactNode }) {
-  return (
-    <label style={{ display: "block", fontSize: typography.sizes.small, fontWeight: typography.weights.semibold, color: colors.textTertiary, letterSpacing: 0.01, textTransform: "uppercase", marginBottom: space.sm }}>
-      {children}
-    </label>
   );
 }

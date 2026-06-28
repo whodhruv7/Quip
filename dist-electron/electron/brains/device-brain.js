@@ -1,0 +1,497 @@
+"use strict";
+// Quip V2 — DEVICE BRAIN
+// -----------------------------------------------------------------------------
+// Discovers everything about the device Quip is running on: OS, hardware,
+// displays, installed apps, default handlers, locale, taskbar geometry.
+//
+// NO assumptions. NO hardcoding. The profile this produces drives every
+// other brain — capability registry, world model, spatial brain, task brain.
+//
+// Design goals:
+//   - Fast: target 1-3s total. Heavy probes (registry, whereis) run in
+//     parallel and time out quickly.
+//   - Portable: per-platform probes live behind a single scan() entry.
+//   - Resilient: any single probe failing must never break the whole scan.
+//   - Cacheable: profile is persisted to device-profile.json and re-scanned
+//     only on demand or when stale.
+// -----------------------------------------------------------------------------
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.scanDevice = scanDevice;
+exports.profilePath = profilePath;
+exports.loadProfile = loadProfile;
+exports.saveProfile = saveProfile;
+exports.ensureProfile = ensureProfile;
+const node_os_1 = __importDefault(require("node:os"));
+const node_fs_1 = __importDefault(require("node:fs"));
+const node_path_1 = __importDefault(require("node:path"));
+const node_child_process_1 = require("node:child_process");
+const electron_1 = require("electron");
+const SCHEMA_VERSION = 1;
+const PROFILE_FILENAME = "device-profile.json";
+// ---------------------------------------------------------------------------
+// Small helpers
+// ---------------------------------------------------------------------------
+/** Promisify exec with a timeout (ms). Never throws — resolves to string|"". */
+function run(cmd, timeoutMs = 2500) {
+    return new Promise((resolve) => {
+        let done = false;
+        const t = setTimeout(() => {
+            if (done)
+                return;
+            done = true;
+            resolve("");
+        }, timeoutMs);
+        try {
+            (0, node_child_process_1.exec)(cmd, { windowsHide: true }, (err, stdout) => {
+                if (done)
+                    return;
+                done = true;
+                clearTimeout(t);
+                resolve(err ? "" : (stdout ?? "").toString());
+            });
+        }
+        catch {
+            if (done)
+                return;
+            done = true;
+            clearTimeout(t);
+            resolve("");
+        }
+    });
+}
+/** Run several probes in parallel, tolerate failures. */
+async function parallel(map) {
+    const keys = Object.keys(map);
+    const results = await Promise.allSettled(keys.map((k) => map[k]));
+    const out = {};
+    keys.forEach((k, i) => {
+        const r = results[i];
+        out[k] = r.status === "fulfilled" ? r.value : null;
+    });
+    return out;
+}
+function gb(bytes) {
+    return Math.round((bytes / 1024 / 1024 / 1024) * 10) / 10;
+}
+function platformLabel(p) {
+    if (p === "win32")
+        return "Windows";
+    if (p === "darwin")
+        return "macOS";
+    return "Linux";
+}
+// ---------------------------------------------------------------------------
+// Display discovery
+// ---------------------------------------------------------------------------
+function discoverDisplays() {
+    const all = electron_1.screen.getAllDisplays();
+    const displays = all.map((d, i) => ({
+        id: i,
+        bounds: { ...d.bounds },
+        workArea: { ...d.workArea },
+        scaleFactor: d.scaleFactor,
+        isPrimary: d.id === electron_1.screen.getPrimaryDisplay().id || i === 0,
+        rotation: d.rotation,
+    }));
+    // Ensure exactly one primary.
+    let primaryIdx = displays.findIndex((d) => d.isPrimary);
+    if (primaryIdx === -1)
+        primaryIdx = 0;
+    displays.forEach((d, i) => (d.isPrimary = i === primaryIdx));
+    return { displays, primary: displays[primaryIdx] };
+}
+// ---------------------------------------------------------------------------
+// Windows-specific probes
+// ---------------------------------------------------------------------------
+// Known app fingerprints for Windows. The "check" command is fast & silent.
+// We only mark an app present if its binary responds. This is detection,
+// NOT hardcoding behavior — capability-registry maps these to capabilities.
+const WIN_APP_PROBES = [
+    { id: "edge", name: "Microsoft Edge", category: "browser", check: "where msedge 2>nul || reg query \"HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\msedge.exe /ve 2>nul" },
+    { id: "chrome", name: "Google Chrome", category: "browser", check: "reg query \"HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe /ve 2>nul || reg query \"HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe /ve 2>nul" },
+    { id: "brave", name: "Brave", category: "browser", check: "where brave 2>nul" },
+    { id: "firefox", name: "Mozilla Firefox", category: "browser", check: "where firefox 2>nul || reg query \"HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\firefox.exe /ve 2>nul" },
+    { id: "opera", name: "Opera", category: "browser", check: "where opera 2>nul" },
+    { id: "vscode", name: "Visual Studio Code", category: "editor", check: "where code 2>nul" },
+    { id: "cursor", name: "Cursor", category: "editor", check: "where cursor 2>nul" },
+    { id: "notepadpp", name: "Notepad++", category: "editor", check: "where notepad++ 2>nul" },
+    { id: "sublime", name: "Sublime Text", category: "editor", check: "where subl 2>nul" },
+    { id: "spotify", name: "Spotify", category: "music", check: "where spotify 2>nul || reg query \"HKCU\\SOFTWARE\\Spotify / Spotify 2>nul || reg query \"HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Spotify.exe /ve 2>nul" },
+    { id: "itunes", name: "Apple Music / iTunes", category: "music", check: "where itunes 2>nul" },
+    { id: "outlook", name: "Microsoft Outlook", category: "mail", check: "where outlook 2>nul || reg query \"HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\OUTLOOK.EXE /ve 2>nul" },
+    { id: "mail", name: "Windows Mail", category: "mail", check: "where wab 2>nul || powershell -Command \"Get-AppxPackage *windowscommunicationsapps* 2>$null | Select -First 1\" 2>nul" },
+    { id: "wt", name: "Windows Terminal", category: "terminal", check: "where wt 2>nul" },
+    { id: "cmd", name: "Command Prompt", category: "terminal", check: "where cmd 2>nul" },
+    { id: "powershell", name: "PowerShell", category: "terminal", check: "where powershell 2>nul" },
+    { id: "calc", name: "Calculator", category: "system", check: "where calc 2>nul" },
+    { id: "notepad", name: "Notepad", category: "notes", check: "where notepad 2>nul" },
+];
+// Default-handler queries (Windows). The registry UserChoice key tells us
+// the user's actual default browser / mail client.
+const WIN_DEFAULT_BROWSER_CMD = "powershell -NoProfile -Command \"$p = (Get-ItemProperty 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\http\\UserChoice' -ErrorAction SilentlyContinue).ProgId; if ($p) { $p }\"";
+const WIN_DEFAULT_MAIL_CMD = "powershell -NoProfile -Command \"$p = (Get-ItemProperty 'HKCU:\\SOFTWARE\\Clients\\Mail' -ErrorAction SilentlyContinue).'(default)'; if ($p) { $p }\"";
+function decodeWindowsBrowser(progId) {
+    if (!progId)
+        return null;
+    const p = progId.toLowerCase();
+    if (p.includes("edge"))
+        return "Microsoft Edge";
+    if (p.includes("chrome"))
+        return "Google Chrome";
+    if (p.includes("brave"))
+        return "Brave";
+    if (p.includes("firefox"))
+        return "Mozilla Firefox";
+    if (p.includes("opera"))
+        return "Opera";
+    if (p.includes("vivaldi"))
+        return "Vivaldi";
+    return progId;
+}
+function decodeWindowsMail(progId) {
+    if (!progId)
+        return null;
+    const p = progId.toLowerCase();
+    if (p.includes("outlook"))
+        return "Microsoft Outlook";
+    if (p.includes("mail") || p.includes("windows"))
+        return "Windows Mail";
+    if (p.includes("thunderbird"))
+        return "Mozilla Thunderbird";
+    return progId;
+}
+// Windows taskbar is at the bottom by default but can be moved. We infer the
+// edge by comparing the primary display's bounds vs workArea.
+function inferWindowsTaskbar(primary) {
+    const { bounds, workArea } = primary;
+    const bottomGap = bounds.height - workArea.height - (workArea.y - bounds.y);
+    const topGap = workArea.y - bounds.y;
+    const leftGap = workArea.x - bounds.x;
+    const rightGap = bounds.width - workArea.width - leftGap;
+    const max = Math.max(bottomGap, topGap, leftGap, rightGap);
+    if (max <= 0)
+        return { edge: "bottom", height: 48 };
+    if (max === bottomGap)
+        return { edge: "bottom", height: bottomGap };
+    if (max === topGap)
+        return { edge: "top", height: topGap };
+    if (max === leftGap)
+        return { edge: "left", height: leftGap };
+    return { edge: "right", height: rightGap };
+}
+async function scanWindows() {
+    const probed = await parallel({
+        // Installed app detection — run all probes concurrently.
+        appResults: (async () => {
+            const results = await Promise.all(WIN_APP_PROBES.map(async (probe) => ({
+                probe,
+                present: (await run(probe.check, 1500)).trim().length > 0,
+            })));
+            return results.filter((r) => r.present);
+        })(),
+        defaultBrowser: run(WIN_DEFAULT_BROWSER_CMD, 3000),
+        defaultMailApp: run(WIN_DEFAULT_MAIL_CMD, 3000),
+        storage: run("powershell -NoProfile -Command \"$d = Get-CimInstance Win32_LogicalDisk -Filter \\\"DriveType=3\\\" | Sort-Object Size -Descending | Select -First 1; if ($d) { '{0},{1}' -f $d.Size, $d.FreeSpace }\"", 4000),
+    });
+    const apps = (probed.appResults ?? []).map(({ probe }) => ({
+        id: probe.id,
+        name: probe.name,
+        category: probe.category,
+    }));
+    const defaultBrowser = decodeWindowsBrowser((probed.defaultBrowser ?? "").trim()) || null;
+    const defaultMailApp = decodeWindowsMail((probed.defaultMailApp ?? "").trim()) || null;
+    let storage;
+    const s = (probed.storage ?? "").trim();
+    if (s.includes(",")) {
+        const [totalB, freeB] = s.split(",").map((n) => Number(n.trim()));
+        if (totalB > 0) {
+            storage = {
+                totalGB: gb(totalB),
+                freeGB: gb(freeB),
+                usedGB: gb(totalB - freeB),
+            };
+        }
+    }
+    return { apps, defaultBrowser, defaultMailApp, storage };
+}
+// ---------------------------------------------------------------------------
+// macOS probes
+// ---------------------------------------------------------------------------
+const MAC_APP_PROBES = [
+    { id: "safari", name: "Safari", category: "browser", bundle: "com.apple.Safari" },
+    { id: "chrome", name: "Google Chrome", category: "browser", bundle: "com.google.Chrome" },
+    { id: "edge", name: "Microsoft Edge", category: "browser", bundle: "com.microsoft.edgemac" },
+    { id: "brave", name: "Brave", category: "browser", bundle: "com.brave.Browser" },
+    { id: "firefox", name: "Mozilla Firefox", category: "browser", bundle: "org.mozilla.firefox" },
+    { id: "vscode", name: "Visual Studio Code", category: "editor", bundle: "com.microsoft.VSCode" },
+    { id: "cursor", name: "Cursor", category: "editor", bundle: "com.todesktop.230313mzl4w4u92" },
+    { id: "sublime", name: "Sublime Text", category: "editor", bundle: "com.sublimetext.4" },
+    { id: "spotify", name: "Spotify", category: "music", bundle: "com.spotify.client" },
+    { id: "music", name: "Apple Music", category: "music", bundle: "com.apple.Music" },
+    { id: "mail", name: "Apple Mail", category: "mail", bundle: "com.apple.mail" },
+    { id: "outlook", name: "Microsoft Outlook", category: "mail", bundle: "com.microsoft.Outlook" },
+    { id: "terminal", name: "Terminal", category: "terminal", bundle: "com.apple.Terminal" },
+    { id: "iterm", name: "iTerm", category: "terminal", bundle: "com.googlecode.iterm2" },
+];
+async function scanMac() {
+    const probed = await parallel({
+        appResults: (async () => {
+            const results = await Promise.all(MAC_APP_PROBES.map(async (probe) => ({
+                probe,
+                present: (await run(`test -d "/Applications/${probe.name}.app" && echo yes`, 800))
+                    .trim()
+                    .endsWith("yes"),
+            })));
+            return results.filter((r) => r.present);
+        })(),
+        defaultBrowser: run('defaults read com.apple.LaunchServices/com.apple.launchservices.secure LSHandlers 2>/dev/null | grep -B1 "https" | grep -o \'\\"[A-Za-z .]*\\"$\' | head -1 | tr -d \'"\'', 2500),
+        defaultMailApp: run("defaults read com.apple.LaunchServices/com.apple.launchservices.secure LSHandlers 2>/dev/null | true", 2500),
+        storage: run("df -k / | tail -1 | awk '{print $2\",\"$4}'", 2500),
+    });
+    const apps = (probed.appResults ?? []).map(({ probe }) => ({
+        id: probe.id,
+        name: probe.name,
+        category: probe.category,
+        launchId: probe.bundle,
+    }));
+    const storageRaw = (probed.storage ?? "").trim();
+    let storage;
+    if (storageRaw.includes(",")) {
+        const [totalKB, freeKB] = storageRaw.split(",").map((n) => Number(n.trim()));
+        if (totalKB > 0) {
+            storage = {
+                totalGB: gb(totalKB * 1024),
+                freeGB: gb(freeKB * 1024),
+                usedGB: gb((totalKB - freeKB) * 1024),
+            };
+        }
+    }
+    return {
+        apps,
+        defaultBrowser: (probed.defaultBrowser ?? "").trim() || null,
+        defaultMailApp: null,
+        storage,
+    };
+}
+// ---------------------------------------------------------------------------
+// Linux probes
+// ---------------------------------------------------------------------------
+async function scanLinux() {
+    const probed = await parallel({
+        apps: (async () => {
+            const checks = [
+                { id: "firefox", name: "Firefox", category: "browser", cmd: "which firefox" },
+                { id: "chrome", name: "Google Chrome", category: "browser", cmd: "which google-chrome google-chrome-stable 2>/dev/null" },
+                { id: "brave", name: "Brave", category: "browser", cmd: "which brave-browser brave 2>/dev/null" },
+                { id: "edge", name: "Microsoft Edge", category: "browser", cmd: "which microsoft-edge 2>/dev/null" },
+                { id: "vscode", name: "Visual Studio Code", category: "editor", cmd: "which code" },
+                { id: "cursor", name: "Cursor", category: "editor", cmd: "which cursor" },
+                { id: "spotify", name: "Spotify", category: "music", cmd: "which spotify" },
+                { id: "gnome-terminal", name: "GNOME Terminal", category: "terminal", cmd: "which gnome-terminal" },
+                { id: "konsole", name: "Konsole", category: "terminal", cmd: "which konsole" },
+                { id: "thunderbird", name: "Thunderbird", category: "mail", cmd: "which thunderbird" },
+            ];
+            const results = await Promise.all(checks.map(async (c) => ({
+                c,
+                present: (await run(c.cmd, 1000)).trim().length > 0,
+            })));
+            return results.filter((r) => r.present).map(({ c }) => ({
+                id: c.id,
+                name: c.name,
+                category: c.category,
+            }));
+        })(),
+        defaultBrowser: run("xdg-settings get default-web-browser 2>/dev/null", 1500),
+        storage: run("df -k / | tail -1 | awk '{print $2\",\"$4}'", 2000),
+    });
+    const storageRaw = (probed.storage ?? "").trim();
+    let storage;
+    if (storageRaw.includes(",")) {
+        const [totalKB, freeKB] = storageRaw.split(",").map((n) => Number(n.trim()));
+        if (totalKB > 0) {
+            storage = {
+                totalGB: gb(totalKB * 1024),
+                freeGB: gb(freeKB * 1024),
+                usedGB: gb((totalKB - freeKB) * 1024),
+            };
+        }
+    }
+    const rawBrowser = (probed.defaultBrowser ?? "").trim().toLowerCase();
+    let defaultBrowser = null;
+    if (rawBrowser.includes("firefox"))
+        defaultBrowser = "Mozilla Firefox";
+    else if (rawBrowser.includes("chrome"))
+        defaultBrowser = "Google Chrome";
+    else if (rawBrowser.includes("brave"))
+        defaultBrowser = "Brave";
+    else if (rawBrowser.includes("edge"))
+        defaultBrowser = "Microsoft Edge";
+    return {
+        apps: probed.apps ?? [],
+        defaultBrowser,
+        defaultMailApp: null,
+        storage,
+    };
+}
+// ---------------------------------------------------------------------------
+// Main scan entry
+// ---------------------------------------------------------------------------
+async function scanDevice() {
+    const t0 = Date.now();
+    const platform = process.platform;
+    // OS / hardware (cheap, synchronous) ---
+    const cpus = node_os_1.default.cpus();
+    const totalMem = node_os_1.default.totalmem();
+    // Displays (Electron API, synchronous) ---
+    const { displays, primary } = discoverDisplays();
+    // Per-platform app + defaults discovery ---
+    let platformSlice = {
+        apps: [],
+        defaultBrowser: null,
+        defaultMailApp: null,
+        storage: {
+            totalGB: 0,
+            freeGB: 0,
+            usedGB: 0,
+        },
+    };
+    try {
+        if (platform === "win32")
+            platformSlice = await scanWindows();
+        else if (platform === "darwin")
+            platformSlice = await scanMac();
+        else
+            platformSlice = await scanLinux();
+    }
+    catch {
+        /* keep defaults */
+    }
+    const apps = platformSlice.apps ?? [];
+    // Derive grouped lists from discovered apps.
+    const pick = (cat) => apps
+        .filter((a) => a.category === cat)
+        .map((a) => ({ name: a.name, id: a.id }));
+    const browsers = pick("browser");
+    const editors = pick("editor");
+    const musicApps = pick("music");
+    const mailApps = pick("mail");
+    const terminals = pick("terminal");
+    // If we couldn't read the default browser, fall back to first detected.
+    const defaultBrowser = platformSlice.defaultBrowser ?? (browsers[0]?.name ?? null);
+    // Editor default: prefer VS Code, then Cursor, then any.
+    const defaultEditor = editors.find((e) => e.id === "vscode")?.name ??
+        editors.find((e) => e.id === "cursor")?.name ??
+        editors[0]?.name ??
+        null;
+    const defaultMailApp = platformSlice.defaultMailApp ?? mailApps[0]?.name ?? null;
+    const defaultTerminal = terminals.find((t) => t.id === "wt" || t.id === "terminal" || t.id === "iterm")?.name ??
+        terminals[0]?.name ??
+        null;
+    // Taskbar geometry.
+    let taskbar = { edge: "bottom", height: 48 };
+    if (platform === "win32")
+        taskbar = inferWindowsTaskbar(primary);
+    else if (platform === "darwin")
+        taskbar = { edge: "bottom", height: 70 };
+    else
+        taskbar = { edge: "left", height: 48 };
+    // Theme — best effort.
+    let theme = "unknown";
+    if (typeof nativeTheme?.shouldUseDarkColors === "boolean") {
+        theme = nativeTheme.shouldUseDarkColors ? "dark" : "light";
+    }
+    const profile = {
+        schemaVersion: SCHEMA_VERSION,
+        scannedAt: Date.now(),
+        scanDurationMs: Date.now() - t0,
+        platform,
+        platformLabel: platformLabel(platform),
+        osVersion: node_os_1.default.release(),
+        osRelease: node_os_1.default.version?.() ?? "",
+        hostname: node_os_1.default.hostname(),
+        arch: process.arch,
+        cpuModel: cpus[0]?.model ?? "Unknown",
+        cpuCores: cpus.length,
+        totalMemoryGB: gb(totalMem),
+        freeMemoryGB: gb(node_os_1.default.freemem()),
+        storage: platformSlice.storage ?? {
+            totalGB: 0,
+            freeGB: 0,
+            usedGB: 0,
+        },
+        displays,
+        primaryDisplay: primary,
+        monitorCount: displays.length,
+        primaryResolution: {
+            width: primary.bounds.width,
+            height: primary.bounds.height,
+        },
+        scaleFactor: primary.scaleFactor,
+        locale: Intl.DateTimeFormat().resolvedOptions().locale || "en-US",
+        language: (process.env.LANG || process.env.LC_ALL || "en").split(".")[0] || "en",
+        theme,
+        apps,
+        defaultBrowser,
+        defaultMailApp,
+        defaultEditor,
+        defaultTerminal,
+        browsers,
+        editors,
+        musicApps,
+        mailApps,
+        terminals,
+        taskbar,
+    };
+    return profile;
+}
+// Lazy import of nativeTheme so this file loads cleanly in any context.
+let nativeTheme = null;
+try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    nativeTheme = require("electron").nativeTheme;
+}
+catch {
+    /* not in electron context */
+}
+// ---------------------------------------------------------------------------
+// Persistence
+// ---------------------------------------------------------------------------
+function profilePath(userDataDir) {
+    return node_path_1.default.join(userDataDir, PROFILE_FILENAME);
+}
+function loadProfile(userDataDir) {
+    try {
+        const p = profilePath(userDataDir);
+        if (!node_fs_1.default.existsSync(p))
+            return null;
+        const data = JSON.parse(node_fs_1.default.readFileSync(p, "utf8"));
+        if (!data || data.schemaVersion !== SCHEMA_VERSION)
+            return null;
+        return data;
+    }
+    catch {
+        return null;
+    }
+}
+function saveProfile(userDataDir, profile) {
+    try {
+        node_fs_1.default.writeFileSync(profilePath(userDataDir), JSON.stringify(profile, null, 2));
+    }
+    catch {
+        /* best effort */
+    }
+}
+/** Re-scan only if missing or older than maxAgeMs. */
+async function ensureProfile(userDataDir, maxAgeMs = 24 * 60 * 60 * 1000) {
+    const existing = loadProfile(userDataDir);
+    if (existing && Date.now() - existing.scannedAt < maxAgeMs) {
+        return existing;
+    }
+    const fresh = await scanDevice();
+    saveProfile(userDataDir, fresh);
+    return fresh;
+}
+//# sourceMappingURL=device-brain.js.map

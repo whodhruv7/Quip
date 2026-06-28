@@ -130,7 +130,7 @@ function PixBody({ t, asleep, blinking, eyeOffset = { x: 0, y: 0 } }: { t: Compa
       {/* Eyes — pixel squares with cursor tracking offset */}
       <motion.g variants={blinkVar} initial="open"
         animate={asleep ? "blink" : blinking ? "blink" : "open"}
-        style={{ originY: "32px", x: eyeOffset.x, y: eyeOffset.y }}>
+        style={{ originY: "15px", x: eyeOffset.x, y: eyeOffset.y }}>
         <rect x="10" y="13" width="4" height="4" rx="0.8" fill={t.eyeColor} />
         <rect x="18" y="13" width="4" height="4" rx="0.8" fill={t.eyeColor} />
       </motion.g>
@@ -176,7 +176,7 @@ function KaiBody({ t, asleep, blinking, eyeOffset = { x: 0, y: 0 } }: { t: Compa
       {/* Eyes — slightly narrower, wise look */}
       <motion.g variants={blinkVar} initial="open"
         animate={asleep ? "blink" : blinking ? "blink" : "open"}
-        style={{ originY: "34px" }}>
+        style={{ originY: "14.25px" }}>
         <rect x="10" y="12" width="3.5" height="4.5" rx="0.8" fill={t.eyeColor} />
         <rect x="18.5" y="12" width="3.5" height="4.5" rx="0.8" fill={t.eyeColor} />
       </motion.g>
@@ -222,7 +222,7 @@ function ZeeBody({ t, asleep, blinking, eyeOffset = { x: 0, y: 0 } }: { t: Compa
       {/* Eyes — bold, determined look */}
       <motion.g variants={blinkVar} initial="open"
         animate={asleep ? "blink" : blinking ? "blink" : "open"}
-        style={{ originY: "32px" }}>
+        style={{ originY: "14.75px" }}>
         <rect x="10" y="13" width="4" height="3.5" rx="0.6" fill={t.eyeColor} />
         <rect x="18" y="13" width="4" height="3.5" rx="0.6" fill={t.eyeColor} />
       </motion.g>

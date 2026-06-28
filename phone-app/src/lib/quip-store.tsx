@@ -3,7 +3,7 @@
 // Single source of truth for: navigation, companion, theme, style, messages,
 // memories, personality profile. React context + useReducer pattern.
 
-import { createContext, useContext, useReducer, ReactNode, useCallback } from "react";
+import { createContext, useContext, useReducer, ReactNode, useCallback, useEffect } from "react";
 import { getTheme, getStyle, getCompanion, type QuipTheme, type QuipStyle } from "./quip-design";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -212,7 +212,25 @@ interface StoreContextValue {
 const StoreContext = createContext<StoreContextValue | null>(null);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, initialState);
+  const getInitialCompanion = () => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const comp = params.get("companion");
+      if (comp === "pix" || comp === "kai" || comp === "ren") {
+        return comp;
+      }
+    }
+    return initialState.companionId;
+  };
+
+  const [state, dispatch] = useReducer(reducer, { ...initialState, companionId: getInitialCompanion() });
+  
+  // Inform main process of initial companion if needed, or any changes
+  useEffect(() => {
+    if (typeof window !== "undefined" && (window as any).quip?.setCompanion) {
+      (window as any).quip.setCompanion(state.companionId);
+    }
+  }, [state.companionId]);
   const theme = getTheme(state.themeId);
   const style = getStyle(state.styleId);
 

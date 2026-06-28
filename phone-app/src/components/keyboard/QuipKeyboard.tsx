@@ -268,7 +268,7 @@ function getKeyStyle(
     return { background: "transparent", padding: 0 };
   }
 
-  let bg = colors.glassLight;
+  let bg: string = colors.glassLight;
 
   switch (style.id) {
     case "glass":

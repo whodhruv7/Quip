@@ -9,6 +9,7 @@
 // -----------------------------------------------------------------------------
 
 import fs from "node:fs";
+import fsPromises from "node:fs/promises";
 import path from "node:path";
 import type { CompanionId } from "../../src/types";
 
@@ -47,19 +48,21 @@ const COSMETICS: Record<CompanionId, { tier: 1 | 2 | 3; name: string; descriptio
     { tier: 2, name: "Book Badge", description: "A tiny book emblem", threshold: 150 },
     { tier: 3, name: "Constellation Aura", description: "A soft starry glow", threshold: 300 },
   ],
-  zee: [
+  ren: [
     { tier: 1, name: "Curiosity Spark", description: "A glowing question mark", threshold: 50 },
     { tier: 2, name: "Galaxy Trail", description: "Stardust follows behind", threshold: 150 },
     { tier: 3, name: "Cosmic Crown", description: "A miniature galaxy halo", threshold: 300 },
   ],
 };
 
+const WEIGHTS = { maxConv: 300, maxMsg: 2000, maxTask: 100, maxMem: 50, maxLongevity: 90 };
+
 function computeDepth(p: Omit<CompanionProgression, "depth" | "unlockedCosmetics">): number {
-  const conversationScore = Math.min(p.conversations / 300, 1) * 0.4;
-  const messageScore = Math.min(p.totalMessages / 2000, 1) * 0.2;
-  const taskScore = Math.min(p.tasksCompleted / 100, 1) * 0.2;
-  const memoryScore = Math.min(p.memoriesCreated / 50, 1) * 0.1;
-  const longevityScore = Math.min(p.daysSinceFirst / 90, 1) * 0.1;
+  const conversationScore = Math.min(p.conversations / WEIGHTS.maxConv, 1) * 0.4;
+  const messageScore = Math.min(p.totalMessages / WEIGHTS.maxMsg, 1) * 0.2;
+  const taskScore = Math.min(p.tasksCompleted / WEIGHTS.maxTask, 1) * 0.2;
+  const memoryScore = Math.min(p.memoriesCreated / WEIGHTS.maxMem, 1) * 0.1;
+  const longevityScore = Math.min(p.daysSinceFirst / WEIGHTS.maxLongevity, 1) * 0.1;
   return Math.min(1, conversationScore + messageScore + taskScore + memoryScore + longevityScore);
 }
 
@@ -78,18 +81,19 @@ function makeBaseProgression(id: CompanionId): Omit<CompanionProgression, "depth
 class CompanionEvolutionBrain {
   private progressions: Record<CompanionId, CompanionProgression>;
   private filePath: string | null = null;
+  private saveTimer: NodeJS.Timeout | null = null;
   private onUnlockCallback: ((unlock: CosmeticUnlock) => void) | null = null;
 
   constructor() {
     const base = {
       pix: makeBaseProgression("pix"),
       kai: makeBaseProgression("kai"),
-      zee: makeBaseProgression("zee"),
+      ren: makeBaseProgression("ren"),
     };
     this.progressions = {
       pix: { ...base.pix, depth: 0, unlockedCosmetics: [] },
       kai: { ...base.kai, depth: 0, unlockedCosmetics: [] },
-      zee: { ...base.zee, depth: 0, unlockedCosmetics: [] },
+      ren: { ...base.ren, depth: 0, unlockedCosmetics: [] },
     };
   }
 
@@ -104,25 +108,26 @@ class CompanionEvolutionBrain {
       if (fs.existsSync(this.filePath)) {
         const data = JSON.parse(fs.readFileSync(this.filePath, "utf8"));
         if (data && typeof data === "object") {
-          for (const id of ["pix", "kai", "zee"] as CompanionId[]) {
+          for (const id of ["pix", "kai", "ren"] as CompanionId[]) {
             if (data[id]) {
               this.progressions[id] = { ...this.progressions[id], ...data[id] };
             }
           }
         }
       }
-    } catch {
-      /* start fresh */
+    } catch (err) {
+      console.error("[CompanionEvolution] Failed to load data:", err);
     }
   }
 
   private save(): void {
     if (!this.filePath) return;
-    try {
-      fs.writeFileSync(this.filePath, JSON.stringify(this.progressions, null, 2));
-    } catch {
-      /* best effort */
-    }
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => {
+      if (!this.filePath) return;
+      fsPromises.writeFile(this.filePath, JSON.stringify(this.progressions, null, 2))
+        .catch(err => console.error("[CompanionEvolution] Failed to save data:", err));
+    }, 2000);
   }
 
   /** Set a callback fired when a new cosmetic is unlocked. */
@@ -198,7 +203,7 @@ class CompanionEvolutionBrain {
     return {
       pix: this.getProgression("pix"),
       kai: this.getProgression("kai"),
-      zee: this.getProgression("zee"),
+      ren: this.getProgression("ren"),
     };
   }
 }

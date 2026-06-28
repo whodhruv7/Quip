@@ -16,9 +16,10 @@ import path from "node:path";
 import { app } from "electron";
 import { ensureProfile } from "../brains/device-brain";
 import { ensureWorldModel } from "../brains/world-model";
+import { fsStorage } from "../brains/memory-brain-instance";
 import { environmentBrain } from "../brains/environment-brain";
 import { permissionSystem } from "./permission-system";
-import { memoryBrain } from "../brains/memory-brain";
+import { memoryBrain } from "../brains/memory-brain-instance";
 import { knowledgeGraph } from "../brains/knowledge-graph";
 import { workspaceContext } from "../brains/workspace-context";
 import { relationshipEngine } from "../brains/relationship-engine";
@@ -112,7 +113,7 @@ export async function bootstrap(onProgress: ProgressCb): Promise<BootstrapResult
   let worldModel: WorldModel | null = null;
   emit("world-model", "Building world model…", 0.62, onProgress);
   try {
-    if (profile) worldModel = ensureWorldModel(userData, profile);
+    if (profile) worldModel = await ensureWorldModel(userData, profile, fsStorage);
   } catch {
     /* non-fatal */
   }

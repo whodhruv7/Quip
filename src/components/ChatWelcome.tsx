@@ -6,20 +6,14 @@
 import { motion } from "framer-motion";
 import type { CompanionId } from "@/types";
 import { getCompanion } from "@/lib/companion-config";
+import { CHAT_SUGGESTIONS } from "@/lib/constants";
 
 interface ChatWelcomeProps {
   companionId: CompanionId;
   onSuggestionClick: (text: string) => void;
 }
 
-const SUGGESTIONS = [
-  { icon: "🌐", label: "Open YouTube", text: "open youtube" },
-  { icon: "🎵", label: "Play Arijit Singh", text: "play arijit singh on youtube" },
-  { icon: "🔍", label: "Search the web", text: "search for best laptops 2026" },
-  { icon: "✉️", label: "Open Gmail", text: "open gmail" },
-  { icon: "📁", label: "Open downloads", text: "open my downloads" },
-  { icon: "💻", label: "Open VS Code", text: "open vs code" },
-];
+// Removed inline SUGGESTIONS
 
 export function ChatWelcome({ companionId, onSuggestionClick }: ChatWelcomeProps) {
   const theme = getCompanion(companionId);
@@ -92,7 +86,7 @@ export function ChatWelcome({ companionId, onSuggestionClick }: ChatWelcomeProps
         transition={{ duration: 0.5, delay: 0.35 }}
         className="grid grid-cols-2 gap-2 w-full max-w-[280px]"
       >
-        {SUGGESTIONS.map((s) => (
+        {CHAT_SUGGESTIONS.map((s) => (
           <button
             key={s.text}
             onClick={() => onSuggestionClick(s.text)}

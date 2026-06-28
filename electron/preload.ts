@@ -56,8 +56,19 @@ const api = {
     ipcRenderer.invoke(IPC.TASK_EXECUTE, payload),
 
   // ─── Set active companion (so the system prompt adapts personality/mood) ─
-  setCompanion: (id: "pix" | "kai" | "zee") =>
+  setCompanion: (id: "pix" | "kai" | "ren") =>
     ipcRenderer.send("quip:set-companion", id),
+  
+  // ─── Swarm Mode ────────────────────────────────────────────────────────
+  spawnCompanion: (companionId: "pix" | "kai" | "ren") =>
+    ipcRenderer.invoke(IPC.SPAWN_COMPANION, { companionId }),
+  onInterCompanionMsg: (cb: (msg: { from: string; message: string }) => void) => {
+    const handler = (_e: unknown, data: any) => cb(data);
+    ipcRenderer.on(IPC.INTER_COMPANION_MSG, handler as any);
+    return () => ipcRenderer.removeListener(IPC.INTER_COMPANION_MSG, handler as any);
+  },
+  sendInterCompanionMsg: (to: "pix" | "kai" | "ren", message: string) =>
+    ipcRenderer.send(IPC.INTER_COMPANION_MSG, { to, message }),
 
   // ─── Execution Engine V2 — Permission modes ────────────────────────
   getPermissionMode: () =>

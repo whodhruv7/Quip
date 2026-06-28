@@ -26,8 +26,9 @@ function loadEnvFile(file: string) {
     if (!process.env[key]) process.env[key] = val;
   }
 }
-loadEnvFile(path.join(app.getAppPath(), ".env"));
 loadEnvFile(path.join(process.cwd(), ".env"));
+loadEnvFile(path.join(app.getAppPath(), ".env"));
+loadEnvFile(path.join(app.getPath("userData"), ".env"));
 
 import { IPC } from "./shared";
 import type {
@@ -44,8 +45,9 @@ import { permissionSystem } from "./system/permission-system";
 
 import { ensureProfile, loadProfile } from "./brains/device-brain";
 import { ensureWorldModel } from "./brains/world-model";
+import { fsStorage } from "./brains/memory-brain-instance";
 import { environmentBrain } from "./brains/environment-brain";
-import { memoryBrain } from "./brains/memory-brain";
+import { memoryBrain } from "./brains/memory-brain-instance";
 import { computeSpatial, watchSpatial } from "./brains/spatial-brain";
 import { runTask } from "./brains/task-brain";
 import { knowledgeGraph } from "./brains/knowledge-graph";
@@ -55,6 +57,7 @@ import { companionMood } from "./brains/companion-mood";
 import { companionEvolution } from "./brains/companion-evolution";
 import { runPrune } from "./brains/memory-importance";
 import { observeMessages, resetExtractionCount } from "./brains/memory-extractor";
+import { timelineBrain } from "./brains/timeline-brain";
 
 // Execution Engine V2
 import { orchestrator } from "./engine/orchestrator";
@@ -73,16 +76,16 @@ import type {
 
 // ─── State ───────────────────────────────────────────────────────────────────
 const isDev = process.env.NODE_ENV === "development";
-let mainWindow: BrowserWindow | null = null;
+const windows = new Map<number, BrowserWindow>();
+const windowCompanionMap = new Map<number, "pix" | "kai" | "ren">();
 let tray: Tray | null = null;
 
 let deviceProfile: DeviceProfile | null = null;
 let worldModel: WorldModel | null = null;
 let spatialConfig: SpatialConfig | null = null;
 
-// The currently active companion (set by renderer via IPC). Defaults to "pix".
-// Used by the system prompt to apply personality + mood.
-let currentCompanionId: "pix" | "kai" | "zee" = "pix";
+// The default companion (set by renderer via IPC). Defaults to "pix".
+let defaultCompanionId: "pix" | "kai" | "ren" = "pix";
 
 const pendingConfirmations = new Map<
   string,
@@ -130,7 +133,7 @@ function clampPosition(x: number, y: number, w: number, h: number) {
  *
  * @param userMessage - the current user message (for relevance filtering)
  */
-function buildSystemPrompt(userMessage?: string): string {
+function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "ren" = "pix"): string {
   const env = environmentBrain.get();
   const sections: string[] = [];
 
@@ -143,7 +146,7 @@ function buildSystemPrompt(userMessage?: string): string {
   sections.push(
     "You are QUIP, a calm, concise AI companion on the user's desktop. " +
       "Warm, human, never robotic. Short answers unless asked for detail. " +
-      `You are ${companionPersonalities[currentCompanionId] ?? companionPersonalities.pix}`
+      `You are ${companionPersonalities[companionId] ?? companionPersonalities.pix}`
   );
 
   // ─── 2. Device context (compressed) ─────────────────────────────────
@@ -248,8 +251,14 @@ function buildSystemPrompt(userMessage?: string): string {
   const styleGuide = relationshipEngine.getStyleGuide();
   if (styleGuide) sections.push(styleGuide);
 
+  // ─── 8.5. Timeline Context ──────────────────────────────────────────
+  const timelineSummary = timelineBrain.getTodaySummary();
+  if (timelineSummary && timelineSummary !== "No significant activity recorded today.") {
+    sections.push(`Recent Activity: ${timelineSummary}`);
+  }
+
   // ─── 9. Companion mood (always — one line) ──────────────────────────
-  const moodHint = companionMood.getPromptHint(currentCompanionId);
+  const moodHint = companionMood.getPromptHint(companionId);
   if (moodHint) sections.push(moodHint);
 
   // ─── 10. Rules (always — short) ─────────────────────────────────────
@@ -264,7 +273,7 @@ function buildSystemPrompt(userMessage?: string): string {
 // ---------------------------------------------------------------------------
 // Window
 // ---------------------------------------------------------------------------
-function createWindow() {
+function createWindow(companionId: "pix" | "kai" | "ren" = "pix", offsetX = 0, offsetY = 0) {
   const panel = spatialConfig?.chatPanel ?? {
     x: 0,
     y: 0,
@@ -279,18 +288,18 @@ function createWindow() {
   let x: number, y: number;
   if (saved) {
     const clamped = clampPosition(saved.x, saved.y, w, h);
-    x = clamped.x;
-    y = clamped.y;
+    x = clamped.x + offsetX;
+    y = clamped.y + offsetY;
   } else if (panel.x > 0 || panel.y > 0) {
     const clamped = clampPosition(panel.x, panel.y, w, h);
-    x = clamped.x;
-    y = clamped.y;
+    x = clamped.x + offsetX;
+    y = clamped.y + offsetY;
   } else {
-    x = area.x + area.width - w - 20;
-    y = area.y + area.height - h - 20;
+    x = area.x + area.width - w - 20 + offsetX;
+    y = area.y + area.height - h - 20 + offsetY;
   }
 
-  mainWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     width: w,
     height: h,
     x,
@@ -314,53 +323,63 @@ function createWindow() {
     },
   });
 
-  mainWindow.setAlwaysOnTop(true, "screen-saver");
-  mainWindow.setVisibleOnAllWorkspaces(true, {
+  windows.set(win.id, win);
+  windowCompanionMap.set(win.id, companionId);
+
+  win.setAlwaysOnTop(true, "screen-saver");
+  win.setVisibleOnAllWorkspaces(true, {
     visibleOnFullScreen: true,
   });
-  mainWindow.showInactive();
-  mainWindow.moveTop();
+  win.showInactive();
+  win.moveTop();
 
-  mainWindow.once("ready-to-show", () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.show();
-      mainWindow.focus();
-      mainWindow.moveTop();
+  win.once("ready-to-show", () => {
+    if (!win.isDestroyed()) {
+      win.show();
+      win.focus();
+      win.moveTop();
     }
   });
 
   if (isDev && process.env.VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
+    win.loadURL(`${process.env.VITE_DEV_SERVER_URL}?companion=${companionId}`);
   } else if (isDev) {
-    mainWindow.loadURL("http://localhost:5173");
+    win.loadURL(`http://localhost:5173?companion=${companionId}`);
   } else {
-    mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
+    win.loadFile(path.join(__dirname, "../dist/index.html"), { search: `companion=${companionId}` });
   }
 
-  mainWindow.on("move", () => {
-    if (!mainWindow) return;
-    const [px, py] = mainWindow.getPosition();
-    writePosition(px, py);
+  win.on("move", () => {
+    if (windows.size === 1) {
+      const [px, py] = win.getPosition();
+      writePosition(px, py);
+    }
+  });
+  
+  win.on("closed", () => {
+    windows.delete(win.id);
+    windowCompanionMap.delete(win.id);
   });
 
   if (isDev) {
-    mainWindow.webContents.on("did-finish-load", () => {
-      mainWindow?.webContents.openDevTools({ mode: "detach" });
+    win.webContents.on("did-finish-load", () => {
+      win.webContents.openDevTools({ mode: "detach" });
     });
   }
+  return win;
 }
 
-function focusMainWindow() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
-  mainWindow.moveTop();
+function broadcastToRenderers(channel: string, data: unknown) {
+  windows.forEach((win) => {
+    if (!win.isDestroyed()) {
+      win.webContents.send(channel, data);
+    }
+  });
 }
 
-function sendToRenderer(channel: string, data: unknown) {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send(channel, data);
+function sendToWindow(win: BrowserWindow | null, channel: string, data: unknown) {
+  if (win && !win.isDestroyed()) {
+    win.webContents.send(channel, data);
   }
 }
 
@@ -376,10 +395,16 @@ function createTray() {
   );
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
   tray.setToolTip("Quip — AI Companion");
-  tray.on("click", () => mainWindow?.show());
+  tray.on("click", () => {
+    if (windows.size === 0) createWindow(defaultCompanionId);
+    else windows.forEach(w => w.show());
+  });
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: "Show Quip", click: () => mainWindow?.show() },
+      { label: "Show Quip", click: () => {
+          if (windows.size === 0) createWindow(defaultCompanionId);
+          else windows.forEach(w => w.show());
+      } },
       { type: "separator" },
       { label: "Quit Quip", click: () => app.quit() },
     ])
@@ -392,15 +417,17 @@ function createTray() {
 ipcMain.on(
   IPC.MOVE_WINDOW,
   (_e, { dx, dy }: { dx: number; dy: number }) => {
-    if (!mainWindow) return;
-    const [x, y] = mainWindow.getPosition();
-    mainWindow.setPosition(x + dx, y + dy, false);
+    const win = BrowserWindow.fromWebContents(_e.sender);
+    if (!win) return;
+    const [x, y] = win.getPosition();
+    win.setPosition(x + dx, y + dy, false);
   }
 );
 
-ipcMain.handle(IPC.GET_WINDOW_POSITION, () => {
-  if (!mainWindow) return null;
-  const [x, y] = mainWindow.getPosition();
+ipcMain.handle(IPC.GET_WINDOW_POSITION, (_e) => {
+  const win = BrowserWindow.fromWebContents(_e.sender);
+  if (!win) return null;
+  const [x, y] = win.getPosition();
   return { x, y };
 });
 
@@ -408,8 +435,10 @@ ipcMain.handle(IPC.GET_WINDOW_POSITION, () => {
 // IPC — chat streaming (via model router)
 // ---------------------------------------------------------------------------
 ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
-  const win = mainWindow;
+  const win = BrowserWindow.fromWebContents(_e.sender);
   if (!win || win.isDestroyed()) return { ok: false };
+  const companionId = windowCompanionMap.get(win.id) ?? defaultCompanionId;
+
 
   // ─── Feed the relationship engine + companion mood + workspace ──────
   // The last user message is the current input.
@@ -419,18 +448,23 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
     .find((m) => m.role === "user");
 
   // Build system prompt with relevance filtering based on the user message
-  const systemPrompt = buildSystemPrompt(lastUserMsg?.content);
+  const systemPrompt = buildSystemPrompt(lastUserMsg?.content, companionId);
   if (lastUserMsg) {
     try {
       relationshipEngine.observeUserMessage(lastUserMsg.content);
       relationshipEngine.observeCodePreference(lastUserMsg.content);
       companionMood.observeUserMessage(lastUserMsg.content);
       // Record a message + conversation for companion evolution
-      companionEvolution.recordMessage(currentCompanionId);
+      companionEvolution.recordMessage(companionId);
       // Check if this is the start of a new conversation (heuristic: first user msg)
       const userMsgCount = payload.history.filter((m) => m.role === "user").length;
       if (userMsgCount === 1) {
-        companionEvolution.recordConversation(currentCompanionId);
+        companionEvolution.recordConversation(companionId);
+        timelineBrain.logEvent({
+          title: `Started conversation with ${companionId}`,
+          type: "present_activity",
+          timestamp: Date.now()
+        });
       }
     } catch {
       /* non-fatal */
@@ -443,7 +477,7 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
   try {
     const { full } = await modelRouter.stream(systemPrompt, payload.history, {
       onChunk: (delta: string) => {
-        sendToRenderer(IPC.CHAT_CHUNK, {
+        sendToWindow(win, IPC.CHAT_CHUNK, {
           requestId: payload.requestId,
           delta,
         });
@@ -460,12 +494,12 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
     // ─── Feed the conversation to the memory extractor (background) ──
     // This triggers LLM-based fact + entity extraction every N messages.
     try {
-      observeMessages(currentCompanionId, payload.history);
+      observeMessages(companionId, payload.history);
     } catch {
       /* non-fatal */
     }
 
-    sendToRenderer(IPC.CHAT_DONE, {
+    sendToWindow(win, IPC.CHAT_DONE, {
       requestId: payload.requestId,
       full,
     });
@@ -488,7 +522,7 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
           ? "AI provider rejected the key. Check your .env."
           : "Network error. Check your connection.";
 
-    sendToRenderer(IPC.CHAT_ERROR, {
+    sendToWindow(win, IPC.CHAT_ERROR, {
       requestId: payload.requestId,
       message: userMessage,
       kind,
@@ -501,9 +535,11 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
 // ---------------------------------------------------------------------------
 // IPC — set current companion (so system prompt can adapt)
 // ---------------------------------------------------------------------------
-ipcMain.on("quip:set-companion", (_e, id: "pix" | "kai" | "zee") => {
-  if (id === "pix" || id === "kai" || id === "zee") {
-    currentCompanionId = id;
+ipcMain.on("quip:set-companion", (_e, id: "pix" | "kai" | "ren") => {
+  if (id === "pix" || id === "kai" || id === "ren") {
+    defaultCompanionId = id;
+    const win = BrowserWindow.fromWebContents(_e.sender);
+    if (win) windowCompanionMap.set(win.id, id);
   }
 });
 
@@ -517,14 +553,18 @@ ipcMain.handle(
     const platform = profile.platform;
 
     // Set up approval callback — forwards to renderer
+    const win = BrowserWindow.fromWebContents(_e.sender);
+    const companionId = win ? windowCompanionMap.get(win.id) ?? defaultCompanionId : defaultCompanionId;
+
+    // Set up approval callback — forwards to renderer
     execPermissionSystem.onApprovalRequested = (request: ApprovalRequest) => {
-      sendToRenderer("quip:approval-request", request);
+      sendToWindow(win, "quip:approval-request", request);
     };
 
     const result = await orchestrator.execute(payload.command, {
       platform,
       onProgress: (update) => {
-        sendToRenderer(IPC.TASK_PROGRESS, {
+        sendToWindow(win, IPC.TASK_PROGRESS, {
           requestId: payload.requestId,
           step: update.step,
           total: update.total,
@@ -533,10 +573,15 @@ ipcMain.handle(
       },
     });
 
-    // Record task completion for companion evolution
+    // Record task completion for companion evolution and timeline
     if (result.success && result.stepsTotal > 0) {
       try {
-        companionEvolution.recordTask(currentCompanionId);
+        companionEvolution.recordTask(companionId);
+        timelineBrain.logEvent({
+          title: `Executed task: ${payload.command}`,
+          type: "present_activity",
+          timestamp: Date.now()
+        });
       } catch {
         /* non-fatal */
       }
@@ -597,6 +642,32 @@ ipcMain.on(
   }
 );
 
+
+// ---------------------------------------------------------------------------
+// IPC — Swarm Mode
+// ---------------------------------------------------------------------------
+ipcMain.handle(IPC.SPAWN_COMPANION, (_e, { companionId }: { companionId: "pix" | "kai" | "ren" }) => {
+  // spawn slightly offset
+  const offsetCount = windows.size;
+  createWindow(companionId, offsetCount * 40, offsetCount * 40);
+});
+
+ipcMain.on(IPC.INTER_COMPANION_MSG, (_e, { to, message }: { to: "pix" | "kai" | "ren", message: string }) => {
+  const fromWin = BrowserWindow.fromWebContents(_e.sender);
+  const fromId = fromWin ? windowCompanionMap.get(fromWin.id) : "unknown";
+  
+  // Find target window
+  for (const [id, compId] of windowCompanionMap.entries()) {
+    if (compId === to) {
+      const win = windows.get(id);
+      if (win) {
+        win.webContents.send(IPC.INTER_COMPANION_MSG, { from: fromId, message });
+        return;
+      }
+    }
+  }
+});
+
 // ---------------------------------------------------------------------------
 // IPC — device brain
 // ---------------------------------------------------------------------------
@@ -614,7 +685,7 @@ ipcMain.handle(IPC.RESCAN_DEVICE, async () => {
   try {
     deviceProfile = await ensureProfile(app.getPath("userData"), 0); // force rescan
     if (deviceProfile) {
-      worldModel = ensureWorldModel(app.getPath("userData"), deviceProfile);
+      worldModel = await ensureWorldModel(app.getPath("userData"), deviceProfile, fsStorage);
       spatialConfig = computeSpatial(deviceProfile);
     }
     return deviceProfile;
@@ -690,7 +761,7 @@ ipcMain.handle(IPC.RESET_USER_PROFILE, () => {
 // IPC — companion mood
 // ---------------------------------------------------------------------------
 ipcMain.handle(IPC.GET_COMPANION_MOOD, (_e, id: string) => {
-  if (id !== "pix" && id !== "kai" && id !== "zee") return null;
+  if (id !== "pix" && id !== "kai" && id !== "ren") return null;
   return companionMood.getMood(id);
 });
 
@@ -703,7 +774,7 @@ ipcMain.handle(IPC.GET_COMPANION_PROGRESSION, () => {
 
 // Wire the cosmetic unlock callback to push to renderer
 companionEvolution.onUnlock((unlock) => {
-  sendToRenderer(IPC.ON_COSMETIC_UNLOCK, unlock);
+  broadcastToRenderers(IPC.ON_COSMETIC_UNLOCK, unlock);
 });
 
 // ---------------------------------------------------------------------------
@@ -732,7 +803,7 @@ ipcMain.handle(
 // ---------------------------------------------------------------------------
 // The bootstrap function will call this internally.
 function sendBootstrapProgress(p: BootstrapProgress) {
-  sendToRenderer(IPC.BOOTSTRAP_PROGRESS, p);
+  broadcastToRenderers(IPC.BOOTSTRAP_PROGRESS, p);
 }
 
 // ---------------------------------------------------------------------------
@@ -765,14 +836,17 @@ if (!app.requestSingleInstanceLock()) {
       // Watch for display changes.
       watchSpatial(deviceProfile, (cfg) => {
         spatialConfig = cfg;
-        sendToRenderer(IPC.SPATIAL_CHANGE, cfg);
+        broadcastToRenderers(IPC.SPATIAL_CHANGE, cfg);
       });
     }
+
+    // Initialize Timeline Brain
+    timelineBrain.init(app.getPath("userData"));
 
     // Subscribe to environment changes and push to renderer.
     // Also feed the companion mood + workspace context brains.
     environmentBrain.subscribe((env: EnvironmentState) => {
-      sendToRenderer(IPC.ENVIRONMENT_CHANGE, env);
+      broadcastToRenderers(IPC.ENVIRONMENT_CHANGE, env);
       // Feed companion mood (throttled internally)
       try {
         companionMood.observeEnvironment(env);
@@ -790,6 +864,8 @@ if (!app.requestSingleInstanceLock()) {
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
+  }).catch((err) => {
+    console.error("FATAL STARTUP ERROR:", err);
   });
 
   app.on("window-all-closed", () => {

@@ -16,22 +16,23 @@
 // so the model talks like the user without re-reading every old message.
 // -----------------------------------------------------------------------------
 
-import fs from "node:fs";
 import path from "node:path";
-import type {
-  MemoryEntry,
-  MemoryImportance,
-  UserKnowledge,
-} from "../../src/types";
+import type { MemoryEntry, MemoryImportance, UserKnowledge } from "../../src/types";
 
 const FILENAME = "memory.json";
 const SCHEMA_VERSION = 1;
 const MAX_MEMORIES = 200;
 
-const uid = () =>
-  Math.random().toString(36).slice(2) + Date.now().toString(36);
+const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 
-class MemoryBrain {
+export interface StorageAdapter {
+  exists: (p: string) => boolean;
+  read: (p: string) => string;
+  writeSync: (p: string, data: string) => void;
+  writeAsync: (p: string, data: string) => Promise<void>;
+}
+
+export class MemoryBrain {
   private knowledge: UserKnowledge = {
     schemaVersion: SCHEMA_VERSION,
     memories: [],
@@ -41,6 +42,11 @@ class MemoryBrain {
   private filePath: string | null = null;
   private saveTimer: NodeJS.Timeout | null = null;
   private readonly SAVE_DEBOUNCE_MS = 2000;
+  private storage: StorageAdapter;
+
+  constructor(storage: StorageAdapter) {
+    this.storage = storage;
+  }
 
   init(userDataDir: string): void {
     this.filePath = path.join(userDataDir, FILENAME);
@@ -50,22 +56,17 @@ class MemoryBrain {
   private load(): void {
     if (!this.filePath) return;
     try {
-      if (fs.existsSync(this.filePath)) {
-        const data = JSON.parse(fs.readFileSync(this.filePath, "utf8"));
+      if (this.storage.exists(this.filePath)) {
+        const data = JSON.parse(this.storage.read(this.filePath));
         if (data && Array.isArray(data.memories)) {
           this.knowledge = data as UserKnowledge;
         }
       }
-    } catch {
-      /* start fresh */
+    } catch (err) {
+      console.error("[MemoryBrain] Failed to load data:", err);
     }
   }
 
-  /**
-   * Debounced save — batches writes every 2s instead of on every change.
-   * This prevents disk thrashing during rapid memory additions (e.g., during
-   * extraction). The final write always happens, just not synchronously.
-   */
   private save(): void {
     if (!this.filePath) return;
     if (this.saveTimer) clearTimeout(this.saveTimer);
@@ -73,15 +74,15 @@ class MemoryBrain {
       if (!this.filePath) return;
       try {
         this.knowledge.updatedAt = Date.now();
-        fs.writeFileSync(this.filePath, JSON.stringify(this.knowledge, null, 2));
-      } catch {
-        /* best effort */
+        this.storage.writeAsync(this.filePath, JSON.stringify(this.knowledge, null, 2))
+          .catch(err => console.error("[MemoryBrain] Failed to save data:", err));
+      } catch (err) {
+        console.error("[MemoryBrain] Unexpected save error:", err);
       }
       this.saveTimer = null;
     }, this.SAVE_DEBOUNCE_MS);
   }
 
-  /** Force immediate save (used on app quit). */
   flush(): void {
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
@@ -89,10 +90,10 @@ class MemoryBrain {
       try {
         this.knowledge.updatedAt = Date.now();
         if (this.filePath) {
-          fs.writeFileSync(this.filePath, JSON.stringify(this.knowledge, null, 2));
+          this.storage.writeSync(this.filePath, JSON.stringify(this.knowledge, null, 2));
         }
-      } catch {
-        /* best effort */
+      } catch (err) {
+        console.error("[MemoryBrain] Flush error:", err);
       }
     }
   }
@@ -102,7 +103,6 @@ class MemoryBrain {
   }
 
   add(entry: Omit<MemoryEntry, "id" | "createdAt" | "updatedAt" | "weight">): MemoryEntry {
-    // De-dup: if a memory with the same key+kind exists, reinforce it.
     const existing = this.knowledge.memories.find(
       (m) => m.kind === entry.kind && m.key.toLowerCase() === entry.key.toLowerCase()
     );
@@ -126,7 +126,6 @@ class MemoryBrain {
     };
     this.knowledge.memories.push(full);
 
-    // Trim: drop oldest low-importance memories first if over cap.
     if (this.knowledge.memories.length > MAX_MEMORIES) {
       this.knowledge.memories.sort((a, b) => weightScore(b) - weightScore(a));
       this.knowledge.memories = this.knowledge.memories.slice(0, MAX_MEMORIES);
@@ -143,7 +142,6 @@ class MemoryBrain {
     this.save();
   }
 
-  /** Pin a memory so it never decays. Sets weight high + importance high. */
   pin(id: string): void {
     const m = this.knowledge.memories.find((e) => e.id === id);
     if (m) {
@@ -155,7 +153,6 @@ class MemoryBrain {
     }
   }
 
-  /** Unpin a memory — resets weight to 1 but keeps importance. */
   unpin(id: string): void {
     const m = this.knowledge.memories.find((e) => e.id === id);
     if (m) {
@@ -166,14 +163,12 @@ class MemoryBrain {
     }
   }
 
-  /** Bulk-replace memories (used by the prune operation). */
   replaceAll(memories: MemoryEntry[]): void {
     this.knowledge.memories = memories;
     this.rebuildDigest();
     this.save();
   }
 
-  /** Compressed prompt summary of what we know about the user. */
   private rebuildDigest(): void {
     const m = this.knowledge.memories;
     if (m.length === 0) {
@@ -181,7 +176,6 @@ class MemoryBrain {
       this.knowledge.updatedAt = Date.now();
       return;
     }
-    // Prefer high-importance memories in the digest.
     const ordered = [...m].sort((a, b) => weightScore(b) - weightScore(a));
     const lines = ordered.slice(0, 12).map((mem) => {
       const tag = mem.kind === "contact" ? `${mem.key} = ${mem.value}`
@@ -189,19 +183,16 @@ class MemoryBrain {
         : `${mem.key}: ${mem.value}`;
       return `  - ${tag}`;
     });
-    this.knowledge.styleDigest =
-      `What you know about the user:\n` + lines.join("\n");
+    this.knowledge.styleDigest = `What you know about the user:\n` + lines.join("\n");
     this.knowledge.updatedAt = Date.now();
   }
 
-  /** Decay pass — drop old low-importance memories that were never reinforced. */
   decay(): void {
     const now = Date.now();
     const AGE_30D = 30 * 24 * 60 * 60 * 1000;
     this.knowledge.memories = this.knowledge.memories.filter((m) => {
       if (m.importance === "high") return true;
       const age = now - m.updatedAt;
-      // low importance: forget after 30 days if not reinforced.
       if (m.importance === "low" && age > AGE_30D && m.weight < 2) return false;
       return true;
     });
@@ -213,5 +204,3 @@ function weightScore(m: MemoryEntry): number {
   const base = m.importance === "high" ? 1000 : m.importance === "medium" ? 100 : 10;
   return base + m.weight * 10;
 }
-
-export const memoryBrain = new MemoryBrain();

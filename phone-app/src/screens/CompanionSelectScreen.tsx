@@ -9,6 +9,7 @@ import { companions, colors, space, typography, radius } from "@/lib/quip-design
 import { CompanionSprite } from "@/components/companion/CompanionSprite";
 import { StatusBar } from "@/components/phone/StatusBar";
 import { HomeIndicator } from "@/components/phone/HomeIndicator";
+import { hostBridge } from "@/lib/host-bridge";
 
 export function CompanionSelectScreen() {
   const { state, dispatch, theme } = useStore();
@@ -69,14 +70,20 @@ export function CompanionSelectScreen() {
         {companions.map((companion, idx) => {
           const isSelected = state.companionId === companion.id;
           return (
-            <motion.button
+            <motion.div
               key={companion.id}
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.1 + idx * 0.06, duration: 0.24 }}
               whileTap={{ scale: 0.98 }}
-              transition_tap={{ duration: 0.12 }}
               onClick={() => handleSelect(companion.id)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  handleSelect(companion.id);
+                }
+              }}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -132,20 +139,41 @@ export function CompanionSelectScreen() {
                 </p>
               </div>
 
-              {/* Selection indicator */}
-              <div
-                style={{
-                  width: 22,
-                  height: 22,
-                  borderRadius: "50%",
-                  border: isSelected
-                    ? `6px solid ${companion.primary}`
-                    : `2px solid ${colors.borderStrong}`,
-                  flexShrink: 0,
-                  transition: "all 0.18s ease",
-                }}
-              />
-            </motion.button>
+              {/* Selection indicator & Spawn */}
+              <div style={{ display: "flex", flexDirection: "column", gap: space.sm, alignItems: "flex-end" }}>
+                <div
+                  style={{
+                    width: 22,
+                    height: 22,
+                    borderRadius: "50%",
+                    border: isSelected
+                      ? `6px solid ${companion.primary}`
+                      : `2px solid ${colors.borderStrong}`,
+                    flexShrink: 0,
+                    transition: "all 0.18s ease",
+                  }}
+                />
+                <motion.button
+                  whileTap={{ scale: 0.9 }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    hostBridge.spawnCompanion(companion.id);
+                  }}
+                  style={{
+                    padding: "4px 8px",
+                    borderRadius: radius.sm,
+                    background: `${companion.primary}22`,
+                    color: companion.primary,
+                    border: "none",
+                    fontSize: typography.sizes.caption,
+                    fontWeight: typography.weights.bold,
+                    cursor: "pointer",
+                  }}
+                >
+                  Spawn
+                </motion.button>
+              </div>
+            </motion.div>
           );
         })}
       </div>

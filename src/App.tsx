@@ -18,6 +18,7 @@ import { ChatWelcome } from "@/components/ChatWelcome";
 import { ChatInput } from "@/components/ChatInput";
 import { ScanOverlay } from "@/components/ScanOverlay";
 import { SettingsPanel } from "@/components/SettingsPanel";
+import { WeeklyReflection } from "@/components/WeeklyReflection";
 import { useChat } from "@/hooks/useChat";
 import { useWindowDrag } from "@/hooks/useWindowDrag";
 import {
@@ -44,7 +45,8 @@ export default function App() {
   const [companionId, setCompanionId] = useState<CompanionId>(() => loadPrefs().companionId);
   const [chatState, setChatState] = useState<ChatState>("closed");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [scanDone, setScanDone] = useState(false);
+  const [reflectionOpen, setReflectionOpen] = useState(false);
+  const [scanDone, setScanDone] = useState(() => loadPrefs().scanned ?? false);
   const [hovering, setHovering] = useState(false);
   const [moodSpeed, setMoodSpeed] = useState(1);
   const [cosmetics, setCosmetics] = useState<string[]>([]);
@@ -239,6 +241,7 @@ export default function App() {
                 companionId={companionId}
                 onCompanionChange={switchCompanion}
                 onSettingsToggle={() => setSettingsOpen(true)}
+                onReflectionToggle={() => setReflectionOpen(true)}
                 onNewChat={handleNewChat}
                 onClose={handleClose}
               />
@@ -296,6 +299,16 @@ export default function App() {
                 onCompanionChange={switchCompanion}
                 onClose={() => setSettingsOpen(false)}
               />
+
+              {/* Reflection overlay */}
+              <AnimatePresence>
+                {reflectionOpen && (
+                  <WeeklyReflection
+                    companionId={companionId}
+                    onClose={() => setReflectionOpen(false)}
+                  />
+                )}
+              </AnimatePresence>
             </motion.div>
           )}
         </AnimatePresence>
@@ -400,7 +413,7 @@ export default function App() {
 
       {/* Bootstrap scan overlay — only on first launch */}
       {!scanDone && (
-        <ScanOverlay companionId={companionId} onDone={() => setScanDone(true)} />
+        <ScanOverlay companionId={companionId} onDone={() => { setScanDone(true); savePrefs({ scanned: true }); }} />
       )}
 
       {/* Cosmetic unlock toast */}

@@ -20,11 +20,13 @@ const uid = () =>
 export interface QuipPrefs {
   companionId: CompanionId;
   theme?: "light" | "dark" | "aqua" | "pink" | "black";
+  scanned?: boolean;
 }
 
 const DEFAULT_PREFS: QuipPrefs = {
   companionId: "pix",
   theme: "light",
+  scanned: false,
 };
 
 export function loadPrefs(): QuipPrefs {

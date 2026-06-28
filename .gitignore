@@ -72,3 +72,6 @@ htmlcov/
 *.tar.xz
 *.tar.zst
 ```
+# Palade
+palade.config.ts
+.palade/

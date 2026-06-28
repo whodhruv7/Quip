@@ -26,8 +26,13 @@ export interface ExecResult {
   note: string;
 }
 
+const DEFAULT_TIMEOUT_MS = 8000;
+const YOUTUBE_WIN_WIDTH = 1280;
+const YOUTUBE_WIN_HEIGHT = 820;
+const YOUTUBE_POLL_INTERVAL_MS = 250;
+
 /** Promisified exec with timeout. */
-function run(cmd: string, timeoutMs = 8000): Promise<void> {
+function run(cmd: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<void> {
   return new Promise((resolve, reject) => {
     exec(cmd, { windowsHide: true }, (err) => {
       if (err) reject(err);
@@ -46,8 +51,8 @@ function shellOpen(url: string): Promise<void> {
 async function youtubeAutoplay(url: string, label: string): Promise<ExecResult> {
   // Open in a dedicated Quip task window so we can drive it.
   let taskWin: BrowserWindow | null = new BrowserWindow({
-    width: 1280,
-    height: 820,
+    width: YOUTUBE_WIN_WIDTH,
+    height: YOUTUBE_WIN_HEIGHT,
     show: true,
     autoHideMenuBar: true,
     title: `Quip — ${label}`,
@@ -64,8 +69,8 @@ async function youtubeAutoplay(url: string, label: string): Promise<ExecResult> 
         const timer = setInterval(() => {
           const el = document.querySelector('ytd-video-renderer a#video-title, a#video-title, ytd-video-renderer a#thumbnail, a#thumbnail');
           if (el) { clearInterval(timer); el.click(); resolve(true); }
-          else if (Date.now() - t0 > 8000) { clearInterval(timer); resolve(false); }
-        }, 250);
+          else if (Date.now() - t0 > ${DEFAULT_TIMEOUT_MS}) { clearInterval(timer); resolve(false); }
+        }, ${YOUTUBE_POLL_INTERVAL_MS});
       })
     `).catch(() => {});
     return {
@@ -87,10 +92,9 @@ async function youtubeAutoplay(url: string, label: string): Promise<ExecResult> 
 /** Execute a resolved implementation. */
 export async function executeImplementation(
   impl: CapabilityImplementation,
-  profile: DeviceProfile
+  { platform }: DeviceProfile
 ): Promise<ExecResult> {
   const p = impl.params as any;
-  const platform = profile.platform;
 
   switch (impl.executor) {
     // -----------------------------------------------------------------------

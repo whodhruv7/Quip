@@ -240,5 +240,47 @@ export function useChat(
     setError(null);
   }, []);
 
+  // Proactive check-in timer
+  useEffect(() => {
+    if (busy) return;
+    
+    // Random timer between 1 to 3 minutes of silence
+    const delay = 60000 + Math.random() * 120000;
+    
+    const timer = setTimeout(() => {
+      const phrases = [
+        "Hey! What are you working on right now?",
+        "Just checking in! Let me know if you need any help.",
+        "I'm here if you want to bounce some ideas around.",
+        "How is your day going so far?",
+        "Don't forget to take a quick screen break if you've been working hard!",
+        "Hello! Any fun projects happening today?",
+        "Just hanging out here. Need anything?",
+        "Remember to stay hydrated! 💧"
+      ];
+      const msg = phrases[Math.floor(Math.random() * phrases.length)];
+      
+      setMessages((prev) => {
+        // Prevent duplicate consecutive proactive messages if user hasn't responded
+        const lastMsg = prev[prev.length - 1];
+        if (lastMsg && lastMsg.role === "assistant" && phrases.includes(lastMsg.content)) {
+          return prev;
+        }
+        return [
+          ...prev,
+          {
+            id: uid(),
+            role: "assistant",
+            content: msg,
+            ts: Date.now(),
+            companionId,
+          }
+        ];
+      });
+    }, delay);
+
+    return () => clearTimeout(timer);
+  }, [messages, busy, companionId]);
+
   return { messages, busy, error, send, clear, addNotice, sessions, newChat, openSession, clearError };
 }

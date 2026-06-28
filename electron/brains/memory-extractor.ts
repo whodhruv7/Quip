@@ -15,7 +15,7 @@
 // -----------------------------------------------------------------------------
 
 import { modelRouter } from "../system/model-router";
-import { memoryBrain } from "./memory-brain";
+import { memoryBrain } from "./memory-brain-instance";
 import { knowledgeGraph } from "./knowledge-graph";
 import { companionEvolution } from "./companion-evolution";
 import type { CompanionId, MemoryImportance, MemoryKind } from "../../src/types";

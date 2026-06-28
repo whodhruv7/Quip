@@ -38,7 +38,7 @@ interface CompanionPersonality {
 const PERSONALITIES: Record<CompanionId, CompanionPersonality> = {
   pix: { baseEnergy: 0.8, baseWarmth: 0.7, basePlayfulness: 0.85, baseFocus: 0.5 },
   kai: { baseEnergy: 0.6, baseWarmth: 0.5, basePlayfulness: 0.3, baseFocus: 0.9 },
-  zee: { baseEnergy: 0.7, baseWarmth: 0.6, basePlayfulness: 0.5, baseFocus: 0.6 },
+  ren: { baseEnergy: 0.7, baseWarmth: 0.6, basePlayfulness: 0.5, baseFocus: 0.6 },
 };
 
 /** Compute a mood label from mood values. */
@@ -63,7 +63,7 @@ class CompanionMoodBrain {
     this.moods = {
       pix: this.baseMood("pix"),
       kai: this.baseMood("kai"),
-      zee: this.baseMood("zee"),
+      ren: this.baseMood("ren"),
     };
   }
 
