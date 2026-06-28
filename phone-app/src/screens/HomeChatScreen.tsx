@@ -7,7 +7,8 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useRef, useEffect, useCallback } from "react";
 import { useStore, uid } from "@/lib/quip-store";
-import { getCompanion, getStyle, colors, space, typography, radius } from "@/lib/quip-design";
+import { getStyle, colors, space, typography, radius } from "@/lib/quip-design";
+import { getCompanion } from "@/lib/companion-config";
 import { CompanionSprite } from "@/components/companion/CompanionSprite";
 import { StatusBar } from "@/components/phone/StatusBar";
 import { HomeIndicator } from "@/components/phone/HomeIndicator";

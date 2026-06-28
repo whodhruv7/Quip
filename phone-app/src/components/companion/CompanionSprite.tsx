@@ -6,7 +6,7 @@
 // Animations must not distract.
 
 import { motion } from "framer-motion";
-import type { Companion } from "@/lib/quip-design";
+import { type Companion } from "@/lib/companion-config";
 
 interface CompanionSpriteProps {
   companion: Companion;

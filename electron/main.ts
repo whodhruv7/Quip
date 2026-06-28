@@ -56,8 +56,15 @@ import { relationshipEngine } from "./brains/relationship-engine";
 import { companionMood } from "./brains/companion-mood";
 import { companionEvolution } from "./brains/companion-evolution";
 import { runPrune } from "./brains/memory-importance";
-import { observeMessages, resetExtractionCount } from "./brains/memory-extractor";
+import { MemoryExtractorBrain } from "./brains/memory-extractor";
 import { timelineBrain } from "./brains/timeline-brain";
+
+const memoryExtractor = new MemoryExtractorBrain({
+  modelRouter,
+  memoryBrain,
+  knowledgeGraph,
+  companionEvolution
+});
 
 // Execution Engine V2
 import { orchestrator } from "./engine/orchestrator";
@@ -494,7 +501,7 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
     // ─── Feed the conversation to the memory extractor (background) ──
     // This triggers LLM-based fact + entity extraction every N messages.
     try {
-      observeMessages(companionId, payload.history);
+      memoryExtractor.observeMessages(companionId, payload.history);
     } catch {
       /* non-fatal */
     }

@@ -6,7 +6,8 @@
 import { motion } from "framer-motion";
 import { useState } from "react";
 import { useStore } from "@/lib/quip-store";
-import { themes, styles, getCompanion, colors, space, typography, radius } from "@/lib/quip-design";
+import { themes, styles, colors, space, typography, radius } from "@/lib/quip-design";
+import { getCompanion, companions } from "@/lib/companion-config";
 import { StatusBar } from "@/components/phone/StatusBar";
 import { HomeIndicator } from "@/components/phone/HomeIndicator";
 import { TabBar } from "@/components/phone/TabBar";

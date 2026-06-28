@@ -81,7 +81,7 @@ export async function bootstrap(onProgress: ProgressCb): Promise<BootstrapResult
     // companionMood is stateless — no init needed
     // workspaceContext is stateless — no init needed
   } catch (e) {
-    // Non-fatal — continue with defaults.
+    console.error("Health check init failed:", e);
   }
   emit("health-check", "Ready.", 0.12, onProgress);
 
@@ -104,8 +104,8 @@ export async function bootstrap(onProgress: ProgressCb): Promise<BootstrapResult
   emit("environment", "Reading environment…", 0.5, onProgress);
   try {
     environmentBrain.start();
-  } catch {
-    /* non-fatal */
+  } catch (e) {
+    console.error("Environment brain start failed:", e);
   }
   emit("environment", "Environment ready.", 0.58, onProgress);
 
@@ -114,8 +114,8 @@ export async function bootstrap(onProgress: ProgressCb): Promise<BootstrapResult
   emit("world-model", "Building world model…", 0.62, onProgress);
   try {
     if (profile) worldModel = await ensureWorldModel(userData, profile, fsStorage);
-  } catch {
-    /* non-fatal */
+  } catch (e) {
+    console.error("World model init failed:", e);
   }
   emit("world-model", "World model ready.", 0.72, onProgress);
 
@@ -133,8 +133,8 @@ export async function bootstrap(onProgress: ProgressCb): Promise<BootstrapResult
     } else {
       emit("model-router", `Using ${status.active.label}`, 0.82, onProgress);
     }
-  } catch {
-    /* non-fatal */
+  } catch (e) {
+    console.error("Model router status check failed:", e);
   }
 
   // --- 6. window ---

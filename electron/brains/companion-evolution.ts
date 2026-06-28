@@ -37,7 +37,10 @@ export interface CosmeticUnlock {
   unlockedAt: number;
 }
 
-const COSMETICS: Record<CompanionId, { tier: 1 | 2 | 3; name: string; description: string; threshold: number }[]> = {
+export type CosmeticsConfig = Record<CompanionId, { tier: 1 | 2 | 3; name: string; description: string; threshold: number }[]>;
+export type WeightsConfig = { maxConv: number; maxMsg: number; maxTask: number; maxMem: number; maxLongevity: number };
+
+export const DEFAULT_COSMETICS: CosmeticsConfig = {
   pix: [
     { tier: 1, name: "Tiny Scarf", description: "A cozy aqua scarf", threshold: 50 },
     { tier: 2, name: "Star Sparkle", description: "A twinkling star accent", threshold: 150 },
@@ -55,14 +58,14 @@ const COSMETICS: Record<CompanionId, { tier: 1 | 2 | 3; name: string; descriptio
   ],
 };
 
-const WEIGHTS = { maxConv: 300, maxMsg: 2000, maxTask: 100, maxMem: 50, maxLongevity: 90 };
+export const DEFAULT_WEIGHTS: WeightsConfig = { maxConv: 300, maxMsg: 2000, maxTask: 100, maxMem: 50, maxLongevity: 90 };
 
-function computeDepth(p: Omit<CompanionProgression, "depth" | "unlockedCosmetics">): number {
-  const conversationScore = Math.min(p.conversations / WEIGHTS.maxConv, 1) * 0.4;
-  const messageScore = Math.min(p.totalMessages / WEIGHTS.maxMsg, 1) * 0.2;
-  const taskScore = Math.min(p.tasksCompleted / WEIGHTS.maxTask, 1) * 0.2;
-  const memoryScore = Math.min(p.memoriesCreated / WEIGHTS.maxMem, 1) * 0.1;
-  const longevityScore = Math.min(p.daysSinceFirst / WEIGHTS.maxLongevity, 1) * 0.1;
+function computeDepth(p: Omit<CompanionProgression, "depth" | "unlockedCosmetics">, weights: WeightsConfig): number {
+  const conversationScore = Math.min(p.conversations / weights.maxConv, 1) * 0.4;
+  const messageScore = Math.min(p.totalMessages / weights.maxMsg, 1) * 0.2;
+  const taskScore = Math.min(p.tasksCompleted / weights.maxTask, 1) * 0.2;
+  const memoryScore = Math.min(p.memoriesCreated / weights.maxMem, 1) * 0.1;
+  const longevityScore = Math.min(p.daysSinceFirst / weights.maxLongevity, 1) * 0.1;
   return Math.min(1, conversationScore + messageScore + taskScore + memoryScore + longevityScore);
 }
 
@@ -84,7 +87,12 @@ class CompanionEvolutionBrain {
   private saveTimer: NodeJS.Timeout | null = null;
   private onUnlockCallback: ((unlock: CosmeticUnlock) => void) | null = null;
 
-  constructor() {
+  private cosmetics: CosmeticsConfig;
+  private weights: WeightsConfig;
+
+  constructor(cosmetics: CosmeticsConfig = DEFAULT_COSMETICS, weights: WeightsConfig = DEFAULT_WEIGHTS) {
+    this.cosmetics = cosmetics;
+    this.weights = weights;
     const base = {
       pix: makeBaseProgression("pix"),
       kai: makeBaseProgression("kai"),
@@ -137,43 +145,59 @@ class CompanionEvolutionBrain {
 
   /** Record a new conversation (first user message in a session). */
   recordConversation(id: CompanionId): void {
-    const p = this.progressions[id];
-    p.conversations++;
-    if (p.firstInteractionAt === 0) {
-      p.firstInteractionAt = Date.now();
+    try {
+      const p = this.progressions[id];
+      p.conversations++;
+      if (p.firstInteractionAt === 0) {
+        p.firstInteractionAt = Date.now();
+      }
+      p.daysSinceFirst = Math.floor((Date.now() - p.firstInteractionAt) / (24 * 60 * 60 * 1000));
+      this.recompute(id);
+    } catch (error) {
+      console.error("[CompanionEvolution] recordConversation error:", error);
     }
-    p.daysSinceFirst = Math.floor((Date.now() - p.firstInteractionAt) / (24 * 60 * 60 * 1000));
-    this.recompute(id);
   }
 
   /** Record a message (user or assistant). */
   recordMessage(id: CompanionId): void {
-    const p = this.progressions[id];
-    p.totalMessages++;
-    this.recompute(id);
+    try {
+      const p = this.progressions[id];
+      p.totalMessages++;
+      this.recompute(id);
+    } catch (error) {
+      console.error("[CompanionEvolution] recordMessage error:", error);
+    }
   }
 
   /** Record a completed task. */
   recordTask(id: CompanionId): void {
-    const p = this.progressions[id];
-    p.tasksCompleted++;
-    this.recompute(id);
+    try {
+      const p = this.progressions[id];
+      p.tasksCompleted++;
+      this.recompute(id);
+    } catch (error) {
+      console.error("[CompanionEvolution] recordTask error:", error);
+    }
   }
 
   /** Record a new memory created with this companion. */
   recordMemory(id: CompanionId): void {
-    const p = this.progressions[id];
-    p.memoriesCreated++;
-    this.recompute(id);
+    try {
+      const p = this.progressions[id];
+      p.memoriesCreated++;
+      this.recompute(id);
+    } catch (error) {
+      console.error("[CompanionEvolution] recordMemory error:", error);
+    }
   }
 
   private recompute(id: CompanionId): void {
     const p = this.progressions[id];
-    const newDepth = computeDepth(p);
+    const newDepth = computeDepth(p, this.weights);
     p.depth = newDepth;
 
     // Check for cosmetic unlocks
-    const available = COSMETICS[id];
+    const available = this.cosmetics[id];
     for (const cosmetic of available) {
       const alreadyUnlocked = p.unlockedCosmetics.some((c) => c.tier === cosmetic.tier);
       if (!alreadyUnlocked && p.conversations >= cosmetic.threshold) {
@@ -208,4 +232,4 @@ class CompanionEvolutionBrain {
   }
 }
 
-export const companionEvolution = new CompanionEvolutionBrain();
+export const companionEvolution = new CompanionEvolutionBrain(DEFAULT_COSMETICS, DEFAULT_WEIGHTS);

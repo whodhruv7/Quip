@@ -19,6 +19,7 @@ import { ChatInput } from "@/components/ChatInput";
 import { ScanOverlay } from "@/components/ScanOverlay";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { WeeklyReflection } from "@/components/WeeklyReflection";
+import { ConfirmModal } from "@/components/ConfirmModal";
 import { useChat } from "@/hooks/useChat";
 import { useWindowDrag } from "@/hooks/useWindowDrag";
 import {
@@ -56,7 +57,7 @@ export default function App() {
     loadCurrentMessages(companionId)
   );
 
-  const { messages, busy: chatBusy, error, send, newChat, clearError } = useChat(companionId, restoredMessages);
+  const { messages, busy: chatBusy, error, send, newChat, clearError, approvalRequest, resolveApproval } = useChat(companionId, restoredMessages);
   const drag = useWindowDrag(true);
 
   // ─── Toggle: tap companion = open/close chat ───────────────────────────
@@ -414,6 +415,19 @@ export default function App() {
       {/* Bootstrap scan overlay — only on first launch */}
       {!scanDone && (
         <ScanOverlay companionId={companionId} onDone={() => { setScanDone(true); savePrefs({ scanned: true }); }} />
+      )}
+
+      {/* Approval Request Modal */}
+      {approvalRequest && (
+        <ConfirmModal
+          open={!!approvalRequest}
+          title="Action Approval Required"
+          message={`Quip wants to execute a potentially destructive action:\n\n${approvalRequest.plan?.description || "Unknown action"}\n\nDo you want to allow this?`}
+          confirmLabel="Allow"
+          cancelLabel="Deny"
+          onConfirm={() => resolveApproval(approvalRequest.id, true)}
+          onCancel={() => resolveApproval(approvalRequest.id, false)}
+        />
       )}
 
       {/* Cosmetic unlock toast */}

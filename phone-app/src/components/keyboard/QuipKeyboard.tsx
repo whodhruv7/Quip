@@ -241,13 +241,13 @@ function QuipSpaceBar({ theme, onClick }: { theme: QuipTheme; onClick?: () => vo
 function getKeyboardBg(style: QuipStyle, theme: QuipTheme): string {
   switch (style.id) {
     case "glass":
-      return "rgba(17, 17, 19, 0.72)";
+      return colors.glass;
     case "glow":
-      return "#111113";
+      return colors.surface;
     case "gradient":
-      return `linear-gradient(180deg, #111113 0%, ${theme.primary}06 100%)`;
+      return `linear-gradient(180deg, ${colors.surface} 0%, ${theme.primary}06 100%)`;
     case "minimal":
-      return "#0B0B0C";
+      return colors.bg;
     default:
       return "#111113";
   }

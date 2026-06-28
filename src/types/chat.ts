@@ -18,6 +18,7 @@ export interface ChatMessage {
   companionId?: CompanionId;
   contextNote?: string;
   action?: ExecutionResult;
+  proactive?: boolean;
 }
 
 export interface ChatSession {

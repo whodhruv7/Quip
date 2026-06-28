@@ -21,13 +21,21 @@ import {
   clearCurrentMessages,
   loadSessions,
 } from "@/lib/storage";
+import { useProactiveCheckIn } from "./useProactiveCheckIn";
 
-const uid = () =>
-  Math.random().toString(36).slice(2) + Date.now().toString(36);
+const uid = () => crypto.randomUUID();
+
+export interface ApprovalRequestPayload {
+  id: string;
+  command: string;
+  risk: string;
+  reason?: string;
+}
 
 export function useChat(
   companionId: CompanionId,
-  initialMessages?: ChatMessage[]
+  initialMessages?: ChatMessage[],
+  quipApi = window.quip
 ) {
   const [messages, setMessages] = useState<ChatMessage[]>(
     () => initialMessages ?? loadCurrentMessages(companionId)
@@ -37,10 +45,15 @@ export function useChat(
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [approvalRequest, setApprovalRequest] = useState<ApprovalRequestPayload | null>(null);
   const activeRequestId = useRef<string | null>(null);
+  const quipApiRef = useRef(quipApi);
+  quipApiRef.current = quipApi;
+  const messagesRef = useRef<ChatMessage[]>(messages);
 
   useEffect(() => {
-    saveCurrentMessages(companionId, messages);
+    messagesRef.current = messages;
+    saveCurrentMessages(companionId, messages.filter(m => !m.proactive));
   }, [messages, companionId]);
 
   useEffect(() => {
@@ -51,14 +64,14 @@ export function useChat(
     setBusy(false);
     activeRequestId.current = null;
     try {
-      window.quip.setCompanion(companionId);
-    } catch {
-      /* non-fatal */
+      quipApiRef.current.setCompanion(companionId);
+    } catch (err) {
+      console.error("Failed to set companion:", err);
     }
   }, [companionId]);
 
   useEffect(() => {
-    const offChunk = window.quip.onChatChunk((delta, requestId) => {
+    const offChunk = quipApiRef.current.onChatChunk((delta, requestId) => {
       if (requestId !== activeRequestId.current) return;
       setMessages((prev) =>
         prev.map((m) =>
@@ -67,7 +80,7 @@ export function useChat(
       );
     });
 
-    const offDone = window.quip.onChatDone((_full, requestId) => {
+    const offDone = quipApiRef.current.onChatDone((_full, requestId) => {
       if (requestId !== activeRequestId.current) return;
       setMessages((prev) =>
         prev.map((m) =>
@@ -78,7 +91,7 @@ export function useChat(
       setBusy(false);
     });
 
-    const offErr = window.quip.onChatError((err) => {
+    const offErr = quipApiRef.current.onChatError((err) => {
       if (err.requestId !== activeRequestId.current) return;
       setMessages((prev) =>
         prev.map((m) =>
@@ -92,22 +105,17 @@ export function useChat(
       setBusy(false);
     });
 
-    const offTaskProgress = window.quip.onTaskProgress((_p: TaskProgress) => {
-      /* intentionally unused */
-    });
-
-    const offConfirm = window.quip.onApprovalRequest((req: any) => {
-      window.quip.resolveApproval(req.id, true);
+    const offConfirm = quipApiRef.current.onApprovalRequest((req: ApprovalRequestPayload) => {
+      setApprovalRequest(req);
     });
 
     return () => {
       offChunk();
       offDone();
       offErr();
-      offTaskProgress();
       offConfirm();
     };
-  }, []);
+  }, [companionId]);
 
   const send = useCallback(
     async (text: string) => {
@@ -129,12 +137,15 @@ export function useChat(
       const taskId = uid();
       let taskResult: TaskResultPayload | null = null;
       try {
-        taskResult = await window.quip.executeTask({
+        taskResult = await quipApiRef.current.executeTask({
           requestId: taskId,
           command: trimmed,
         });
-      } catch {
-        /* fall through to chat */
+      } catch (err: any) {
+        console.error("Task execution failed, falling back to chat:", err);
+        setError(err.message || "Task execution failed.");
+        setBusy(false);
+        return;
       }
 
       if (taskResult && taskResult.summary && !taskResult.plan?.isChat) {
@@ -167,27 +178,44 @@ export function useChat(
       };
 
       activeRequestId.current = assistantMsg.id;
-      setMessages((prev) => [...prev, assistantMsg]);
+      let currentMessages: ChatMessage[] = [];
+      setMessages((prev) => {
+        currentMessages = prev;
+        return [...prev, assistantMsg];
+      });
 
-      const history = [...messages, userMsg].map((m) => ({
-        role: m.role,
-        content: m.content,
-      }));
+      const history = currentMessages
+        .filter((m) => !m.proactive)
+        .map((m) => ({
+          role: m.role,
+          content: m.content,
+        }));
 
       try {
-        await window.quip.chatSend({
+        await quipApiRef.current.chatSend({
           requestId: assistantMsg.id,
           history,
         });
-      } catch {
-        /* event listener handles errors */
+      } catch (err: any) {
+        console.error("Failed to send chat:", err);
+        setError(err.message || "Failed to send chat.");
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMsg.id
+              ? { ...m, streaming: false, error: true, content: err.message || "Failed to send chat." }
+              : m
+          )
+        );
+        activeRequestId.current = null;
+        setBusy(false);
       }
     },
-    [busy, messages, companionId]
+    [busy, companionId]
   );
 
   const clear = useCallback(() => {
-    archiveSession(companionId, messages);
+    const toArchive = messages.filter(m => !m.proactive);
+    archiveSession(companionId, toArchive);
     clearCurrentMessages(companionId);
     setMessages([]);
     setSessions(loadSessions().filter((s) => s.companionId === companionId));
@@ -195,8 +223,9 @@ export function useChat(
   }, [companionId, messages]);
 
   const newChat = useCallback(() => {
-    if (messages.length > 0) {
-      archiveSession(companionId, messages);
+    const toArchive = messages.filter(m => !m.proactive);
+    if (toArchive.length > 0) {
+      archiveSession(companionId, toArchive);
       setSessions(loadSessions().filter((s) => s.companionId === companionId));
     }
     clearCurrentMessages(companionId);
@@ -236,51 +265,13 @@ export function useChat(
     [companionId]
   );
 
-  const clearError = useCallback(() => {
-    setError(null);
+  const clearError = useCallback(() => setError(null), []);
+
+  const resolveApproval = useCallback((id: string, approved: boolean) => {
+    quipApiRef.current.resolveApproval(id, approved);
+    setApprovalRequest(null);
   }, []);
+  useProactiveCheckIn(messages, setMessages, busy, companionId);
 
-  // Proactive check-in timer
-  useEffect(() => {
-    if (busy) return;
-    
-    // Random timer between 1 to 3 minutes of silence
-    const delay = 60000 + Math.random() * 120000;
-    
-    const timer = setTimeout(() => {
-      const phrases = [
-        "Hey! What are you working on right now?",
-        "Just checking in! Let me know if you need any help.",
-        "I'm here if you want to bounce some ideas around.",
-        "How is your day going so far?",
-        "Don't forget to take a quick screen break if you've been working hard!",
-        "Hello! Any fun projects happening today?",
-        "Just hanging out here. Need anything?",
-        "Remember to stay hydrated! 💧"
-      ];
-      const msg = phrases[Math.floor(Math.random() * phrases.length)];
-      
-      setMessages((prev) => {
-        // Prevent duplicate consecutive proactive messages if user hasn't responded
-        const lastMsg = prev[prev.length - 1];
-        if (lastMsg && lastMsg.role === "assistant" && phrases.includes(lastMsg.content)) {
-          return prev;
-        }
-        return [
-          ...prev,
-          {
-            id: uid(),
-            role: "assistant",
-            content: msg,
-            ts: Date.now(),
-            companionId,
-          }
-        ];
-      });
-    }, delay);
-
-    return () => clearTimeout(timer);
-  }, [messages, busy, companionId]);
-
-  return { messages, busy, error, send, clear, addNotice, sessions, newChat, openSession, clearError };
+  return { messages, busy, error, send, clear, addNotice, sessions, newChat, openSession, clearError, approvalRequest, resolveApproval };
 }

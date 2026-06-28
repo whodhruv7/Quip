@@ -5,7 +5,8 @@
 
 import { motion } from "framer-motion";
 import { useStore } from "@/lib/quip-store";
-import { getCompanion, colors, space, typography, radius } from "@/lib/quip-design";
+import { colors, space, typography, radius } from "@/lib/quip-design";
+import { getCompanion } from "@/lib/companion-config";
 import { CompanionSprite } from "@/components/companion/CompanionSprite";
 import { StatusBar } from "@/components/phone/StatusBar";
 import { HomeIndicator } from "@/components/phone/HomeIndicator";
@@ -15,7 +16,7 @@ import { DNA_THRESHOLDS, generateInsights, UserProfile, Topic } from "@/lib/pers
 import { Card, DNABar, StatCard, SectionTitle } from "@/components/personality/PersonalityComponents";
 
 export function PersonalityScreen() {
-  const { state, theme } = useStore() as any;
+  const { state, theme } = useStore();
   
   if (!state || !state.profile) {
     return <div style={{ background: colors.bg, position: "absolute", inset: 0 }}>Loading...</div>;

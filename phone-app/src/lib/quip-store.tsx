@@ -4,7 +4,8 @@
 // memories, personality profile. React context + useReducer pattern.
 
 import { createContext, useContext, useReducer, ReactNode, useCallback, useEffect } from "react";
-import { getTheme, getStyle, getCompanion, type QuipTheme, type QuipStyle } from "./quip-design";
+import { getTheme, getStyle, type QuipTheme, type QuipStyle } from "./quip-design";
+import { getCompanion } from "./companion-config";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 export type Screen =
