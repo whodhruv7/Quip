@@ -64,6 +64,8 @@ import { proactiveEngine } from "./brains/proactive-engine";
 import { weeklyReflection } from "./brains/weekly-reflection";
 // Phase 3
 import { swarmManager } from "./brains/swarm-manager";
+// Phase 4
+import { dreamEngine } from "./brains/dream-engine";
 
 const memoryExtractor = new MemoryExtractorBrain({
   modelRouter,
@@ -914,6 +916,9 @@ if (!app.requestSingleInstanceLock()) {
     // Initialize Timeline Brain
     timelineBrain.init(app.getPath("userData"));
 
+    // Initialize Phase 4 Dream Engine
+    dreamEngine.init(app.getPath("userData"), modelRouter);
+
     // Initialize Phase 2 brains
     weeklyReflection.init(app.getPath("userData"));
     proactiveEngine.start();
@@ -946,6 +951,17 @@ if (!app.requestSingleInstanceLock()) {
       // Phase 2: Check battery for proactive suggestions
       try {
         proactiveEngine.checkBatteryCritical(env.battery.level, env.battery.charging);
+      } catch {
+        /* non-fatal */
+      }
+      // Phase 4: Check if idle and trigger dream
+      try {
+        dreamEngine.checkIdleAndDream(
+          env.idleSeconds,
+          timelineBrain.getAllEvents(),
+          relationshipEngine.get(),
+          memoryBrain.get()
+        );
       } catch {
         /* non-fatal */
       }

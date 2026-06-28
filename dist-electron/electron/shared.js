@@ -50,8 +50,21 @@ exports.IPC = {
     UPDATE_PERMISSION: "quip:update-permission",
     // Bootstrap
     BOOTSTRAP_PROGRESS: "quip:bootstrap-progress",
-    // Swarm Mode (Multi-Instance)
+    // Phase 2 — Proactive Suggestions
+    PROACTIVE_SUGGESTION: "quip:proactive-suggestion",
+    DISMISS_PROACTIVE: "quip:dismiss-proactive",
+    // Phase 2 — Weekly Reflection
+    GET_WEEKLY_DIGEST: "quip:get-weekly-digest",
+    RECORD_REFLECTION_FEEDBACK: "quip:record-reflection-feedback",
+    TRIGGER_WEEKLY_REFLECTION: "quip:trigger-weekly-reflection",
+    // Phase 2 — Communication DNA
+    GET_COMMUNICATION_DNA: "quip:get-communication-dna",
+    // Phase 3 — Swarm Mode (Multi-Instance)
     SPAWN_COMPANION: "quip:spawn-companion",
+    DISMISS_COMPANION: "quip:dismiss-companion",
+    GET_SWARM_INSTANCES: "quip:get-swarm-instances",
     INTER_COMPANION_MSG: "quip:inter-companion-msg",
+    AUTO_TASK: "quip:auto-task",
+    SWARM_BROADCAST: "quip:swarm-broadcast",
 };
 //# sourceMappingURL=shared.js.map

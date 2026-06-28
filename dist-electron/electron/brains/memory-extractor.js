@@ -15,12 +15,7 @@
 // (logged but not shown to the user) because extraction is best-effort.
 // -----------------------------------------------------------------------------
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.resetExtractionCount = resetExtractionCount;
-exports.observeMessages = observeMessages;
-const model_router_1 = require("../system/model-router");
-const memory_brain_instance_1 = require("./memory-brain-instance");
-const knowledge_graph_1 = require("./knowledge-graph");
-const companion_evolution_1 = require("./companion-evolution");
+exports.MemoryExtractorBrain = void 0;
 const COMPRESSION_THRESHOLD = 10; // extract after every 10 messages
 const EXTRACTION_TIMEOUT_MS = 25_000;
 const EXTRACTION_SYSTEM_PROMPT = `You are Quip's memory extraction engine. Your job is to read a conversation between the user and Quip, then extract durable knowledge.
@@ -52,99 +47,97 @@ Return ONLY valid JSON, no markdown fences:
 }
 
 If there's nothing worth extracting, return: { "facts": [], "entities": [], "summary": "Nothing notable." }`;
-/** Track message counts per companion to know when to trigger extraction. */
-const messageCounts = new Map();
-/** Reset count when a new chat starts. */
-function resetExtractionCount(companionId) {
-    messageCounts.set(companionId, 0);
-}
-/**
- * Should be called after every user+assistant message pair.
- * Triggers extraction when the threshold is reached.
- * Extraction runs in the background — this function returns immediately.
- */
-function observeMessages(companionId, messages) {
-    const current = (messageCounts.get(companionId) ?? 0) + 1;
-    messageCounts.set(companionId, current);
-    if (current >= COMPRESSION_THRESHOLD) {
-        messageCounts.set(companionId, 0);
-        // Run extraction in the background — never block the caller.
-        extractFromMessages(companionId, messages).catch(() => {
-            // Silent failure — extraction is best-effort
-        });
+class MemoryExtractorBrain {
+    deps;
+    messageCounts = new Map();
+    constructor(deps) {
+        this.deps = deps;
     }
-}
-/**
- * Run extraction on the recent conversation. Sends messages to the LLM,
- * parses the JSON response, and feeds facts to the memory brain + entities
- * to the knowledge graph.
- */
-async function extractFromMessages(companionId, messages) {
-    // Take the last COMPRESSION_THRESHOLD * 2 messages (user+assistant pairs)
-    const recent = messages.slice(-COMPRESSION_THRESHOLD * 2);
-    if (recent.length === 0)
-        return;
-    // Check if model router is configured
-    const status = model_router_1.modelRouter.status();
-    if (!status.healthy)
-        return;
-    const userPrompt = `Conversation to analyze:\n\n${recent
-        .map((m) => `${m.role === "user" ? "User" : "Quip"}: ${m.content}`)
-        .join("\n")}`;
-    let raw;
-    try {
-        raw = await model_router_1.modelRouter.complete(EXTRACTION_SYSTEM_PROMPT, [{ role: "user", content: userPrompt }], EXTRACTION_TIMEOUT_MS);
+    resetExtractionCount(companionId) {
+        this.messageCounts.set(companionId, 0);
     }
-    catch {
-        return; // silent failure
-    }
-    // Parse JSON — handle markdown fences if the LLM added them
-    const jsonStr = raw
-        .replace(/^```json\s*/i, "")
-        .replace(/^```\s*/i, "")
-        .replace(/\s*```$/i, "")
-        .trim();
-    let result;
-    try {
-        result = JSON.parse(jsonStr);
-    }
-    catch {
-        return; // malformed JSON — skip this round
-    }
-    // ─── Feed facts to Memory Brain ─────────────────────────────────────
-    if (Array.isArray(result.facts)) {
-        for (const fact of result.facts) {
-            if (!fact.key || !fact.value)
-                continue;
-            try {
-                memory_brain_instance_1.memoryBrain.add({
-                    kind: fact.type ?? "fact",
-                    key: fact.key,
-                    value: fact.value,
-                    importance: fact.importance ?? "medium",
-                });
-                companion_evolution_1.companionEvolution.recordMemory(companionId);
-            }
-            catch {
-                /* skip individual bad facts */
-            }
+    observeMessages(companionId, messages) {
+        const current = (this.messageCounts.get(companionId) ?? 0) + 1;
+        this.messageCounts.set(companionId, current);
+        if (current >= COMPRESSION_THRESHOLD) {
+            this.messageCounts.set(companionId, 0);
+            this.extractFromMessages(companionId, messages).catch((e) => {
+                console.error("[MemoryExtractor] Background extraction failed:", e);
+            });
         }
     }
-    // ─── Feed entities to Knowledge Graph ───────────────────────────────
-    if (Array.isArray(result.entities)) {
-        for (const entity of result.entities) {
-            if (!entity.name || !entity.type)
-                continue;
-            try {
-                const e = knowledge_graph_1.knowledgeGraph.upsertEntity(entity.type, entity.name, entity.attributes ?? {}, 0.6);
-                if (entity.relationToUser) {
-                    knowledge_graph_1.knowledgeGraph.linkToUser(e, entity.relationToUser);
+    async extractFromMessages(companionId, messages) {
+        const recent = messages.slice(-COMPRESSION_THRESHOLD * 2);
+        if (recent.length === 0)
+            return;
+        const status = this.deps.modelRouter.status();
+        if (!status.healthy)
+            return;
+        const userPrompt = `Conversation to analyze:\n\n${recent
+            .map((m) => {
+            const content = m.content.length > 1000 ? m.content.slice(0, 1000) + "..." : m.content;
+            return `${m.role === "user" ? "User" : "Quip"}: ${content}`;
+        })
+            .join("\n")}`;
+        let raw;
+        try {
+            raw = await this.deps.modelRouter.complete(EXTRACTION_SYSTEM_PROMPT, [{ role: "user", content: userPrompt }], EXTRACTION_TIMEOUT_MS);
+        }
+        catch (e) {
+            console.error("[MemoryExtractor] LLM call failed:", e);
+            return;
+        }
+        const jsonStr = raw
+            .replace(/^```json\s*/i, "")
+            .replace(/^```\s*/i, "")
+            .replace(/\s*```$/i, "")
+            .trim();
+        let result;
+        try {
+            result = JSON.parse(jsonStr);
+        }
+        catch (e) {
+            console.error("[MemoryExtractor] Failed to parse JSON:", e, "Raw output:", raw);
+            return;
+        }
+        if (Array.isArray(result.facts)) {
+            for (const fact of result.facts) {
+                if (!fact.key || !fact.value)
+                    continue;
+                try {
+                    const validKinds = ["contact", "preference", "fact", "style"];
+                    const validImportances = ["high", "medium", "low"];
+                    const kind = validKinds.includes(fact.type) ? fact.type : "fact";
+                    const importance = validImportances.includes(fact.importance) ? fact.importance : "medium";
+                    this.deps.memoryBrain.add({
+                        kind,
+                        key: fact.key,
+                        value: fact.value,
+                        importance,
+                    });
+                    this.deps.companionEvolution.recordMemory(companionId);
+                }
+                catch (e) {
+                    console.error("[MemoryExtractor] Failed to add fact to memory:", e);
                 }
             }
-            catch {
-                /* skip individual bad entities */
+        }
+        if (Array.isArray(result.entities)) {
+            for (const entity of result.entities) {
+                if (!entity.name || !entity.type)
+                    continue;
+                try {
+                    const e = this.deps.knowledgeGraph.upsertEntity(entity.type, entity.name, entity.attributes ?? {}, 0.6);
+                    if (entity.relationToUser) {
+                        this.deps.knowledgeGraph.linkToUser(e, entity.relationToUser);
+                    }
+                }
+                catch (e) {
+                    console.error("[MemoryExtractor] Failed to upsert entity:", e);
+                }
             }
         }
     }
 }
+exports.MemoryExtractorBrain = MemoryExtractorBrain;
 //# sourceMappingURL=memory-extractor.js.map

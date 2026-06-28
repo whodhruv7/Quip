@@ -57,7 +57,7 @@ async function bootstrap(onProgress) {
         // workspaceContext is stateless — no init needed
     }
     catch (e) {
-        // Non-fatal — continue with defaults.
+        console.error("Health check init failed:", e);
     }
     emit("health-check", "Ready.", 0.12, onProgress);
     // --- 2. device-scan ---
@@ -75,8 +75,8 @@ async function bootstrap(onProgress) {
     try {
         environment_brain_1.environmentBrain.start();
     }
-    catch {
-        /* non-fatal */
+    catch (e) {
+        console.error("Environment brain start failed:", e);
     }
     emit("environment", "Environment ready.", 0.58, onProgress);
     // --- 4. world-model ---
@@ -86,8 +86,8 @@ async function bootstrap(onProgress) {
         if (profile)
             worldModel = await (0, world_model_1.ensureWorldModel)(userData, profile, memory_brain_instance_1.fsStorage);
     }
-    catch {
-        /* non-fatal */
+    catch (e) {
+        console.error("World model init failed:", e);
     }
     emit("world-model", "World model ready.", 0.72, onProgress);
     // --- 5. model-router ---
@@ -101,8 +101,8 @@ async function bootstrap(onProgress) {
             emit("model-router", `Using ${status.active.label}`, 0.82, onProgress);
         }
     }
-    catch {
-        /* non-fatal */
+    catch (e) {
+        console.error("Model router status check failed:", e);
     }
     // --- 6. window ---
     emit("window", "Opening Quip…", 0.9, onProgress);

@@ -118,7 +118,10 @@ async function getForegroundWindow() {
     const title = await run("xdotool getactivewindow getwindowname", 1000);
     const pid = await run("xdotool getactivewindow getwindowpid", 1000);
     if (title.trim()) {
-        const appName = (await run(`ps -p ${pid.trim()} -o comm=`, 500)).trim();
+        const cleanPid = pid.trim();
+        if (!/^\d+$/.test(cleanPid))
+            return { appName: null, windowTitle: title.trim() };
+        const appName = (await run(`ps -p ${cleanPid} -o comm=`, 500)).trim();
         return { appName: appName || null, windowTitle: title.trim() };
     }
     return { appName: null, windowTitle: null };
@@ -135,9 +138,15 @@ function parseEditorFile(appName, windowTitle) {
         return null;
     const filename = parts[0].trim();
     const project = parts.length >= 3 ? parts[1].trim() : undefined;
-    // Detect language from extension
-    const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase();
-    const language = FILE_EXTENSION_LANGUAGES[ext];
+    // Determine language blindly from extension if present
+    let language = "text";
+    const extMatch = filename.match(/\.([^.]+)$/);
+    if (extMatch && extMatch[1]) {
+        language = FILE_EXTENSION_LANGUAGES[`.${extMatch[1].toLowerCase()}`] || extMatch[1].toLowerCase();
+    }
+    else if (filename.startsWith(".")) {
+        language = "config";
+    }
     return { name: filename, project, language };
 }
 /** Parse browser tab title. */
@@ -182,8 +191,8 @@ class WorkspaceContextBrain {
                 meetingApp: meeting.meetingApp,
             };
         }
-        catch {
-            /* keep last known */
+        catch (err) {
+            console.error("Workspace context refresh failed:", err);
         }
         return this.current;
     }
@@ -203,7 +212,7 @@ class WorkspaceContextBrain {
             parts.push(`Editing: ${fileStr}`);
         }
         if (c.currentBrowserTab) {
-            parts.push(`Browser tab: ${c.currentBrowserTab.title.slice(0, 80)}`);
+            parts.push(`Browsing web`);
         }
         if (c.inMeeting) {
             parts.push(`In a ${c.meetingApp} meeting`);

@@ -52,6 +52,20 @@ const companion_evolution_1 = require("./brains/companion-evolution");
 const memory_importance_1 = require("./brains/memory-importance");
 const memory_extractor_1 = require("./brains/memory-extractor");
 const timeline_brain_1 = require("./brains/timeline-brain");
+// Phase 2
+const communication_dna_1 = require("./brains/communication-dna");
+const proactive_engine_1 = require("./brains/proactive-engine");
+const weekly_reflection_1 = require("./brains/weekly-reflection");
+// Phase 3
+const swarm_manager_1 = require("./brains/swarm-manager");
+// Phase 4
+const dream_engine_1 = require("./brains/dream-engine");
+const memoryExtractor = new memory_extractor_1.MemoryExtractorBrain({
+    modelRouter: model_router_1.modelRouter,
+    memoryBrain: memory_brain_instance_2.memoryBrain,
+    knowledgeGraph: knowledge_graph_1.knowledgeGraph,
+    companionEvolution: companion_evolution_1.companionEvolution
+});
 // Execution Engine V2
 const orchestrator_1 = require("./engine/orchestrator");
 const permission_modes_1 = require("./engine/permission-modes");
@@ -208,7 +222,7 @@ function buildSystemPrompt(userMessage, companionId = "pix") {
             sections.push(`Relevant entities:\n${entityLines.join("\n")}`);
         }
     }
-    // ─── 8. Communication style (always — short) ────────────────────────
+    // ─── 8. Communication style (relationship engine) ───────────────────
     const styleGuide = relationship_engine_1.relationshipEngine.getStyleGuide();
     if (styleGuide)
         sections.push(styleGuide);
@@ -217,10 +231,17 @@ function buildSystemPrompt(userMessage, companionId = "pix") {
     if (timelineSummary && timelineSummary !== "No significant activity recorded today.") {
         sections.push(`Recent Activity: ${timelineSummary}`);
     }
-    // ─── 9. Companion mood (always — one line) ──────────────────────────
+    // ─── 9. Companion mood ─────────────────────────────────────────────
     const moodHint = companion_mood_1.companionMood.getPromptHint(companionId);
     if (moodHint)
         sections.push(moodHint);
+    // ─── Phase 2: Communication DNA (injected after style guide) ───────
+    const memState = memory_brain_instance_2.memoryBrain.get();
+    const userProfile = relationship_engine_1.relationshipEngine.get();
+    const dna = communication_dna_1.communicationDNA.compute(userProfile, memState);
+    if (dna.promptFragment) {
+        sections.push(`Communication Style:\n${dna.promptFragment}`);
+    }
     // ─── 10. Rules (always — short) ─────────────────────────────────────
     sections.push("Rules: Never assume apps exist (check above). If impossible, explain + suggest. " +
         "Always explain WHY (trust layer). Match user's style. Be concise.");
@@ -431,7 +452,7 @@ electron_1.ipcMain.handle(shared_1.IPC.CHAT_SEND, async (_e, payload) => {
         // ─── Feed the conversation to the memory extractor (background) ──
         // This triggers LLM-based fact + entity extraction every N messages.
         try {
-            (0, memory_extractor_1.observeMessages)(companionId, payload.history);
+            memoryExtractor.observeMessages(companionId, payload.history);
         }
         catch {
             /* non-fatal */
@@ -559,26 +580,70 @@ electron_1.ipcMain.on(shared_1.IPC.CONFIRMATION_RESOLVE, (_e, payload) => {
     }
 });
 // ---------------------------------------------------------------------------
-// IPC — Swarm Mode
+// IPC — Phase 3: Swarm Mode (managed by SwarmManager)
 // ---------------------------------------------------------------------------
-electron_1.ipcMain.handle(shared_1.IPC.SPAWN_COMPANION, (_e, { companionId }) => {
-    // spawn slightly offset
-    const offsetCount = windows.size;
-    createWindow(companionId, offsetCount * 40, offsetCount * 40);
+electron_1.ipcMain.handle(shared_1.IPC.SPAWN_COMPANION, (_e, payload) => {
+    const winId = swarm_manager_1.swarmManager.spawn(payload.companionId, {
+        headless: payload.headless ?? false,
+        autoTask: payload.autoTask,
+    });
+    return { winId };
 });
-electron_1.ipcMain.on(shared_1.IPC.INTER_COMPANION_MSG, (_e, { to, message }) => {
+electron_1.ipcMain.handle(shared_1.IPC.DISMISS_COMPANION, (_e, { winId }) => {
+    swarm_manager_1.swarmManager.dismiss(winId);
+});
+electron_1.ipcMain.handle(shared_1.IPC.GET_SWARM_INSTANCES, () => {
+    return swarm_manager_1.swarmManager.getInstances();
+});
+electron_1.ipcMain.on(shared_1.IPC.INTER_COMPANION_MSG, (_e, payload) => {
     const fromWin = electron_1.BrowserWindow.fromWebContents(_e.sender);
-    const fromId = fromWin ? windowCompanionMap.get(fromWin.id) : "unknown";
-    // Find target window
-    for (const [id, compId] of windowCompanionMap.entries()) {
-        if (compId === to) {
-            const win = windows.get(id);
-            if (win) {
-                win.webContents.send(shared_1.IPC.INTER_COMPANION_MSG, { from: fromId, message });
-                return;
-            }
-        }
-    }
+    if (!fromWin)
+        return;
+    swarm_manager_1.swarmManager.routeMessage(fromWin.id, payload.to, payload.message);
+});
+// ---------------------------------------------------------------------------
+// IPC — Phase 2: Proactive Suggestions
+// ---------------------------------------------------------------------------
+electron_1.ipcMain.on(shared_1.IPC.DISMISS_PROACTIVE, () => {
+    // No-op — just acknowledged by renderer. Could log if needed.
+});
+// ---------------------------------------------------------------------------
+// IPC — Phase 2: Weekly Reflection
+// ---------------------------------------------------------------------------
+electron_1.ipcMain.handle(shared_1.IPC.GET_WEEKLY_DIGEST, () => {
+    const events = timeline_brain_1.timelineBrain.getAllEvents();
+    const memories = memory_brain_instance_2.memoryBrain.get();
+    const profile = relationship_engine_1.relationshipEngine.get();
+    return weekly_reflection_1.weeklyReflection.buildDigest(events, memories, profile);
+});
+electron_1.ipcMain.handle(shared_1.IPC.RECORD_REFLECTION_FEEDBACK, (_e, payload) => {
+    const events = timeline_brain_1.timelineBrain.getAllEvents();
+    const memories = memory_brain_instance_2.memoryBrain.get();
+    const profile = relationship_engine_1.relationshipEngine.get();
+    const digest = weekly_reflection_1.weeklyReflection.buildDigest(events, memories, profile);
+    weekly_reflection_1.weeklyReflection.recordReflection(digest.naturalSummary, payload.feedback);
+    return { ok: true };
+});
+electron_1.ipcMain.handle(shared_1.IPC.TRIGGER_WEEKLY_REFLECTION, () => {
+    const events = timeline_brain_1.timelineBrain.getAllEvents();
+    const memories = memory_brain_instance_2.memoryBrain.get();
+    const profile = relationship_engine_1.relationshipEngine.get();
+    return weekly_reflection_1.weeklyReflection.buildDigest(events, memories, profile);
+});
+// ---------------------------------------------------------------------------
+// IPC — Phase 2: Communication DNA
+// ---------------------------------------------------------------------------
+electron_1.ipcMain.handle(shared_1.IPC.GET_COMMUNICATION_DNA, () => {
+    const profile = relationship_engine_1.relationshipEngine.get();
+    const memories = memory_brain_instance_2.memoryBrain.get();
+    const dna = communication_dna_1.communicationDNA.compute(profile, memories);
+    return {
+        toneLabel: dna.toneLabel,
+        preferredLength: dna.preferredLength,
+        usesEmoji: dna.usesEmoji,
+        prefersCode: dna.prefersCode,
+        styleFacts: dna.styleFacts,
+    };
 });
 // ---------------------------------------------------------------------------
 // IPC — device brain
@@ -734,6 +799,20 @@ else {
         }
         // Initialize Timeline Brain
         timeline_brain_1.timelineBrain.init(electron_1.app.getPath("userData"));
+        // Initialize Phase 4 Dream Engine
+        dream_engine_1.dreamEngine.init(electron_1.app.getPath("userData"), model_router_1.modelRouter);
+        // Initialize Phase 2 brains
+        weekly_reflection_1.weeklyReflection.init(electron_1.app.getPath("userData"));
+        proactive_engine_1.proactiveEngine.start();
+        // Configure Phase 3 SwarmManager with correct asset paths
+        swarm_manager_1.swarmManager.configure(node_path_1.default.join(__dirname, "preload.js"), node_path_1.default.join(__dirname, "../dist"));
+        // Check if weekly reflection is due (on startup)
+        const lastReflectionMs = weekly_reflection_1.weeklyReflection.getLastReflectionMs();
+        proactive_engine_1.proactiveEngine.checkWeeklyReflection(lastReflectionMs);
+        // Subscribe proactive engine to emit suggestions to all windows
+        proactive_engine_1.proactiveEngine.subscribe((suggestion) => {
+            broadcastToRenderers(shared_1.IPC.PROACTIVE_SUGGESTION, suggestion);
+        });
         // Subscribe to environment changes and push to renderer.
         // Also feed the companion mood + workspace context brains.
         environment_brain_1.environmentBrain.subscribe((env) => {
@@ -745,11 +824,25 @@ else {
             catch {
                 /* non-fatal */
             }
+            // Phase 2: Check battery for proactive suggestions
+            try {
+                proactive_engine_1.proactiveEngine.checkBatteryCritical(env.battery.level, env.battery.charging);
+            }
+            catch {
+                /* non-fatal */
+            }
+            // Phase 4: Check if idle and trigger dream
+            try {
+                dream_engine_1.dreamEngine.checkIdleAndDream(env.idleSeconds, timeline_brain_1.timelineBrain.getAllEvents(), relationship_engine_1.relationshipEngine.get(), memory_brain_instance_2.memoryBrain.get());
+            }
+            catch {
+                /* non-fatal */
+            }
             // Refresh workspace context periodically (it reads the foreground window)
             workspace_context_1.workspaceContext.refresh().catch(() => { });
         });
-        // Create the window + tray.
-        createWindow();
+        // Phase 3: Create the initial window via SwarmManager
+        swarm_manager_1.swarmManager.spawn(defaultCompanionId);
         createTray();
         electron_1.app.on("activate", () => {
             if (electron_1.BrowserWindow.getAllWindows().length === 0)

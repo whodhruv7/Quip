@@ -51,6 +51,12 @@ class TimelineBrain {
         return this.state.events.filter((e) => e.type === "future_schedule" && e.timestamp >= now && e.timestamp <= limit);
     }
     /**
+     * Get all timeline events.
+     */
+    getAllEvents() {
+        return [...this.state.events];
+    }
+    /**
      * Generate a summary of today's activities.
      */
     getTodaySummary() {

@@ -13,6 +13,7 @@
 
 import type { UserProfile } from "./relationship-engine";
 import type { MemoryEntry } from "../../src/types";
+import { dreamEngine } from "./dream-engine";
 
 // MemoryState shape (matches memoryBrain.get() return)
 interface MemoryState {
@@ -109,6 +110,12 @@ export class CommunicationDNAEngine {
     // Injected style facts from memory
     if (styleFacts.length > 0) {
       lines.push(`Communication style notes: ${styleFacts.slice(0, 3).join("; ")}.`);
+    }
+
+    // Phase 4: Subconscious Dream Insights
+    const dreams = dreamEngine.getInsights();
+    if (dreams.length > 0) {
+      lines.push(`Subconscious Insights about User: ${dreams.join(" ")}`);
     }
 
     const promptFragment = lines.join(" ");

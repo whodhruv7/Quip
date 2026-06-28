@@ -22,23 +22,28 @@ const COMPANION_SIZE = 88;
 const MIN_PANEL_W = 380;
 const MAX_PANEL_W = 460;
 const MIN_PANEL_H = 480;
+const PANEL_WIDTH_RATIO = 0.34;
+const ULTRAWIDE_MIN_WIDTH = 2560;
+const DESKTOP_MIN_WIDTH = 1100;
+const TABLET_MIN_WIDTH = 700;
 function detectFormFactor(width) {
-    if (width >= 2560)
+    if (width >= ULTRAWIDE_MIN_WIDTH)
         return "ultrawide";
-    if (width >= 1100)
+    if (width >= DESKTOP_MIN_WIDTH)
         return "desktop";
-    if (width >= 700)
+    if (width >= TABLET_MIN_WIDTH)
         return "tablet";
     return "phone";
 }
-function computeSpatial(profile) {
-    // Prefer the primary display's work area (excludes taskbar/dock).
-    const displays = electron_1.screen.getAllDisplays();
-    const primary = displays.find((d) => d.id === electron_1.screen.getPrimaryDisplay().id) ?? displays[0];
-    const wa = primary.workArea;
+function computeSpatial(profile, targetDisplayId) {
+    // Use target display if provided, otherwise fallback to primary display from profile
+    const display = targetDisplayId
+        ? profile.displays.find((d) => d.id === targetDisplayId) ?? profile.primaryDisplay
+        : profile.primaryDisplay;
+    const wa = display.workArea;
     const formFactor = detectFormFactor(wa.width);
     // Panel width: scale with available width, clamped.
-    const panelW = Math.max(MIN_PANEL_W, Math.min(MAX_PANEL_W, Math.floor(wa.width * 0.34)));
+    const panelW = Math.max(MIN_PANEL_W, Math.min(MAX_PANEL_W, Math.floor(wa.width * PANEL_WIDTH_RATIO)));
     const panelH = Math.max(MIN_PANEL_H, Math.floor(wa.height - PANEL_MARGIN * 2));
     // Companion sits at bottom-right, panel anchored to its left.
     const companionX = wa.x + wa.width - COMPANION_SIZE - PANEL_MARGIN;

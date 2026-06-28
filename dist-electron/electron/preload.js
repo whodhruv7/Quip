@@ -31,14 +31,6 @@ const api = {
     executeTask: (payload) => electron_1.ipcRenderer.invoke(shared_1.IPC.TASK_EXECUTE, payload),
     // ─── Set active companion (so the system prompt adapts personality/mood) ─
     setCompanion: (id) => electron_1.ipcRenderer.send("quip:set-companion", id),
-    // ─── Swarm Mode ────────────────────────────────────────────────────────
-    spawnCompanion: (companionId) => electron_1.ipcRenderer.invoke(shared_1.IPC.SPAWN_COMPANION, { companionId }),
-    onInterCompanionMsg: (cb) => {
-        const handler = (_e, data) => cb(data);
-        electron_1.ipcRenderer.on(shared_1.IPC.INTER_COMPANION_MSG, handler);
-        return () => electron_1.ipcRenderer.removeListener(shared_1.IPC.INTER_COMPANION_MSG, handler);
-    },
-    sendInterCompanionMsg: (to, message) => electron_1.ipcRenderer.send(shared_1.IPC.INTER_COMPANION_MSG, { to, message }),
     // ─── Execution Engine V2 — Permission modes ────────────────────────
     getPermissionMode: () => electron_1.ipcRenderer.invoke("quip:get-permission-mode"),
     setPermissionMode: (mode) => electron_1.ipcRenderer.invoke("quip:set-permission-mode", mode),
@@ -111,6 +103,34 @@ const api = {
         const handler = (_e, data) => cb(data);
         electron_1.ipcRenderer.on(shared_1.IPC.BOOTSTRAP_PROGRESS, handler);
         return () => electron_1.ipcRenderer.removeListener(shared_1.IPC.BOOTSTRAP_PROGRESS, handler);
+    },
+    // ─── Phase 2: Communication DNA ──────────────────────────────────────
+    getCommunicationDNA: () => electron_1.ipcRenderer.invoke(shared_1.IPC.GET_COMMUNICATION_DNA),
+    // ─── Phase 2: Proactive Suggestions ──────────────────────────────────
+    onProactiveSuggestion: (cb) => {
+        const handler = (_e, data) => cb(data);
+        electron_1.ipcRenderer.on(shared_1.IPC.PROACTIVE_SUGGESTION, handler);
+        return () => electron_1.ipcRenderer.removeListener(shared_1.IPC.PROACTIVE_SUGGESTION, handler);
+    },
+    dismissProactive: () => electron_1.ipcRenderer.send(shared_1.IPC.DISMISS_PROACTIVE),
+    // ─── Phase 2: Weekly Reflection ──────────────────────────────────────
+    getWeeklyDigest: () => electron_1.ipcRenderer.invoke(shared_1.IPC.GET_WEEKLY_DIGEST),
+    triggerWeeklyReflection: () => electron_1.ipcRenderer.invoke(shared_1.IPC.TRIGGER_WEEKLY_REFLECTION),
+    recordReflectionFeedback: (feedback) => electron_1.ipcRenderer.invoke(shared_1.IPC.RECORD_REFLECTION_FEEDBACK, { feedback }),
+    // ─── Phase 3: Swarm Mode ─────────────────────────────────────────────
+    spawnCompanion: (companionId, headless, autoTask) => electron_1.ipcRenderer.invoke(shared_1.IPC.SPAWN_COMPANION, { companionId, headless, autoTask }),
+    dismissCompanion: (winId) => electron_1.ipcRenderer.invoke(shared_1.IPC.DISMISS_COMPANION, { winId }),
+    getSwarmInstances: () => electron_1.ipcRenderer.invoke(shared_1.IPC.GET_SWARM_INSTANCES),
+    sendInterCompanionMsg: (to, message) => electron_1.ipcRenderer.send(shared_1.IPC.INTER_COMPANION_MSG, { to, message }),
+    onInterCompanionMsg: (cb) => {
+        const handler = (_e, data) => cb(data);
+        electron_1.ipcRenderer.on(shared_1.IPC.INTER_COMPANION_MSG, handler);
+        return () => electron_1.ipcRenderer.removeListener(shared_1.IPC.INTER_COMPANION_MSG, handler);
+    },
+    onAutoTask: (cb) => {
+        const handler = (_e, data) => cb(data);
+        electron_1.ipcRenderer.on(shared_1.IPC.AUTO_TASK, handler);
+        return () => electron_1.ipcRenderer.removeListener(shared_1.IPC.AUTO_TASK, handler);
     },
 };
 electron_1.contextBridge.exposeInMainWorld("quip", api);
