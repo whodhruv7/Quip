@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "lib": ["ES2022"],
+    "outDir": "../dist-test",
+    "rootDir": "..",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true
+  },
+  "include": [
+    "../electron/engine/intent-parser-v2.ts",
+    "../electron/engine/context-store.ts",
+    "../electron/engine/permission-modes.ts",
+    "../electron/engine/window-policy.ts",
+    "../electron/system/model-config.ts",
+    "../src/quiz/quiz-engine.ts",
+    "../src/lib/companion-config.ts",
+    "../src/types/**/*.ts"
+  ]
+}

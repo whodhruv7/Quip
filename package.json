@@ -13,7 +13,8 @@
     "build": "tsc -p electron/tsconfig.json && vite build",
     "launch": "cross-env NODE_ENV=production electron .",
     "start": "tsc -p electron/tsconfig.json && cross-env NODE_ENV=production electron .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "tsc -p tests/tsconfig.json && node --test \"tests/*.test.mjs\""
   },
   "dependencies": {
     "framer-motion": "^11.3.19",
