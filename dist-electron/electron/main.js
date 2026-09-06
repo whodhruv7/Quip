@@ -1,6 +1,39 @@
 "use strict";
 // Quip V2 — Electron main process (orchestration hub).
 // Wires all 10 brain layers + bootstrap + IPC. API keys stay in env only.
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -69,6 +102,12 @@ const memoryExtractor = new memory_extractor_1.MemoryExtractorBrain({
 // Execution Engine V2
 const orchestrator_1 = require("./engine/orchestrator");
 const permission_modes_1 = require("./engine/permission-modes");
+const quiz_engine_1 = require("../src/quiz/quiz-engine");
+const app_discovery_1 = require("./engine/app-discovery");
+const context_store_1 = require("./engine/context-store");
+// The orchestrator uses the model ONLY for ambiguous intent (compact schema,
+// one small call) — deterministic tools handle the obvious actions.
+orchestrator_1.orchestrator.setModelRouter(model_router_1.modelRouter);
 // ─── State ───────────────────────────────────────────────────────────────────
 const isDev = process.env.NODE_ENV === "development";
 const windows = new Map();
@@ -226,7 +265,13 @@ function buildSystemPrompt(userMessage, companionId = "pix") {
     const styleGuide = relationship_engine_1.relationshipEngine.getStyleGuide();
     if (styleGuide)
         sections.push(styleGuide);
-    // ─── 8.5. Timeline Context ──────────────────────────────────────────
+    // ─── 8.5. Short-term execution context (1 compact line) ────────────────
+    // Lets chat-mode follow-ups ("play it", "now open the latest email")
+    // resolve without re-sending the whole history.
+    const execContextSummary = context_store_1.contextStore.summary();
+    if (execContextSummary)
+        sections.push(execContextSummary);
+    // ─── 8.7. Timeline Context ─────────────────────────────────────────
     const timelineSummary = timeline_brain_1.timelineBrain.getTodaySummary();
     if (timelineSummary && timelineSummary !== "No significant activity recorded today.") {
         sections.push(`Recent Activity: ${timelineSummary}`);
@@ -464,22 +509,21 @@ electron_1.ipcMain.handle(shared_1.IPC.CHAT_SEND, async (_e, payload) => {
         return { ok: true };
     }
     catch (err) {
-        const msg = err?.message ?? String(err);
-        // Classify the error for graceful display.
-        const kind = msg.includes("no-groq-key")
-            || msg.includes("no-openrouter-key")
+        // ModelTransportError carries a stable kind — calm, precise user message.
+        const described = (0, model_router_1.describeError)(err);
+        const kind = described.kind === "no-key" || described.kind === "auth"
             ? "no-key"
-            : msg.includes("401")
+            : described.kind === "rate-limit" || described.kind === "http"
                 ? "http"
-                : "network";
-        const userMessage = kind === "no-key"
-            ? "No AI key configured. Add GROQ_API_KEY to your .env file."
-            : kind === "http"
-                ? "AI provider rejected the key. Check your .env."
-                : "Network error. Check your connection.";
+                : described.kind === "timeout"
+                    ? "network"
+                    : "network";
+        if (kind === "network" || kind === "http") {
+            console.error("model request failed:", model_router_1.modelRouter.diagnostics());
+        }
         sendToWindow(win, shared_1.IPC.CHAT_ERROR, {
             requestId: payload.requestId,
-            message: userMessage,
+            message: described.message,
             kind,
         });
         return { ok: false };
@@ -489,7 +533,7 @@ electron_1.ipcMain.handle(shared_1.IPC.CHAT_SEND, async (_e, payload) => {
 // IPC — set current companion (so system prompt can adapt)
 // ---------------------------------------------------------------------------
 electron_1.ipcMain.on("quip:set-companion", (_e, id) => {
-    if (id === "pix" || id === "kai" || id === "ren") {
+    if (id === "pix" || id === "kai" || id === "zee") {
         defaultCompanionId = id;
         const win = electron_1.BrowserWindow.fromWebContents(_e.sender);
         if (win)
@@ -502,15 +546,66 @@ electron_1.ipcMain.on("quip:set-companion", (_e, id) => {
 electron_1.ipcMain.handle(shared_1.IPC.TASK_EXECUTE, async (_e, payload) => {
     const profile = deviceProfile ?? (await (0, device_brain_1.ensureProfile)(electron_1.app.getPath("userData")));
     const platform = profile.platform;
+    const workspacePath = electron_1.app.getAppPath();
     // Set up approval callback — forwards to renderer
     const win = electron_1.BrowserWindow.fromWebContents(_e.sender);
     const companionId = win ? windowCompanionMap.get(win.id) ?? defaultCompanionId : defaultCompanionId;
-    // Set up approval callback — forwards to renderer
     permission_modes_1.permissionSystem.onApprovalRequested = (request) => {
         sendToWindow(win, "quip:approval-request", request);
     };
+    // ─── Quiz intent: model-generated quiz, returned inline ─────────────
+    const quizIntent = await Promise.resolve().then(() => __importStar(require("./engine/intent-parser-v2"))).then((m) => m.parseIntentV2(payload.command));
+    if (quizIntent.action === "quiz" && quizIntent.isTask) {
+        try {
+            const history = payload.command;
+            const raw = await model_router_1.modelRouter.complete("You generate quizzes from material. Return ONLY compact JSON.", [{
+                    role: "user",
+                    content: history.includes("\n")
+                        ? (0, quiz_engine_1.buildQuizPrompt)(history, 5)
+                        : (0, quiz_engine_1.buildQuizPrompt)(history || "general knowledge basics", 5),
+                }], 30000);
+            const questions = (0, quiz_engine_1.normalizeQuizQuestions)(JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] ?? "{}"));
+            if (questions.length > 0) {
+                return {
+                    requestId: payload.requestId,
+                    success: true,
+                    summary: `I made a ${questions.length}-question quiz for you. Let's go!`,
+                    notes: ["quiz generated"],
+                    plan: {
+                        id: payload.requestId,
+                        requestId: payload.requestId,
+                        intent: { type: "quiz", target: "quiz", query: "", confidence: 0.95, verbs: ["quiz"], raw: payload.command },
+                        subtasks: [],
+                        summary: "Quiz generated",
+                        isChat: false,
+                        createdAt: Date.now(),
+                    },
+                    quiz: questions,
+                };
+            }
+            // Fall through to normal execution if quiz generation failed
+        }
+        catch (e) {
+            return {
+                requestId: payload.requestId,
+                success: false,
+                summary: "I couldn't generate a quiz right now — my model connection isn't responding.",
+                notes: [`quiz error: ${String(e?.message ?? e).slice(0, 80)}`],
+                plan: {
+                    id: payload.requestId,
+                    requestId: payload.requestId,
+                    intent: { type: "quiz", target: null, query: null, confidence: 0, verbs: [], raw: payload.command },
+                    subtasks: [],
+                    summary: "Quiz failed",
+                    isChat: false,
+                    createdAt: Date.now(),
+                },
+            };
+        }
+    }
     const result = await orchestrator_1.orchestrator.execute(payload.command, {
         platform,
+        workspacePath,
         onProgress: (update) => {
             sendToWindow(win, shared_1.IPC.TASK_PROGRESS, {
                 requestId: payload.requestId,
@@ -542,12 +637,13 @@ electron_1.ipcMain.handle(shared_1.IPC.TASK_EXECUTE, async (_e, payload) => {
         plan: {
             id: payload.requestId,
             requestId: payload.requestId,
-            intent: { type: "open_app", target: null, query: null, confidence: 0, verbs: [], raw: payload.command },
+            intent: { type: quizIntent.action, target: quizIntent.target || null, query: quizIntent.query || null, confidence: quizIntent.confidence, verbs: [], raw: payload.command },
             subtasks: [],
             summary: result.summary,
             isChat: result.stepsTotal === 0,
             createdAt: Date.now(),
         },
+        ...(result.quiz ? { quiz: result.quiz } : {}),
     };
 });
 // ---------------------------------------------------------------------------
@@ -661,6 +757,7 @@ electron_1.ipcMain.handle(shared_1.IPC.GET_DEVICE_PROFILE, async () => {
 });
 electron_1.ipcMain.handle(shared_1.IPC.RESCAN_DEVICE, async () => {
     try {
+        (0, app_discovery_1.invalidateAppIndex)();
         deviceProfile = await (0, device_brain_1.ensureProfile)(electron_1.app.getPath("userData"), 0); // force rescan
         if (deviceProfile) {
             worldModel = await (0, world_model_1.ensureWorldModel)(electron_1.app.getPath("userData"), deviceProfile, memory_brain_instance_1.fsStorage);
@@ -729,7 +826,7 @@ electron_1.ipcMain.handle(shared_1.IPC.RESET_USER_PROFILE, () => {
 // IPC — companion mood
 // ---------------------------------------------------------------------------
 electron_1.ipcMain.handle(shared_1.IPC.GET_COMPANION_MOOD, (_e, id) => {
-    if (id !== "pix" && id !== "kai" && id !== "ren")
+    if (id !== "pix" && id !== "kai" && id !== "zee")
         return null;
     return companion_mood_1.companionMood.getMood(id);
 });

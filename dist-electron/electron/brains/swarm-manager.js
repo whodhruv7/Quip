@@ -26,7 +26,7 @@ const node_path_1 = __importDefault(require("node:path"));
 const COMPANION_LABELS = {
     pix: "Pix — Creative",
     kai: "Kai — Analytical",
-    ren: "Ren — Empathetic",
+    zee: "Ren — Empathetic",
 };
 class SwarmManager {
     instances = new Map();

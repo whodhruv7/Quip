@@ -29,7 +29,7 @@ exports.DEFAULT_COSMETICS = {
         { tier: 2, name: "Book Badge", description: "A tiny book emblem", threshold: 150 },
         { tier: 3, name: "Constellation Aura", description: "A soft starry glow", threshold: 300 },
     ],
-    ren: [
+    zee: [
         { tier: 1, name: "Curiosity Spark", description: "A glowing question mark", threshold: 50 },
         { tier: 2, name: "Galaxy Trail", description: "Stardust follows behind", threshold: 150 },
         { tier: 3, name: "Cosmic Crown", description: "A miniature galaxy halo", threshold: 300 },
@@ -68,12 +68,12 @@ class CompanionEvolutionBrain {
         const base = {
             pix: makeBaseProgression("pix"),
             kai: makeBaseProgression("kai"),
-            ren: makeBaseProgression("ren"),
+            zee: makeBaseProgression("zee"),
         };
         this.progressions = {
             pix: { ...base.pix, depth: 0, unlockedCosmetics: [] },
             kai: { ...base.kai, depth: 0, unlockedCosmetics: [] },
-            ren: { ...base.ren, depth: 0, unlockedCosmetics: [] },
+            zee: { ...base.zee, depth: 0, unlockedCosmetics: [] },
         };
     }
     init(userDataDir) {
@@ -87,7 +87,7 @@ class CompanionEvolutionBrain {
             if (node_fs_1.default.existsSync(this.filePath)) {
                 const data = JSON.parse(node_fs_1.default.readFileSync(this.filePath, "utf8"));
                 if (data && typeof data === "object") {
-                    for (const id of ["pix", "kai", "ren"]) {
+                    for (const id of ["pix", "kai", "zee"]) {
                         if (data[id]) {
                             this.progressions[id] = { ...this.progressions[id], ...data[id] };
                         }
@@ -195,7 +195,7 @@ class CompanionEvolutionBrain {
         return {
             pix: this.getProgression("pix"),
             kai: this.getProgression("kai"),
-            ren: this.getProgression("ren"),
+            zee: this.getProgression("zee"),
         };
     }
 }

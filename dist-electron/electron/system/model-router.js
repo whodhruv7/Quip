@@ -1,196 +1,147 @@
 "use strict";
-// Quip V2 — MODEL ROUTER
+// Quip V2 — MODEL ROUTER (hardened)
 // -----------------------------------------------------------------------------
-// One place that knows how to talk to LLM providers. Replaces the inline
-// OpenRouter + Groq code that used to live in main.ts.
+// One place that knows how to talk to LLM providers.
 //
-// Strategy:
-//   1. Try the PRIMARY provider.
-//   2. On any failure (auth, rate limit, network), try the FALLBACK.
-//   3. Never expose raw API errors to the user — return graceful messages.
-//   4. Report which model is active so the UI can show it.
-//
-// Providers are pluggable. Adding a local model later = adding one entry.
+// Reliability strategy:
+//   1. Provider order comes from QUIP_PRIMARY_PROVIDER (default: whichever key
+//      exists — OpenRouter preferred because Groq free keys 401 often).
+//   2. On transport failure, retry once (transient network), then try the
+//      next provider.
+//   3. TLS/certificate errors are retried through Electron's net.fetch which
+//      uses the OS certificate store (fixes corporate proxies / AV inspection).
+//   4. Errors carry a stable `kind` so IPC can show precise, calm messages.
+//   5. Secrets are NEVER logged raw — only masked diagnostics.
 // -----------------------------------------------------------------------------
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.modelRouter = void 0;
+exports.modelRouter = exports.describeError = exports.ModelRouter = exports.ModelTransportError = exports.maskSecret = void 0;
+const electron_1 = require("electron");
+const model_config_1 = require("./model-config");
+var model_config_2 = require("./model-config");
+Object.defineProperty(exports, "maskSecret", { enumerable: true, get: function () { return model_config_2.maskSecret; } });
+/** Error with a stable machine-readable kind (used by IPC error mapping). */
+class ModelTransportError extends Error {
+    kind;
+    constructor(kind, message) {
+        super(message);
+        this.kind = kind;
+    }
+}
+exports.ModelTransportError = ModelTransportError;
 const REQUEST_TIMEOUT_MS = 60_000;
 // ---------------------------------------------------------------------------
-// Groq adapter (primary — fast + free tier)
+// Transport — Node fetch with Electron net.fetch TLS fallback.
+// Some Windows setups (AV inspection, corporate proxies) break Node's TLS.
+// Electron's net.fetch uses Chromium's network stack + OS cert store.
 // ---------------------------------------------------------------------------
-function makeGroq() {
-    const config = {
-        provider: "groq",
-        model: "llama-3.3-70b-versatile",
-        label: "Groq · Llama 3.3 70B",
-        available: false,
-    };
-    return {
-        config,
-        isConfigured: () => !!process.env.GROQ_API_KEY,
-        async stream(systemPrompt, history, cb) {
-            const key = process.env.GROQ_API_KEY;
-            if (!key)
-                throw new Error("no-groq-key");
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-            if (cb.signal)
-                cb.signal.addEventListener("abort", () => controller.abort());
-            try {
-                const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-                    method: "POST",
-                    headers: {
-                        Authorization: `Bearer ${key}`,
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        model: config.model,
-                        stream: true,
-                        messages: [
-                            { role: "system", content: systemPrompt },
-                            ...history,
-                        ],
-                    }),
-                    signal: controller.signal,
-                });
-                if (!resp.ok || !resp.body) {
-                    const text = await resp.text().catch(() => "");
-                    throw new Error(`groq-http-${resp.status}:${text.slice(0, 120)}`);
-                }
-                return await readSSE(resp.body, cb.onChunk);
-            }
-            finally {
-                clearTimeout(timeout);
-            }
-        },
-        async complete(systemPrompt, history, timeoutMs = 30_000) {
-            const key = process.env.GROQ_API_KEY;
-            if (!key)
-                throw new Error("no-groq-key");
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), timeoutMs);
-            try {
-                const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-                    method: "POST",
-                    headers: {
-                        Authorization: `Bearer ${key}`,
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        model: config.model,
-                        stream: false,
-                        messages: [
-                            { role: "system", content: systemPrompt },
-                            ...history,
-                        ],
-                        temperature: 0.3,
-                        max_tokens: 1000,
-                    }),
-                    signal: controller.signal,
-                });
-                if (!resp.ok) {
-                    const text = await resp.text().catch(() => "");
-                    throw new Error(`groq-http-${resp.status}:${text.slice(0, 120)}`);
-                }
-                const data = await resp.json();
-                return data?.choices?.[0]?.message?.content ?? "";
-            }
-            finally {
-                clearTimeout(timeout);
-            }
-        },
-    };
+function isTlsError(err) {
+    const msg = String(err?.message ?? err);
+    return (msg.includes("UNABLE_TO_VERIFY_LEAF_SIGNATURE") ||
+        msg.includes("SELF_SIGNED_CERT_IN_CHAIN") ||
+        msg.includes("CERT_HAS_EXPIRED") ||
+        msg.includes("DEPTH_ZERO_SELF_SIGNED_CERT") ||
+        msg.includes("unable to verify the first certificate") ||
+        msg.includes("ERR_TLS_CERT_ALTNAME_INVALID") ||
+        msg.includes("certificate"));
 }
-// ---------------------------------------------------------------------------
-// OpenRouter adapter (fallback)
-// ---------------------------------------------------------------------------
-function makeOpenRouter() {
-    const config = {
-        provider: "openrouter",
-        model: process.env.OPENROUTER_MODEL || "google/gemma-3-27b-it:free",
-        label: "OpenRouter · Gemma 3 27B",
-        available: false,
-    };
-    return {
-        config,
-        isConfigured: () => !!process.env.OPENROUTER_API_KEY &&
-            process.env.OPENROUTER_API_KEY !== "sk-or-v1-your-key-here",
-        async stream(systemPrompt, history, cb) {
-            const key = process.env.OPENROUTER_API_KEY;
-            if (!key)
-                throw new Error("no-openrouter-key");
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-            if (cb.signal)
-                cb.signal.addEventListener("abort", () => controller.abort());
-            try {
-                const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-                    method: "POST",
-                    headers: {
-                        Authorization: `Bearer ${key}`,
-                        "Content-Type": "application/json",
-                        "HTTP-Referer": "https://quip.app",
-                        "X-Title": "Quip",
-                    },
-                    body: JSON.stringify({
-                        model: config.model,
-                        stream: true,
-                        messages: [
-                            { role: "system", content: systemPrompt },
-                            ...history,
-                        ],
-                    }),
-                    signal: controller.signal,
-                });
-                if (!resp.ok || !resp.body) {
-                    const text = await resp.text().catch(() => "");
-                    throw new Error(`openrouter-http-${resp.status}:${text.slice(0, 120)}`);
-                }
-                return await readSSE(resp.body, cb.onChunk);
+async function modelFetch(url, init) {
+    try {
+        return await fetch(url, init);
+    }
+    catch (error) {
+        if (isTlsError(error)) {
+            // Electron net.fetch — uses OS trust store. Only for the TLS failure path.
+            return await electron_1.net.fetch(url, init);
+        }
+        throw error;
+    }
+}
+function classifyStatus(provider, status) {
+    if (status === 401 || status === 403)
+        return "auth";
+    if (status === 429)
+        return "rate-limit";
+    if (status >= 500)
+        return "http";
+    return "http";
+}
+function buildBody(cfg, systemPrompt, history, stream, maxTokens) {
+    return JSON.stringify({
+        model: cfg.model,
+        stream,
+        messages: [{ role: "system", content: systemPrompt }, ...history],
+        ...(stream ? {} : { temperature: 0.3, max_tokens: maxTokens ?? 1000 }),
+    });
+}
+async function streamOpenAICompat(cfg, provider, systemPrompt, history, cb) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    if (cb.signal)
+        cb.signal.addEventListener("abort", () => controller.abort());
+    try {
+        let resp;
+        try {
+            resp = await modelFetch(cfg.url, {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${cfg.key}`,
+                    "Content-Type": "application/json",
+                    ...cfg.extraHeaders,
+                },
+                body: buildBody(cfg, systemPrompt, history, true),
+                signal: controller.signal,
+            });
+        }
+        catch (err) {
+            if (controller.signal.aborted && cb.signal?.aborted)
+                throw err; // user aborted
+            if (err?.name === "AbortError") {
+                throw new ModelTransportError("timeout", `${provider} request timed out`);
             }
-            finally {
-                clearTimeout(timeout);
+            throw new ModelTransportError("network", `${provider} unreachable: ${err?.message ?? err}`);
+        }
+        if (!resp.ok || !resp.body) {
+            const text = await resp.text().catch(() => "");
+            throw new ModelTransportError(classifyStatus(provider, resp.status), `${provider}-http-${resp.status}`);
+        }
+        return await readSSE(resp.body, cb.onChunk);
+    }
+    finally {
+        clearTimeout(timeout);
+    }
+}
+async function completeOpenAICompat(cfg, provider, systemPrompt, history, timeoutMs = 30_000, maxTokens = 1000) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        let resp;
+        try {
+            resp = await modelFetch(cfg.url, {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${cfg.key}`,
+                    "Content-Type": "application/json",
+                    ...cfg.extraHeaders,
+                },
+                body: buildBody(cfg, systemPrompt, history, false, maxTokens),
+                signal: controller.signal,
+            });
+        }
+        catch (err) {
+            if (err?.name === "AbortError") {
+                throw new ModelTransportError("timeout", `${provider} request timed out`);
             }
-        },
-        async complete(systemPrompt, history, timeoutMs = 30_000) {
-            const key = process.env.OPENROUTER_API_KEY;
-            if (!key)
-                throw new Error("no-openrouter-key");
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), timeoutMs);
-            try {
-                const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-                    method: "POST",
-                    headers: {
-                        Authorization: `Bearer ${key}`,
-                        "Content-Type": "application/json",
-                        "HTTP-Referer": "https://quip.app",
-                        "X-Title": "Quip",
-                    },
-                    body: JSON.stringify({
-                        model: config.model,
-                        stream: false,
-                        messages: [
-                            { role: "system", content: systemPrompt },
-                            ...history,
-                        ],
-                        temperature: 0.3,
-                        max_tokens: 1000,
-                    }),
-                    signal: controller.signal,
-                });
-                if (!resp.ok) {
-                    const text = await resp.text().catch(() => "");
-                    throw new Error(`openrouter-http-${resp.status}:${text.slice(0, 120)}`);
-                }
-                const data = await resp.json();
-                return data?.choices?.[0]?.message?.content ?? "";
-            }
-            finally {
-                clearTimeout(timeout);
-            }
-        },
-    };
+            throw new ModelTransportError("network", `${provider} unreachable: ${err?.message ?? err}`);
+        }
+        if (!resp.ok) {
+            throw new ModelTransportError(classifyStatus(provider, resp.status), `${provider}-http-${resp.status}`);
+        }
+        const data = await resp.json();
+        return data?.choices?.[0]?.message?.content ?? "";
+    }
+    finally {
+        clearTimeout(timeout);
+    }
 }
 // ---------------------------------------------------------------------------
 // SSE reader — shared by both OpenAI-compatible providers.
@@ -230,6 +181,73 @@ async function readSSE(body, onChunk) {
     return full;
 }
 // ---------------------------------------------------------------------------
+// Provider adapters
+// ---------------------------------------------------------------------------
+function makeGroq() {
+    const config = {
+        provider: "groq",
+        model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+        label: `Groq · ${process.env.GROQ_MODEL || "Llama 3.3 70B"}`,
+        available: false,
+    };
+    return {
+        config,
+        isConfigured: () => {
+            const k = process.env.GROQ_API_KEY;
+            return !!k && k !== "your-groq-key-here" && k.length > 8;
+        },
+        async stream(systemPrompt, history, cb) {
+            const key = process.env.GROQ_API_KEY;
+            if (!key)
+                throw new ModelTransportError("no-key", "no-groq-key");
+            return streamOpenAICompat({ url: "https://api.groq.com/openai/v1/chat/completions", key, model: config.model }, "groq", systemPrompt, history, cb);
+        },
+        async complete(systemPrompt, history, timeoutMs = 30_000) {
+            const key = process.env.GROQ_API_KEY;
+            if (!key)
+                throw new ModelTransportError("no-key", "no-groq-key");
+            return completeOpenAICompat({ url: "https://api.groq.com/openai/v1/chat/completions", key, model: config.model }, "groq", systemPrompt, history, timeoutMs);
+        },
+    };
+}
+function makeOpenRouter() {
+    const config = {
+        provider: "openrouter",
+        model: process.env.OPENROUTER_MODEL || "minimax/minimax-m3:free",
+        label: `OpenRouter · ${(process.env.OPENROUTER_MODEL || "minimax/minimax-m3:free").split("/").pop()}`,
+        available: false,
+    };
+    return {
+        config,
+        isConfigured: () => {
+            const k = process.env.OPENROUTER_API_KEY;
+            return !!k && k !== "sk-or-v1-your-key-here" && k.length > 8;
+        },
+        async stream(systemPrompt, history, cb) {
+            const key = process.env.OPENROUTER_API_KEY;
+            if (!key)
+                throw new ModelTransportError("no-key", "no-openrouter-key");
+            return streamOpenAICompat({
+                url: "https://openrouter.ai/api/v1/chat/completions",
+                key,
+                model: config.model,
+                extraHeaders: { "HTTP-Referer": "https://quip.app", "X-Title": "Quip" },
+            }, "openrouter", systemPrompt, history, cb);
+        },
+        async complete(systemPrompt, history, timeoutMs = 30_000) {
+            const key = process.env.OPENROUTER_API_KEY;
+            if (!key)
+                throw new ModelTransportError("no-key", "no-openrouter-key");
+            return completeOpenAICompat({
+                url: "https://openrouter.ai/api/v1/chat/completions",
+                key,
+                model: config.model,
+                extraHeaders: { "HTTP-Referer": "https://quip.app", "X-Title": "Quip" },
+            }, "openrouter", systemPrompt, history, timeoutMs);
+        },
+    };
+}
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 class ModelRouter {
@@ -237,48 +255,79 @@ class ModelRouter {
     fallback;
     activeProvider = "groq";
     constructor() {
-        this.primary = makeGroq();
-        this.fallback = makeOpenRouter();
-        this.activeProvider = this.primary.isConfigured()
-            ? "groq"
-            : this.fallback?.isConfigured()
-                ? "openrouter"
-                : "groq";
-    }
-    /** Stream a chat completion, trying primary then fallback. */
-    async stream(systemPrompt, history, cb) {
-        const providers = [this.primary];
-        if (this.fallback && this.fallback.isConfigured()) {
-            providers.push(this.fallback);
+        const groq = makeGroq();
+        const openrouter = makeOpenRouter();
+        const primaryPref = (process.env.QUIP_PRIMARY_PROVIDER || "").toLowerCase();
+        // Provider order: explicit env override → whichever is configured → OpenRouter first.
+        if (primaryPref === "groq") {
+            this.primary = groq;
+            this.fallback = openrouter;
         }
+        else if (primaryPref === "openrouter") {
+            this.primary = openrouter;
+            this.fallback = groq;
+        }
+        else if (openrouter.isConfigured()) {
+            this.primary = openrouter;
+            this.fallback = groq;
+        }
+        else {
+            this.primary = groq;
+            this.fallback = openrouter;
+        }
+        this.activeProvider = this.primary.isConfigured()
+            ? this.primary.config.provider
+            : this.fallback?.isConfigured()
+                ? this.fallback.config.provider
+                : this.primary.config.provider;
+    }
+    /** Ordered, configured providers (primary first). */
+    chain() {
+        const list = [];
+        if (this.primary.isConfigured())
+            list.push(this.primary);
+        if (this.fallback && this.fallback.isConfigured() && this.fallback !== this.primary) {
+            list.push(this.fallback);
+        }
+        return list;
+    }
+    /** Stream a chat completion, trying each configured provider once (with one transient retry). */
+    async stream(systemPrompt, history, cb) {
+        const providers = this.chain();
         let lastErr = null;
         for (const p of providers) {
-            if (!p.isConfigured())
-                continue;
-            try {
-                const full = await p.stream(systemPrompt, history, cb);
-                this.activeProvider = p.config.provider;
-                return { full, provider: p.config.provider };
-            }
-            catch (err) {
-                lastErr = err;
-                // If user aborted, don't try fallback.
-                if (cb.signal?.aborted)
+            for (let attempt = 0; attempt < 2; attempt++) {
+                try {
+                    const full = await p.stream(systemPrompt, history, cb);
+                    this.activeProvider = p.config.provider;
+                    return { full, provider: p.config.provider };
+                }
+                catch (err) {
+                    lastErr = err;
+                    if (cb.signal?.aborted)
+                        throw err;
+                    const kind = err instanceof ModelTransportError ? err.kind : "network";
+                    // Retry only transient network failures; auth/rate-limit/http move on.
+                    if (kind === "network" && attempt === 0)
+                        continue;
                     break;
-                // otherwise, fall through to next provider.
+                }
             }
+            if (cb.signal?.aborted)
+                break;
         }
-        const msg = describeError(lastErr);
-        throw new Error(msg);
+        throw lastErr ?? new ModelTransportError("no-key", "No AI provider configured");
     }
     status() {
         const primary = { ...this.primary.config, available: this.primary.isConfigured() };
         const fallback = this.fallback
             ? { ...this.fallback.config, available: this.fallback.isConfigured() }
             : null;
-        const active = this.activeProvider === "openrouter" && fallback
-            ? fallback
-            : primary;
+        const active = this.activeProvider === primary.provider
+            ? primary
+            : fallback && this.activeProvider === fallback.provider
+                ? fallback
+                : primary;
         return {
             primary,
             fallback,
@@ -286,16 +335,11 @@ class ModelRouter {
             healthy: primary.available || !!fallback?.available,
         };
     }
-    /** Non-streaming completion with primary→fallback. Used by extraction tasks. */
+    /** Non-streaming completion with provider chain. Used by extraction/planning tasks. */
     async complete(systemPrompt, history, timeoutMs) {
-        const providers = [this.primary];
-        if (this.fallback && this.fallback.isConfigured()) {
-            providers.push(this.fallback);
-        }
+        const providers = this.chain();
         let lastErr = null;
         for (const p of providers) {
-            if (!p.isConfigured())
-                continue;
             try {
                 const result = await p.complete(systemPrompt, history, timeoutMs);
                 this.activeProvider = p.config.provider;
@@ -303,32 +347,35 @@ class ModelRouter {
             }
             catch (err) {
                 lastErr = err;
-                // fall through to next provider
+                const kind = err instanceof ModelTransportError ? err.kind : "network";
+                if (kind === "auth" || kind === "no-key")
+                    continue; // try next provider
+                // rate-limit / network / timeout: brief single retry on same provider
+                try {
+                    const result = await p.complete(systemPrompt, history, timeoutMs);
+                    this.activeProvider = p.config.provider;
+                    return result;
+                }
+                catch (err2) {
+                    lastErr = err2;
+                }
             }
         }
-        throw lastErr ?? new Error("No AI provider configured");
+        throw lastErr ?? new ModelTransportError("no-key", "No AI provider configured");
+    }
+    /** Masked diagnostics — safe to log/show. Never includes raw keys. */
+    diagnostics() {
+        const s = this.status();
+        return [
+            `provider=${s.active.provider}`,
+            `model=${s.active.model}`,
+            `groqKey=${(0, model_config_1.maskSecret)(process.env.GROQ_API_KEY)}`,
+            `openrouterKey=${(0, model_config_1.maskSecret)(process.env.OPENROUTER_API_KEY)}`,
+        ].join(" ");
     }
 }
-function describeError(err) {
-    if (!err)
-        return "Chat is unavailable right now.";
-    const msg = err?.message ?? String(err);
-    if (msg.includes("no-groq-key") || msg.includes("no-openrouter-key")) {
-        return "No AI provider is configured. Add GROQ_API_KEY to your .env file.";
-    }
-    if (msg.includes("groq-http-401") || msg.includes("openrouter-http-401")) {
-        return "AI provider rejected the API key. Check your .env file.";
-    }
-    if (msg.includes("-429")) {
-        return "Rate limited by the AI provider. Try again in a moment.";
-    }
-    if (err?.name === "AbortError") {
-        return "Request timed out. Try again.";
-    }
-    if (msg.startsWith("groq-http-") || msg.startsWith("openrouter-http-")) {
-        return "The AI provider had a problem. Try again.";
-    }
-    return `Network error: ${msg}`;
-}
+exports.ModelRouter = ModelRouter;
+/** Map a model error to a calm, actionable user message (no raw internals). */
+exports.describeError = model_config_1.describeError;
 exports.modelRouter = new ModelRouter();
 //# sourceMappingURL=model-router.js.map
