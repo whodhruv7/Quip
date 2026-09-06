@@ -13,6 +13,7 @@ import type {
   CompanionId,
   TaskProgress,
   TaskResultPayload,
+  QuizQuestionPayload,
 } from "@/types";
 import {
   loadCurrentMessages,
@@ -22,20 +23,15 @@ import {
   loadSessions,
 } from "@/lib/storage";
 import { useProactiveCheckIn } from "./useProactiveCheckIn";
+import type { ApprovalRequestUI } from "@/types/api";
 
 const uid = () => crypto.randomUUID();
-
-export interface ApprovalRequestPayload {
-  id: string;
-  command: string;
-  risk: string;
-  reason?: string;
-}
 
 export function useChat(
   companionId: CompanionId,
   initialMessages?: ChatMessage[],
-  quipApi = window.quip
+  quipApi = window.quip,
+  onQuiz?: (questions: QuizQuestionPayload[], title: string) => void
 ) {
   const [messages, setMessages] = useState<ChatMessage[]>(
     () => initialMessages ?? loadCurrentMessages(companionId)
@@ -45,7 +41,7 @@ export function useChat(
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [approvalRequest, setApprovalRequest] = useState<ApprovalRequestPayload | null>(null);
+  const [approvalRequest, setApprovalRequest] = useState<ApprovalRequestUI | null>(null);
   const activeRequestId = useRef<string | null>(null);
   const quipApiRef = useRef(quipApi);
   quipApiRef.current = quipApi;
@@ -105,7 +101,7 @@ export function useChat(
       setBusy(false);
     });
 
-    const offConfirm = quipApiRef.current.onApprovalRequest((req: ApprovalRequestPayload) => {
+    const offConfirm = quipApiRef.current.onApprovalRequest((req: ApprovalRequestUI) => {
       setApprovalRequest(req);
     });
 
@@ -122,7 +118,6 @@ export function useChat(
       const trimmed = text.trim();
       if (!trimmed || busy) return;
       setError(null);
-
       const userMsg: ChatMessage = {
         id: uid(),
         role: "user",
@@ -165,6 +160,10 @@ export function useChat(
         };
         setMessages((prev) => [...prev, assistantMsg]);
         setBusy(false);
+        // Quiz capability: open the compact quiz panel with generated questions
+        if (taskResult.quiz && taskResult.quiz.length > 0) {
+          onQuiz?.(taskResult.quiz, taskResult.plan?.summary ?? "");
+        }
         return;
       }
 
@@ -210,7 +209,7 @@ export function useChat(
         setBusy(false);
       }
     },
-    [busy, companionId]
+    [busy, companionId, onQuiz]
   );
 
   const clear = useCallback(() => {

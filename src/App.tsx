@@ -9,7 +9,7 @@
 //
 // The companion is NEVER hidden by the chat panel — they're stacked vertically.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Companion } from "@/components/Companion";
 import { TopBar } from "@/components/TopBar";
@@ -19,7 +19,9 @@ import { ChatInput } from "@/components/ChatInput";
 import { ScanOverlay } from "@/components/ScanOverlay";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { WeeklyReflection } from "@/components/WeeklyReflection";
-import { ConfirmModal } from "@/components/ConfirmModal";
+import { ActionApprovalPanel } from "@/components/ActionApprovalPanel";
+import { QuipSay } from "@/components/QuipSay";
+import { QuipQuizPanel } from "@/quiz/QuipQuizPanel";
 import { useChat } from "@/hooks/useChat";
 import { useWindowDrag } from "@/hooks/useWindowDrag";
 import {
@@ -30,7 +32,12 @@ import {
   archiveSession,
 } from "@/lib/storage";
 import { getCompanion } from "@/lib/companion-config";
-import type { ChatMessage, CompanionId, PixState } from "@/types";
+import type {
+  ChatMessage,
+  CompanionId,
+  PixState,
+  QuizQuestionPayload,
+} from "@/types";
 
 // ─── Layout constants ───────────────────────────────────────────────────────
 const COMPANION_SIZE = 72;
@@ -56,8 +63,18 @@ export default function App() {
   const [restoredMessages, setRestoredMessages] = useState<ChatMessage[]>(() =>
     loadCurrentMessages(companionId)
   );
+  const [quizState, setQuizState] = useState<{
+    questions: QuizQuestionPayload[];
+    title: string;
+  } | null>(null);
+  const [quipSay, setQuipSay] = useState<string | null>(null);
 
-  const { messages, busy: chatBusy, error, send, newChat, clearError, approvalRequest, resolveApproval } = useChat(companionId, restoredMessages);
+  const handleQuiz = useCallback((questions: QuizQuestionPayload[], title: string) => {
+    setQuizState({ questions, title });
+  }, []);
+
+  const { messages, busy: chatBusy, error, send, newChat, clearError, approvalRequest, resolveApproval } =
+    useChat(companionId, restoredMessages, undefined, handleQuiz);
   const drag = useWindowDrag(true);
 
   // ─── Toggle: tap companion = open/close chat ───────────────────────────
@@ -181,6 +198,20 @@ export default function App() {
   const theme = getCompanion(companionId);
   const showPanel = chatState === "open";
 
+  // ─── QuipSay: newest proactive message floats as an on-screen bubble ──
+  const latestProactive = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.role === "assistant" && m.proactive) return m.content;
+      if (i < messages.length - 3) break; // only look at recent tail
+    }
+    return null;
+  }, [messages]);
+
+  useEffect(() => {
+    if (latestProactive) setQuipSay(latestProactive);
+  }, [latestProactive]);
+
   return (
     <div
       style={{
@@ -290,8 +321,31 @@ export default function App() {
                 )}
               </div>
 
+              {/* Inline action approval — compact panel above the input bar */}
+              <AnimatePresence>
+                {approvalRequest && (
+                  <ActionApprovalPanel
+                    request={approvalRequest}
+                    companionColor={theme.primary}
+                    onResolve={resolveApproval}
+                  />
+                )}
+              </AnimatePresence>
+
               {/* Input */}
               <ChatInput onSend={send} busy={chatBusy} companionId={companionId} />
+
+              {/* Quiz panel overlay (compact, inside the chat panel) */}
+              <AnimatePresence>
+                {quizState && (
+                  <QuipQuizPanel
+                    questions={quizState.questions}
+                    sourceTitle={quizState.title}
+                    companionColor={theme.primary}
+                    onClose={() => setQuizState(null)}
+                  />
+                )}
+              </AnimatePresence>
 
               {/* Settings overlay */}
               <SettingsPanel
@@ -412,23 +466,12 @@ export default function App() {
         </AnimatePresence>
       </div>
 
-      {/* Bootstrap scan overlay — only on first launch */}
-      {!scanDone && (
-        <ScanOverlay companionId={companionId} onDone={() => { setScanDone(true); savePrefs({ scanned: true }); }} />
-      )}
-
-      {/* Approval Request Modal */}
-      {approvalRequest && (
-        <ConfirmModal
-          open={!!approvalRequest}
-          title="Action Approval Required"
-          message={`Quip wants to execute a potentially destructive action:\n\n${approvalRequest.plan?.description || "Unknown action"}\n\nDo you want to allow this?`}
-          confirmLabel="Allow"
-          cancelLabel="Deny"
-          onConfirm={() => resolveApproval(approvalRequest.id, true)}
-          onCancel={() => resolveApproval(approvalRequest.id, false)}
-        />
-      )}
+      {/* QuipSay — subtle companion bubble on the user's screen */}
+      <QuipSay
+        message={chatState === "open" ? null : quipSay}
+        companionColor={theme.primary}
+        onDismiss={() => setQuipSay(null)}
+      />
 
       {/* Cosmetic unlock toast */}
       <AnimatePresence>
@@ -468,6 +511,11 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Bootstrap scan overlay — only on first launch */}
+      {!scanDone && (
+        <ScanOverlay companionId={companionId} onDone={() => { setScanDone(true); savePrefs({ scanned: true }); }} />
+      )}
     </div>
   );
 }
