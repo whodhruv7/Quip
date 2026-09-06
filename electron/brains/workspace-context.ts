@@ -214,24 +214,40 @@ class WorkspaceContextBrain {
     meetingApp: null,
   };
 
-  /** Refresh the snapshot. Called every 5s by Environment Brain or on demand. */
-  async refresh(): Promise<WorkspaceContext> {
-    try {
-      const { appName, windowTitle } = await getForegroundWindow();
-      const meeting = detectMeeting(appName);
+  /** Refresh the snapshot. Called every 5s by Environment Brain or on demand.
+   *  Guarded by a 4s TTL so overlapping calls never spawn parallel probes. */
+  private lastRefreshAt = 0;
+  private inFlight: Promise<WorkspaceContext> | null = null;
+  private static REFRESH_TTL_MS = 4000;
 
-      this.current = {
-        timestamp: Date.now(),
-        foregroundApp: appName,
-        currentFile: appName && windowTitle ? parseEditorFile(appName, windowTitle) : null,
-        currentBrowserTab: appName && windowTitle ? parseBrowserTab(appName, windowTitle) : null,
-        inMeeting: meeting.inMeeting,
-        meetingApp: meeting.meetingApp,
-      };
-    } catch (err) {
-      console.error("Workspace context refresh failed:", err);
+  async refresh(): Promise<WorkspaceContext> {
+    const now = Date.now();
+    if (this.inFlight) return this.inFlight;
+    if (now - this.lastRefreshAt < WorkspaceContextBrain.REFRESH_TTL_MS) {
+      return this.current;
     }
-    return this.current;
+    this.inFlight = (async () => {
+      try {
+        const { appName, windowTitle } = await getForegroundWindow();
+        const meeting = detectMeeting(appName);
+
+        this.current = {
+          timestamp: Date.now(),
+          foregroundApp: appName,
+          currentFile: appName && windowTitle ? parseEditorFile(appName, windowTitle) : null,
+          currentBrowserTab: appName && windowTitle ? parseBrowserTab(appName, windowTitle) : null,
+          inMeeting: meeting.inMeeting,
+          meetingApp: meeting.meetingApp,
+        };
+        this.lastRefreshAt = Date.now();
+      } catch (err) {
+        console.error("Workspace context refresh failed:", err);
+      } finally {
+        this.inFlight = null;
+      }
+      return this.current;
+    })();
+    return this.inFlight;
   }
 
   get(): WorkspaceContext {
