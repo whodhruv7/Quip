@@ -73,6 +73,7 @@ const SITE_HINTS = {
     whatsapp: { url: "https://web.whatsapp.com", label: "WhatsApp" },
     instagram: { url: "https://www.instagram.com", label: "Instagram" },
     twitter: { url: "https://x.com", label: "X" },
+    x: { url: "https://x.com", label: "X" },
     linkedin: { url: "https://www.linkedin.com", label: "LinkedIn" },
     notion: { url: "https://www.notion.so", label: "Notion" },
     figma: { url: "https://www.figma.com", label: "Figma" },
@@ -680,9 +681,12 @@ function parseIntentV2(raw, opts = {}) {
             confidence: 0.8,
         };
     }
-    const fileSearch = text.match(/^(?:find|locate|search\s+for)\s+(?:a\s+)?files?\s+(?:called\s+|named\s+|with\s+)?(.+)$/);
-    if (fileSearch) {
-        const q = fileSearch[1].replace(/^(?:the|my)\s+/, "").replace(/[?]+$/, "").trim();
+    const fileSearch = text.match(/^(?:find|locate|search\s+for)\s+(?:a\s+)?files?\s+(?:called\s+|named\s+|with\s+)?(.+?)\s*(?:on|in|under)\s+(desktop|downloads|documents|pictures|music|videos|[a-z]:\\\\[\w\\ ]+|~[\w\/-]*)$/i);
+    const fileSearchPlain = !fileSearch ? text.match(/^(?:find|locate|search\s+for)\s+(?:a\s+)?files?\s+(?:called\s+|named\s+|with\s+)?(.+)$/) : null;
+    if (fileSearch || fileSearchPlain) {
+        const src = fileSearch ?? fileSearchPlain;
+        const q = src[1].replace(/^(?:the|my)\s+/, "").replace(/[?]+$/, "").trim();
+        const searchBase = fileSearch ? fileSearch[2] : undefined;
         return {
             ...base,
             action: "file_op",
@@ -693,8 +697,10 @@ function parseIntentV2(raw, opts = {}) {
             steps: [{
                     action: "file_op",
                     target: q,
-                    params: { op: "search", query: q },
-                    description: `Search for files matching "${q}"`,
+                    params: { op: "search", query: q, ...(searchBase ? { base: searchBase } : {}) },
+                    description: searchBase
+                        ? `Search for files matching "${q}" in ${searchBase}`
+                        : `Search for files matching "${q}"`,
                 }],
             summary: "Searching files",
             confidence: 0.8,
@@ -723,8 +729,11 @@ function parseIntentV2(raw, opts = {}) {
         };
     }
     // ─── READ PAGE ───────────────────────────────────────────────────────────
-    if (/\b(read|summarize|summarise)\b/.test(text) && (urlInRaw || /\b(this|that|the)\s+(page|article|site|website|link)\b/.test(text))) {
-        const url = urlInRaw?.[0] ?? context.activeUrl ?? "";
+    if (/\b(read|summarize|summarise)\b/.test(text) && (urlInRaw || /\b(this|that|the)\s+[\w-]*\s*(page|article|site|website|link)\b/.test(text))) {
+        // Resolve what to read, in order: explicit URL → last opened page →
+        // a site named in the sentence itself ("read this reddit page").
+        const siteHint = matchHint(text, SITE_HINTS);
+        const url = urlInRaw?.[0] ?? context.activeUrl ?? siteHint?.value?.url ?? "";
         if (url) {
             return {
                 ...base,

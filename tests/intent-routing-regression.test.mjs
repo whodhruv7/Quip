@@ -134,3 +134,16 @@ test("compose email extracts recipient", () => {
   assert.equal(r.steps[0].action, "compose_email");
   assert.match(r.steps[0].params.to, /john/i);
 });
+
+test("read this reddit page resolves the site and reads it", () => {
+  const r = parseIntentV2("Read this Reddit page");
+  assert.equal(r.action, "read");
+  assert.equal(r.steps[0].action, "read_page");
+  assert.ok(r.steps[0].target.includes("reddit.com"));
+});
+
+test("open X routes to the x.com website (not a folder or app guess)", () => {
+  const r = parseIntentV2("open x");
+  assert.equal(r.steps[0].action, "open_website");
+  assert.ok(r.steps[0].target === "x" || r.steps[0].target.includes("x.com"));
+});
