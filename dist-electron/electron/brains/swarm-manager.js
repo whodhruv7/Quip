@@ -26,7 +26,10 @@ const node_path_1 = __importDefault(require("node:path"));
 const COMPANION_LABELS = {
     pix: "Pix — Creative",
     kai: "Kai — Analytical",
-    zee: "Ren — Empathetic",
+    ren: "Ren — Empathetic",
+    bubbles: "Bubbles — Playful",
+    capy: "Capy — Calm",
+    ivy: "Ivy — Reliable",
 };
 class SwarmManager {
     instances = new Map();
@@ -45,9 +48,9 @@ class SwarmManager {
         const { headless = false, offsetX = 0, offsetY = 0, autoTask } = opts;
         const existingCount = this.instances.size;
         const area = electron_1.screen.getPrimaryDisplay().workArea;
-        // Default position: cascade from bottom-right, offset per instance
-        const w = 440;
-        const h = 680;
+        // Spawned companions boot as desktop companions too (small sprite window).
+        const w = 132;
+        const h = 176;
         const baseX = area.x + area.width - w - 20 + offsetX + existingCount * 40;
         const baseY = area.y + area.height - h - 20 + offsetY + existingCount * 40;
         const win = new electron_1.BrowserWindow({

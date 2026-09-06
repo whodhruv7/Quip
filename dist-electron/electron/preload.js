@@ -10,6 +10,14 @@ const api = {
     // ─── Window movement ─────────────────────────────────────────────────
     moveWindow: (dx, dy) => electron_1.ipcRenderer.send(shared_1.IPC.MOVE_WINDOW, { dx, dy }),
     getWindowPosition: () => electron_1.ipcRenderer.invoke(shared_1.IPC.GET_WINDOW_POSITION),
+    // ─── Window modes: companion sprite → small panel → full app ────────
+    setWindowMode: (mode) => electron_1.ipcRenderer.invoke(shared_1.IPC.WINDOW_MODE_SET, mode),
+    getWindowMode: () => electron_1.ipcRenderer.invoke(shared_1.IPC.WINDOW_MODE_GET),
+    onWindowModeChanged: (cb) => {
+        const handler = (_e, mode) => cb(mode);
+        electron_1.ipcRenderer.on(shared_1.IPC.WINDOW_MODE_CHANGED, handler);
+        return () => electron_1.ipcRenderer.removeListener(shared_1.IPC.WINDOW_MODE_CHANGED, handler);
+    },
     // ─── Chat streaming ──────────────────────────────────────────────────
     chatSend: (payload) => electron_1.ipcRenderer.invoke(shared_1.IPC.CHAT_SEND, payload),
     onChatChunk: (cb) => {

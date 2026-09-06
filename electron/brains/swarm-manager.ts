@@ -67,9 +67,9 @@ class SwarmManager {
     const existingCount = this.instances.size;
     const area = screen.getPrimaryDisplay().workArea;
 
-    // Default position: cascade from bottom-right, offset per instance
-    const w = 440;
-    const h = 680;
+    // Spawned companions boot as desktop companions too (small sprite window).
+    const w = 132;
+    const h = 176;
     const baseX = area.x + area.width - w - 20 + offsetX + existingCount * 40;
     const baseY = area.y + area.height - h - 20 + offsetY + existingCount * 40;
 

@@ -96,9 +96,8 @@ class Orchestrator {
             };
         }
         // ─── Step 2: Risk-gated permission check ───────────────────────────────
-        const planActions = intent.steps.map((s) => s.action);
-        const planRisk = permission_modes_1.permissionSystem.planRisk(planActions);
-        if (permission_modes_1.permissionSystem.planNeedsApproval(planActions)) {
+        const planRisk = permission_modes_1.permissionSystem.stepsRisk(intent.steps);
+        if (permission_modes_1.permissionSystem.stepsNeedApproval(intent.steps)) {
             const stepDescriptions = intent.steps.map((s, i) => `${i + 1}. ${s.description}`);
             const approved = await permission_modes_1.permissionSystem.requestApproval(intent.summary || "Execute task", stepDescriptions, planRisk);
             if (!approved) {
@@ -126,8 +125,8 @@ class Orchestrator {
                 status: "running",
             });
             // Per-step confirmation for medium/dangerous actions in ask_every_time
-            if (permission_modes_1.permissionSystem.getMode() === "ask_every_time" && permission_modes_1.permissionSystem.needsConfirmation(step.action)) {
-                const approved = await permission_modes_1.permissionSystem.requestApproval(step.description, [step.description], (0, permission_modes_1.getRiskLevel)(step.action));
+            if (permission_modes_1.permissionSystem.getMode() === "ask_every_time" && permission_modes_1.permissionSystem.needsStepConfirmation(step)) {
+                const approved = await permission_modes_1.permissionSystem.requestApproval(step.description, [step.description], (0, permission_modes_1.riskForStep)(step.action, step.params));
                 if (!approved) {
                     notes.push(`${step.description} — skipped (declined)`);
                     opts.onProgress?.({

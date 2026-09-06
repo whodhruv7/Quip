@@ -29,10 +29,25 @@ exports.DEFAULT_COSMETICS = {
         { tier: 2, name: "Book Badge", description: "A tiny book emblem", threshold: 150 },
         { tier: 3, name: "Constellation Aura", description: "A soft starry glow", threshold: 300 },
     ],
-    zee: [
+    ren: [
         { tier: 1, name: "Curiosity Spark", description: "A glowing question mark", threshold: 50 },
         { tier: 2, name: "Galaxy Trail", description: "Stardust follows behind", threshold: 150 },
         { tier: 3, name: "Cosmic Crown", description: "A miniature galaxy halo", threshold: 300 },
+    ],
+    bubbles: [
+        { tier: 1, name: "Foam Friend", description: "Tiny bubbles float alongside", threshold: 50 },
+        { tier: 2, name: "Raindrop Charm", description: "A little raindrop accent", threshold: 150 },
+        { tier: 3, name: "Ocean Aura", description: "A deep, calm water glow", threshold: 300 },
+    ],
+    capy: [
+        { tier: 1, name: "Orange Slice", description: "A juicy orange resting on top", threshold: 50 },
+        { tier: 2, name: "Cozy Blanket", description: "A warm blanket wrap", threshold: 150 },
+        { tier: 3, name: "Sunset Aura", description: "A warm sunset glow", threshold: 300 },
+    ],
+    ivy: [
+        { tier: 1, name: "Vine Wrap", description: "A small vine curls around", threshold: 50 },
+        { tier: 2, name: "Berry Charm", description: "Tiny berries bloom", threshold: 150 },
+        { tier: 3, name: "Forest Aura", description: "A fresh forest glow", threshold: 300 },
     ],
 };
 exports.DEFAULT_WEIGHTS = { maxConv: 300, maxMsg: 2000, maxTask: 100, maxMem: 50, maxLongevity: 90 };
@@ -68,12 +83,18 @@ class CompanionEvolutionBrain {
         const base = {
             pix: makeBaseProgression("pix"),
             kai: makeBaseProgression("kai"),
-            zee: makeBaseProgression("zee"),
+            ren: makeBaseProgression("ren"),
+            bubbles: makeBaseProgression("bubbles"),
+            capy: makeBaseProgression("capy"),
+            ivy: makeBaseProgression("ivy"),
         };
         this.progressions = {
             pix: { ...base.pix, depth: 0, unlockedCosmetics: [] },
             kai: { ...base.kai, depth: 0, unlockedCosmetics: [] },
-            zee: { ...base.zee, depth: 0, unlockedCosmetics: [] },
+            ren: { ...base.ren, depth: 0, unlockedCosmetics: [] },
+            bubbles: { ...base.bubbles, depth: 0, unlockedCosmetics: [] },
+            capy: { ...base.capy, depth: 0, unlockedCosmetics: [] },
+            ivy: { ...base.ivy, depth: 0, unlockedCosmetics: [] },
         };
     }
     init(userDataDir) {
@@ -87,7 +108,7 @@ class CompanionEvolutionBrain {
             if (node_fs_1.default.existsSync(this.filePath)) {
                 const data = JSON.parse(node_fs_1.default.readFileSync(this.filePath, "utf8"));
                 if (data && typeof data === "object") {
-                    for (const id of ["pix", "kai", "zee"]) {
+                    for (const id of ["pix", "kai", "ren", "bubbles", "capy", "ivy"]) {
                         if (data[id]) {
                             this.progressions[id] = { ...this.progressions[id], ...data[id] };
                         }
@@ -195,7 +216,10 @@ class CompanionEvolutionBrain {
         return {
             pix: this.getProgression("pix"),
             kai: this.getProgression("kai"),
-            zee: this.getProgression("zee"),
+            ren: this.getProgression("ren"),
+            bubbles: this.getProgression("bubbles"),
+            capy: this.getProgression("capy"),
+            ivy: this.getProgression("ivy"),
         };
     }
 }

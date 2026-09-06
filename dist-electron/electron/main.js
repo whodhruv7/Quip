@@ -102,7 +102,6 @@ const memoryExtractor = new memory_extractor_1.MemoryExtractorBrain({
 // Execution Engine V2
 const orchestrator_1 = require("./engine/orchestrator");
 const permission_modes_1 = require("./engine/permission-modes");
-const quiz_engine_1 = require("../src/quiz/quiz-engine");
 const app_discovery_1 = require("./engine/app-discovery");
 const context_store_1 = require("./engine/context-store");
 // The orchestrator uses the model ONLY for ambiguous intent (compact schema,
@@ -153,6 +152,68 @@ function clampPosition(x, y, w, h) {
         y: Math.max(area.y, Math.min(y, area.y + area.height - h)),
     };
 }
+// ---------------------------------------------------------------------------
+// Window modes — companion sprite / small panel / full app.
+//
+// companion : a tiny transparent window holding just the companion sprite.
+// panel     : the window grows — small chat panel with the companion beside it.
+// full      : the full Quip application, centered.
+// ---------------------------------------------------------------------------
+const COMPANION_MODE_SIZE = { width: 132, height: 176 };
+const PANEL_MODE_SIZE = { width: 548, height: 560 };
+const windowModes = new Map();
+function fullAppBounds() {
+    const area = electron_1.screen.getPrimaryDisplay().workArea;
+    return {
+        width: Math.min(1060, area.width - 48),
+        height: Math.min(680, area.height - 48),
+    };
+}
+/** Keep the bottom-right corner fixed so the companion stays visually in place. */
+function anchorBottomRight(cur, nextW, nextH) {
+    return clampPosition(cur.x + cur.width - nextW, cur.y + cur.height - nextH, nextW, nextH);
+}
+function setWindowMode(win, mode) {
+    if (win.isDestroyed())
+        return;
+    const [x, y] = win.getPosition();
+    const [w, h] = win.getSize();
+    const cur = { x, y, width: w, height: h };
+    const area = electron_1.screen.getPrimaryDisplay().workArea;
+    let next;
+    if (mode === "panel") {
+        const c = anchorBottomRight(cur, PANEL_MODE_SIZE.width, PANEL_MODE_SIZE.height);
+        next = { x: c.x, y: c.y, width: PANEL_MODE_SIZE.width, height: PANEL_MODE_SIZE.height };
+    }
+    else if (mode === "full") {
+        const size = fullAppBounds();
+        next = {
+            x: area.x + Math.round((area.width - size.width) / 2),
+            y: area.y + Math.round((area.height - size.height) / 2),
+            width: size.width,
+            height: size.height,
+        };
+    }
+    else {
+        const c = anchorBottomRight(cur, COMPANION_MODE_SIZE.width, COMPANION_MODE_SIZE.height);
+        next = { x: c.x, y: c.y, width: COMPANION_MODE_SIZE.width, height: COMPANION_MODE_SIZE.height };
+    }
+    win.setResizable(true);
+    win.setBounds(next);
+    win.setResizable(mode === "full");
+    win.setAlwaysOnTop(mode !== "full", "screen-saver");
+    if (mode === "full") {
+        win.setMinimumSize(760, 520);
+    }
+    else {
+        win.setMinimumSize(0, 0);
+        win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    }
+    windowModes.set(win.id, mode);
+    if (!win.isVisible())
+        win.showInactive();
+    win.webContents.send(shared_1.IPC.WINDOW_MODE_CHANGED, mode);
+}
 /**
  * Build a token-efficient system prompt. Sections are prioritized and
  * capped at ~500 tokens. Knowledge graph + memories are filtered by
@@ -167,7 +228,10 @@ function buildSystemPrompt(userMessage, companionId = "pix") {
     const companionPersonalities = {
         pix: "Pix — playful, energetic, creative. Light humor. Social + creative tasks.",
         kai: "Kai — calm, analytical, wise. Clear explanations. Planning + research.",
-        zee: "Zee — curious, empathetic, reflective. Personal + emotional support.",
+        ren: "Ren — curious, empathetic, reflective. Personal + emotional support.",
+        bubbles: "Bubbles — bubbly, joyful, playful. Cheerful energy, celebratory, light on her feet.",
+        capy: "Capy — unbothered, warm, steady. Cozy calm. Nothing is a crisis.",
+        ivy: "Ivy — loyal, reliable, helpful. Gets things done, always follows through.",
     };
     sections.push("You are QUIP, a calm, concise AI companion on the user's desktop. " +
         "Warm, human, never robotic. Short answers unless asked for detail. " +
@@ -290,30 +354,27 @@ function buildSystemPrompt(userMessage, companionId = "pix") {
     // ─── 10. Rules (always — short) ─────────────────────────────────────
     sections.push("Rules: Never assume apps exist (check above). If impossible, explain + suggest. " +
         "Always explain WHY (trust layer). Match user's style. Be concise.");
+    sections.push("You CAN actually control this laptop: open/close/focus/switch apps and windows, " +
+        "minimize/maximize/move/resize windows, open files/folders/URLs, find/create/read/" +
+        "copy/move/delete files, type, press shortcuts, click/double-click/right-click, " +
+        "scroll, drag, clipboard, screenshots, and search/read YouTube, Reddit, X and GitHub. " +
+        "Never say you cannot access the device — you can. Never claim an action succeeded " +
+        "unless the execution layer reports it did.");
     return sections.join("\n\n");
 }
 // ---------------------------------------------------------------------------
 // Window
 // ---------------------------------------------------------------------------
 function createWindow(companionId = "pix", offsetX = 0, offsetY = 0) {
-    const panel = spatialConfig?.chatPanel ?? {
-        x: 0,
-        y: 0,
-        width: 440,
-        height: 680,
-    };
+    // Quip always boots as the desktop companion — a small sprite on screen.
+    // The user taps it to open the panel, and expands from there.
     const area = electron_1.screen.getPrimaryDisplay().workArea;
     const saved = readPosition();
-    const w = panel.width;
-    const h = panel.height;
+    const w = COMPANION_MODE_SIZE.width;
+    const h = COMPANION_MODE_SIZE.height;
     let x, y;
     if (saved) {
         const clamped = clampPosition(saved.x, saved.y, w, h);
-        x = clamped.x + offsetX;
-        y = clamped.y + offsetY;
-    }
-    else if (panel.x > 0 || panel.y > 0) {
-        const clamped = clampPosition(panel.x, panel.y, w, h);
         x = clamped.x + offsetX;
         y = clamped.y + offsetY;
     }
@@ -346,6 +407,7 @@ function createWindow(companionId = "pix", offsetX = 0, offsetY = 0) {
     });
     windows.set(win.id, win);
     windowCompanionMap.set(win.id, companionId);
+    windowModes.set(win.id, "companion");
     win.setAlwaysOnTop(true, "screen-saver");
     win.setVisibleOnAllWorkspaces(true, {
         visibleOnFullScreen: true,
@@ -354,8 +416,8 @@ function createWindow(companionId = "pix", offsetX = 0, offsetY = 0) {
     win.moveTop();
     win.once("ready-to-show", () => {
         if (!win.isDestroyed()) {
-            win.show();
-            win.focus();
+            // Calm boot: appear without stealing focus from the user's work.
+            win.showInactive();
             win.moveTop();
         }
     });
@@ -369,7 +431,9 @@ function createWindow(companionId = "pix", offsetX = 0, offsetY = 0) {
         win.loadFile(node_path_1.default.join(__dirname, "../dist/index.html"), { search: `companion=${companionId}` });
     }
     win.on("move", () => {
-        if (windows.size === 1) {
+        // Persist the anchor position — but not while in full mode (the full
+        // window is centered; the companion anchor should stay where it was).
+        if (windows.size === 1 && windowModes.get(win.id) !== "full") {
             const [px, py] = win.getPosition();
             writePosition(px, py);
         }
@@ -437,6 +501,20 @@ electron_1.ipcMain.handle(shared_1.IPC.GET_WINDOW_POSITION, (_e) => {
         return null;
     const [x, y] = win.getPosition();
     return { x, y };
+});
+// ---------------------------------------------------------------------------
+// IPC — window modes (companion / panel / full)
+// ---------------------------------------------------------------------------
+electron_1.ipcMain.handle(shared_1.IPC.WINDOW_MODE_SET, (_e, mode) => {
+    const win = electron_1.BrowserWindow.fromWebContents(_e.sender);
+    if (!win || (mode !== "companion" && mode !== "panel" && mode !== "full"))
+        return false;
+    setWindowMode(win, mode);
+    return true;
+});
+electron_1.ipcMain.handle(shared_1.IPC.WINDOW_MODE_GET, (_e) => {
+    const win = electron_1.BrowserWindow.fromWebContents(_e.sender);
+    return (win && windowModes.get(win.id)) || "companion";
 });
 // ---------------------------------------------------------------------------
 // IPC — chat streaming (via model router)
@@ -533,7 +611,7 @@ electron_1.ipcMain.handle(shared_1.IPC.CHAT_SEND, async (_e, payload) => {
 // IPC — set current companion (so system prompt can adapt)
 // ---------------------------------------------------------------------------
 electron_1.ipcMain.on("quip:set-companion", (_e, id) => {
-    if (id === "pix" || id === "kai" || id === "zee") {
+    if (id === "pix" || id === "kai" || id === "ren" || id === "bubbles" || id === "capy" || id === "ivy") {
         defaultCompanionId = id;
         const win = electron_1.BrowserWindow.fromWebContents(_e.sender);
         if (win)
@@ -553,56 +631,9 @@ electron_1.ipcMain.handle(shared_1.IPC.TASK_EXECUTE, async (_e, payload) => {
     permission_modes_1.permissionSystem.onApprovalRequested = (request) => {
         sendToWindow(win, "quip:approval-request", request);
     };
-    // ─── Quiz intent: model-generated quiz, returned inline ─────────────
-    const quizIntent = await Promise.resolve().then(() => __importStar(require("./engine/intent-parser-v2"))).then((m) => m.parseIntentV2(payload.command));
-    if (quizIntent.action === "quiz" && quizIntent.isTask) {
-        try {
-            const history = payload.command;
-            const raw = await model_router_1.modelRouter.complete("You generate quizzes from material. Return ONLY compact JSON.", [{
-                    role: "user",
-                    content: history.includes("\n")
-                        ? (0, quiz_engine_1.buildQuizPrompt)(history, 5)
-                        : (0, quiz_engine_1.buildQuizPrompt)(history || "general knowledge basics", 5),
-                }], 30000);
-            const questions = (0, quiz_engine_1.normalizeQuizQuestions)(JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] ?? "{}"));
-            if (questions.length > 0) {
-                return {
-                    requestId: payload.requestId,
-                    success: true,
-                    summary: `I made a ${questions.length}-question quiz for you. Let's go!`,
-                    notes: ["quiz generated"],
-                    plan: {
-                        id: payload.requestId,
-                        requestId: payload.requestId,
-                        intent: { type: "quiz", target: "quiz", query: "", confidence: 0.95, verbs: ["quiz"], raw: payload.command },
-                        subtasks: [],
-                        summary: "Quiz generated",
-                        isChat: false,
-                        createdAt: Date.now(),
-                    },
-                    quiz: questions,
-                };
-            }
-            // Fall through to normal execution if quiz generation failed
-        }
-        catch (e) {
-            return {
-                requestId: payload.requestId,
-                success: false,
-                summary: "I couldn't generate a quiz right now — my model connection isn't responding.",
-                notes: [`quiz error: ${String(e?.message ?? e).slice(0, 80)}`],
-                plan: {
-                    id: payload.requestId,
-                    requestId: payload.requestId,
-                    intent: { type: "quiz", target: null, query: null, confidence: 0, verbs: [], raw: payload.command },
-                    subtasks: [],
-                    summary: "Quiz failed",
-                    isChat: false,
-                    createdAt: Date.now(),
-                },
-            };
-        }
-    }
+    // Parse intent once for plan metadata (orchestrator re-parses internally;
+    // this is a pure regex parse — no model call, negligible cost).
+    const intentInfo = await Promise.resolve().then(() => __importStar(require("./engine/intent-parser-v2"))).then((m) => m.parseIntentV2(payload.command));
     const result = await orchestrator_1.orchestrator.execute(payload.command, {
         platform,
         workspacePath,
@@ -637,13 +668,12 @@ electron_1.ipcMain.handle(shared_1.IPC.TASK_EXECUTE, async (_e, payload) => {
         plan: {
             id: payload.requestId,
             requestId: payload.requestId,
-            intent: { type: quizIntent.action, target: quizIntent.target || null, query: quizIntent.query || null, confidence: quizIntent.confidence, verbs: [], raw: payload.command },
+            intent: { type: intentInfo.action, target: intentInfo.target || null, query: intentInfo.query || null, confidence: intentInfo.confidence, verbs: [], raw: payload.command },
             subtasks: [],
             summary: result.summary,
             isChat: result.stepsTotal === 0,
             createdAt: Date.now(),
         },
-        ...(result.quiz ? { quiz: result.quiz } : {}),
     };
 });
 // ---------------------------------------------------------------------------
@@ -826,7 +856,7 @@ electron_1.ipcMain.handle(shared_1.IPC.RESET_USER_PROFILE, () => {
 // IPC — companion mood
 // ---------------------------------------------------------------------------
 electron_1.ipcMain.handle(shared_1.IPC.GET_COMPANION_MOOD, (_e, id) => {
-    if (id !== "pix" && id !== "kai" && id !== "zee")
+    if (id !== "pix" && id !== "kai" && id !== "ren" && id !== "bubbles" && id !== "capy" && id !== "ivy")
         return null;
     return companion_mood_1.companionMood.getMood(id);
 });

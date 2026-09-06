@@ -14,6 +14,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.permissionSystem = void 0;
 exports.getRiskLevel = getRiskLevel;
+exports.riskForStep = riskForStep;
 // Actions that ALWAYS need confirmation, even in Full Access mode
 const DANGEROUS_ACTIONS = new Set([
     "delete_file",
@@ -43,6 +44,29 @@ function getRiskLevel(action) {
     if (MEDIUM_ACTIONS.has(action))
         return "medium";
     return "safe";
+}
+/** Risk for a concrete step — refines compound actions (e.g. file_op ops). */
+function riskForStep(action, params) {
+    if (action === "file_op") {
+        switch (params?.op) {
+            case "delete":
+            case "move":
+                return "dangerous";
+            case "write":
+            case "append":
+            case "mkdir":
+                return "medium";
+            default:
+                return "safe";
+        }
+    }
+    if (action === "window_control")
+        return "medium";
+    if (action === "screen" || action === "windows_list")
+        return "safe";
+    if (action === "site_search")
+        return "safe";
+    return getRiskLevel(action);
 }
 class PermissionSystem {
     mode = "approve_task";
@@ -83,6 +107,20 @@ class PermissionSystem {
                 return false;
         }
     }
+    /** Per-step confirmation using refined risk (compound actions aware). */
+    needsStepConfirmation(step) {
+        const risk = riskForStep(step.action, step.params);
+        if (risk === "dangerous")
+            return true;
+        switch (this.mode) {
+            case "ask_every_time":
+                return risk !== "safe";
+            case "approve_task":
+                return false;
+            case "full_access":
+                return false;
+        }
+    }
     /** Highest risk across the plan's steps. */
     planRisk(actions) {
         if (actions.some((a) => getRiskLevel(a) === "dangerous"))
@@ -94,6 +132,29 @@ class PermissionSystem {
     /** Does the whole plan need approval before execution? */
     planNeedsApproval(actions) {
         const risk = this.planRisk(actions);
+        if (risk === "dangerous")
+            return true;
+        switch (this.mode) {
+            case "ask_every_time":
+                return risk !== "safe";
+            case "approve_task":
+                return risk !== "safe";
+            case "full_access":
+                return false;
+        }
+    }
+    /** Highest risk across concrete steps (action + params aware). */
+    stepsRisk(steps) {
+        const risks = steps.map((s) => riskForStep(s.action, s.params));
+        if (risks.includes("dangerous"))
+            return "dangerous";
+        if (risks.includes("medium"))
+            return "medium";
+        return "safe";
+    }
+    /** Does the plan (concrete steps) need approval before execution? */
+    stepsNeedApproval(steps) {
+        const risk = this.stepsRisk(steps);
         if (risk === "dangerous")
             return true;
         switch (this.mode) {

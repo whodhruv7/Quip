@@ -11,9 +11,47 @@
 //   - Clipboard: Electron clipboard module (reliable, no subprocess).
 //   - Every action returns ActionVerification; focus/close verify window state.
 // ─────────────────────────────────────────────────────────────────────────────
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.executeDesktopAction = executeDesktopAction;
 const electron_1 = require("electron");
+const node_path_1 = __importDefault(require("node:path"));
+const node_fs_1 = __importDefault(require("node:fs"));
 const action_verifier_1 = require("./action-verifier");
 // ─── PowerShell helpers ──────────────────────────────────────────────────────
 function psQuote(s) {
@@ -116,6 +154,87 @@ async function mouseDrag(from, to) {
     }
     return (0, action_verifier_1.fail)("I couldn't perform the drag.", ["drag sequence failed"], "drag-failed");
 }
+async function mouseClickVariant(variant, x, y) {
+    const seq = variant === "double"
+        ? "[M]::mouse_event(2,0,0,0,[UIntPtr]::Zero); [M]::mouse_event(4,0,0,0,[UIntPtr]::Zero); Start-Sleep -Milliseconds 40; [M]::mouse_event(2,0,0,0,[UIntPtr]::Zero); [M]::mouse_event(4,0,0,0,[UIntPtr]::Zero)"
+        : "[M]::mouse_event(8,0,0,0,[UIntPtr]::Zero); [M]::mouse_event(16,0,0,0,[UIntPtr]::Zero)";
+    const res = await (0, action_verifier_1.runCapture)(`powershell -NoProfile -Command "${MOUSE_ADD_TYPE}; [M]::SetCursorPos(${x},${y})|Out-Null; Start-Sleep -Milliseconds 80; ${seq}; '${variant === "double" ? "double-clicked" : "right-clicked"}'"`, 8000);
+    if (res && (res.stdout.includes("double-clicked") || res.stdout.includes("right-clicked"))) {
+        return (0, action_verifier_1.ok)(variant === "double"
+            ? `Double-clicked at (${x}, ${y}).`
+            : `Right-clicked at (${x}, ${y}).`, ["SetCursorPos + mouse_event executed"]);
+    }
+    return (0, action_verifier_1.fail)(`I couldn't perform the ${variant} click.`, ["mouse_event failed"], "click-variant-failed");
+}
+// ─── Window control (minimize / maximize / restore / move / resize) ─────────
+const WINDOW_ADD_TYPE = `Add-Type 'using System;using System.Runtime.InteropServices;public class W{[DllImport("user32.dll")]public static extern bool ShowWindow(IntPtr h,int c);[DllImport("user32.dll")]public static extern bool SetWindowPos(IntPtr h,IntPtr a,int x,int y,int w,int hh,uint f);}'`;
+function findWindowCmd(target, then) {
+    const selector = target
+        ? `Get-Process | Where-Object { $_.MainWindowTitle -like ${psQuote("*" + target + "*")} } | Select-Object -First 1`
+        : `Get-Process | Where-Object { $_.MainWindowTitle } | Sort-Object -Property MainWindowHandle | Select-Object -Last 1`;
+    return `powershell -NoProfile -Command "${WINDOW_ADD_TYPE}; $w = ${selector}; if ($w -and $w.MainWindowHandle -ne 0) { ${then} } else { 'not-found' }"`;
+}
+async function windowControl(op, target) {
+    // ShowWindow codes: 6 = minimize, 3 = maximize, 9 = restore
+    const code = op === "minimize" ? 6 : op === "maximize" ? 3 : 9;
+    const then = `[W]::ShowWindow($w.MainWindowHandle, ${code})|Out-Null; '${op}-done'`;
+    const res = await (0, action_verifier_1.runCapture)(findWindowCmd(target, then), 8000);
+    if (res && res.stdout.includes(`${op}-done`)) {
+        return (0, action_verifier_1.ok)(`${op[0].toUpperCase() + op.slice(1)}d the window for "${target}".`, ["ShowWindow executed"]);
+    }
+    return (0, action_verifier_1.fail)(`I couldn't find a window matching "${target}" to ${op}.`, ["no window handle matched"], "window-control-not-found");
+}
+async function windowMove(target, x, y) {
+    // SWP_NOSIZE(0x1) | SWP_NOZORDER(0x4) | SWP_NOACTIVATE(0x10) = 0x15
+    const then = `[W]::SetWindowPos($w.MainWindowHandle, [IntPtr]::Zero, ${x}, ${y}, 0, 0, 0x15)|Out-Null; 'moved'`;
+    const res = await (0, action_verifier_1.runCapture)(findWindowCmd(target, then), 8000);
+    if (res && res.stdout.includes("moved")) {
+        return (0, action_verifier_1.ok)(`Moved the "${target}" window to (${x}, ${y}).`, ["SetWindowPos executed"]);
+    }
+    return (0, action_verifier_1.fail)(`I couldn't find a window matching "${target}" to move.`, ["no window handle"], "window-move-not-found");
+}
+async function windowResize(target, width, height) {
+    // SWP_NOMOVE(0x2) | SWP_NOZORDER(0x4) | SWP_NOACTIVATE(0x10) = 0x16
+    const then = `[W]::SetWindowPos($w.MainWindowHandle, [IntPtr]::Zero, 0, 0, ${width}, ${height}, 0x16)|Out-Null; 'resized'`;
+    const res = await (0, action_verifier_1.runCapture)(findWindowCmd(target, then), 8000);
+    if (res && res.stdout.includes("resized")) {
+        return (0, action_verifier_1.ok)(`Resized the "${target}" window to ${width}×${height}.`, ["SetWindowPos executed"]);
+    }
+    return (0, action_verifier_1.fail)(`I couldn't find a window matching "${target}" to resize.`, ["no window handle"], "window-resize-not-found");
+}
+// ─── Screen capture + window listing ─────────────────────────────────────────
+async function screenCapture() {
+    const { app } = await Promise.resolve().then(() => __importStar(require("electron")));
+    const dir = node_path_1.default.join(app.getPath("userData"), "screens");
+    try {
+        node_fs_1.default.mkdirSync(dir, { recursive: true });
+    }
+    catch {
+        /* fallthrough — save will fail and report honestly */
+    }
+    const file = node_path_1.default.join(dir, `quip-screen-${Date.now()}.png`);
+    const psFile = file.replace(/\\/g, "\\\\");
+    const res = await (0, action_verifier_1.runCapture)(`powershell -NoProfile -Command "Add-Type -AssemblyName System.Drawing; Add-Type -AssemblyName System.Windows.Forms; $b = [System.Windows.Forms.SystemInformation]::VirtualScreen; $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height; $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size); $bmp.Save('${psFile}'); $g.Dispose(); $bmp.Dispose(); 'saved'"`, 12000);
+    if (res && res.stdout.includes("saved")) {
+        try {
+            const stat = node_fs_1.default.statSync(file);
+            if (stat.size > 0) {
+                return (0, action_verifier_1.ok)(`Captured the screen.`, [`saved: ${file}`, `size: ${stat.size} bytes`]);
+            }
+        }
+        catch {
+            /* stat failed — fall through to failure */
+        }
+    }
+    return (0, action_verifier_1.fail)("I couldn't capture the screen.", ["CopyFromScreen failed or file missing"], "screen-capture-failed");
+}
+async function windowsList() {
+    const titles = await (0, action_verifier_1.listWindowTitles)();
+    if (titles.length === 0) {
+        return (0, action_verifier_1.fail)("I couldn't list the open windows.", ["no visible windows found"], "windows-list-failed");
+    }
+    return (0, action_verifier_1.ok)(`There are ${titles.length} open windows:\n${titles.slice(0, 15).map((t) => `• ${t}`).join("\n")}`, [`${titles.length} visible windows`]);
+}
 // ─── Public API ──────────────────────────────────────────────────────────────
 async function executeDesktopAction(action) {
     switch (action.type) {
@@ -146,10 +265,22 @@ async function executeDesktopAction(action) {
         }
         case "click":
             return mouseClick(Math.round(action.x), Math.round(action.y));
+        case "click.variant":
+            return mouseClickVariant(action.variant, Math.round(action.x), Math.round(action.y));
         case "scroll":
             return mouseScroll(action.deltaY);
         case "drag":
             return mouseDrag(action.from, action.to);
+        case "window.control":
+            return windowControl(action.op, action.target);
+        case "window.move":
+            return windowMove(action.target, Math.round(action.x), Math.round(action.y));
+        case "window.resize":
+            return windowResize(action.target, Math.round(action.width), Math.round(action.height));
+        case "screen.capture":
+            return screenCapture();
+        case "windows.list":
+            return windowsList();
         case "clipboard.read": {
             const text = electron_1.clipboard.readText();
             return (0, action_verifier_1.ok)(text ? "Read the clipboard." : "The clipboard is empty.", [`clipboard length: ${text.length}`]);

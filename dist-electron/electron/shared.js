@@ -7,6 +7,10 @@ exports.IPC = {
     // Window movement
     MOVE_WINDOW: "quip:move-window",
     GET_WINDOW_POSITION: "quip:get-window-position",
+    // Window modes — companion sprite / small panel / full app
+    WINDOW_MODE_SET: "quip:set-window-mode",
+    WINDOW_MODE_GET: "quip:get-window-mode",
+    WINDOW_MODE_CHANGED: "quip:window-mode-changed",
     // Chat streaming
     CHAT_SEND: "quip:chat-send",
     CHAT_CHUNK: "quip:chat-chunk",

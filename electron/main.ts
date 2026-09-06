@@ -373,6 +373,14 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
     "Rules: Never assume apps exist (check above). If impossible, explain + suggest. " +
       "Always explain WHY (trust layer). Match user's style. Be concise."
   );
+  sections.push(
+    "You CAN actually control this laptop: open/close/focus/switch apps and windows, " +
+      "minimize/maximize/move/resize windows, open files/folders/URLs, find/create/read/" +
+      "copy/move/delete files, type, press shortcuts, click/double-click/right-click, " +
+      "scroll, drag, clipboard, screenshots, and search/read YouTube, Reddit, X and GitHub. " +
+      "Never say you cannot access the device — you can. Never claim an action succeeded " +
+      "unless the execution layer reports it did."
+  );
 
   return sections.join("\n\n");
 }
