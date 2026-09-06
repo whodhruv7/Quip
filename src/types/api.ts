@@ -8,6 +8,16 @@ import { ModelRouterStatus } from "./models";
 import { PermissionRule } from "./permissions";
 import { CapabilityId } from "./capabilities";
 
+/** Compact approval request shown in the inline panel above the chat input. */
+export interface ApprovalRequestUI {
+  id: string;
+  title: string;
+  steps: string[];
+  mode: string;
+  risk?: "safe" | "medium" | "dangerous";
+  timestamp: number;
+}
+
 export interface WindowAPI {
   moveWindow: (dx: number, dy: number) => void;
   getWindowPosition: () => Promise<{ x: number; y: number } | null>;
@@ -32,7 +42,7 @@ export interface PermissionAPI {
   getPermissionMode: () => Promise<{ mode: string; label: string }>;
   setPermissionMode: (mode: string) => Promise<{ mode: string; label: string }>;
   cyclePermissionMode: () => Promise<{ mode: string; label: string }>;
-  onApprovalRequest: (cb: (request: unknown) => void) => () => void;
+  onApprovalRequest: (cb: (request: ApprovalRequestUI) => void) => () => void;
   resolveApproval: (id: string, approved: boolean) => void;
   getPermissions: () => Promise<PermissionRule[]>;
   updatePermission: (capability: CapabilityId, granted: boolean) => Promise<void>;

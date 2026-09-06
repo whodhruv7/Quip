@@ -19,7 +19,7 @@
 import { BrowserWindow, screen } from "electron";
 import path from "node:path";
 
-export type CompanionId = "pix" | "kai" | "ren";
+export type CompanionId = "pix" | "kai" | "zee";
 
 export interface SwarmInstance {
   winId: number;
@@ -40,7 +40,7 @@ export interface SpawnOptions {
 const COMPANION_LABELS: Record<CompanionId, string> = {
   pix: "Pix — Creative",
   kai: "Kai — Analytical",
-  ren: "Ren — Empathetic",
+  zee: "Ren — Empathetic",
 };
 
 class SwarmManager {

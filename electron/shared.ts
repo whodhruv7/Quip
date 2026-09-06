@@ -179,22 +179,22 @@ export interface CommunicationDNAPayload {
 // ─── Phase 3 payloads ──────────────────────────────────────────────────────
 
 export interface SpawnCompanionPayload {
-  companionId: "pix" | "kai" | "ren";
+  companionId: "pix" | "kai" | "zee";
   headless?: boolean;
   autoTask?: string;
 }
 
 export interface SwarmInstance {
   winId: number;
-  companionId: "pix" | "kai" | "ren";
+  companionId: "pix" | "kai" | "zee";
   headless: boolean;
   spawnedAt: number;
   label: string;
 }
 
 export interface InterCompanionMsgPayload {
-  from: "pix" | "kai" | "ren";
-  to: "pix" | "kai" | "ren";
+  from: "pix" | "kai" | "zee";
+  to: "pix" | "kai" | "zee";
   message: string;
 }
 

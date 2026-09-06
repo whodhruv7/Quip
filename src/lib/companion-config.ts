@@ -4,7 +4,7 @@
 // colors without pulling in the SVG component. Used by App.tsx, TopBar,
 // ChatInput, ChatMessage, etc.
 
-import type { CompanionId } from "@/types";
+import type { CompanionId } from "../types";
 
 export interface CompanionTheme {
   id: CompanionId;
@@ -51,13 +51,13 @@ export const COMPANIONS: CompanionTheme[] = [
     id: "zee",
     name: "Zee",
     subtitle: "The Fearless Explorer",
-    primary: "#1a1a1a",
+    primary: "#B98AFF",
     secondary: "#FFD700",
-    dark: "#0a0a0a",
+    dark: "#120D1C",
     eyeColor: "#FFD700",
     cheekColor: "rgba(255,215,0,0.35)",
-    auraA: "rgba(26,26,26,0.40)",
-    auraB: "rgba(255,215,0,0.20)",
+    auraA: "rgba(185,138,255,0.30)",
+    auraB: "rgba(255,215,0,0.18)",
     mouthThinking: "#FFD700",
   },
 ];

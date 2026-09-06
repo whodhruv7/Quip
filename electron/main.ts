@@ -40,7 +40,7 @@ import type {
 } from "./shared";
 
 import { bootstrap, BootstrapResult } from "./system/bootstrap";
-import { modelRouter } from "./system/model-router";
+import { modelRouter, describeError } from "./system/model-router";
 import { permissionSystem } from "./system/permission-system";
 
 import { ensureProfile, loadProfile } from "./brains/device-brain";
@@ -77,6 +77,13 @@ const memoryExtractor = new MemoryExtractorBrain({
 // Execution Engine V2
 import { orchestrator } from "./engine/orchestrator";
 import { permissionSystem as execPermissionSystem, type ApprovalRequest } from "./engine/permission-modes";
+import { buildQuizPrompt, normalizeQuizQuestions } from "../src/quiz/quiz-engine";
+import { invalidateAppIndex } from "./engine/app-discovery";
+import { contextStore } from "./engine/context-store";
+
+// The orchestrator uses the model ONLY for ambiguous intent (compact schema,
+// one small call) — deterministic tools handle the obvious actions.
+orchestrator.setModelRouter(modelRouter);
 
 import type {
   DeviceProfile,
@@ -92,7 +99,7 @@ import type {
 // ─── State ───────────────────────────────────────────────────────────────────
 const isDev = process.env.NODE_ENV === "development";
 const windows = new Map<number, BrowserWindow>();
-const windowCompanionMap = new Map<number, "pix" | "kai" | "ren">();
+const windowCompanionMap = new Map<number, "pix" | "kai" | "zee">();
 let tray: Tray | null = null;
 
 let deviceProfile: DeviceProfile | null = null;
@@ -100,7 +107,7 @@ let worldModel: WorldModel | null = null;
 let spatialConfig: SpatialConfig | null = null;
 
 // The default companion (set by renderer via IPC). Defaults to "pix".
-let defaultCompanionId: "pix" | "kai" | "ren" = "pix";
+let defaultCompanionId: "pix" | "kai" | "zee" = "pix";
 
 const pendingConfirmations = new Map<
   string,
@@ -148,7 +155,7 @@ function clampPosition(x: number, y: number, w: number, h: number) {
  *
  * @param userMessage - the current user message (for relevance filtering)
  */
-function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "ren" = "pix"): string {
+function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "zee" = "pix"): string {
   const env = environmentBrain.get();
   const sections: string[] = [];
 
@@ -266,7 +273,13 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
   const styleGuide = relationshipEngine.getStyleGuide();
   if (styleGuide) sections.push(styleGuide);
 
-  // ─── 8.5. Timeline Context ──────────────────────────────────────────
+  // ─── 8.5. Short-term execution context (1 compact line) ────────────────
+  // Lets chat-mode follow-ups ("play it", "now open the latest email")
+  // resolve without re-sending the whole history.
+  const execContextSummary = contextStore.summary();
+  if (execContextSummary) sections.push(execContextSummary);
+
+  // ─── 8.7. Timeline Context ─────────────────────────────────────────
   const timelineSummary = timelineBrain.getTodaySummary();
   if (timelineSummary && timelineSummary !== "No significant activity recorded today.") {
     sections.push(`Recent Activity: ${timelineSummary}`);
@@ -296,7 +309,7 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
 // ---------------------------------------------------------------------------
 // Window
 // ---------------------------------------------------------------------------
-function createWindow(companionId: "pix" | "kai" | "ren" = "pix", offsetX = 0, offsetY = 0) {
+function createWindow(companionId: "pix" | "kai" | "zee" = "pix", offsetX = 0, offsetY = 0) {
   const panel = spatialConfig?.chatPanel ?? {
     x: 0,
     y: 0,
@@ -529,25 +542,24 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
 
     return { ok: true };
   } catch (err: any) {
-    const msg = err?.message ?? String(err);
-    // Classify the error for graceful display.
-    const kind: ChatErrorPayload["kind"] = msg.includes("no-groq-key")
-      || msg.includes("no-openrouter-key")
-      ? "no-key"
-      : msg.includes("401")
-        ? "http"
-        : "network";
+    // ModelTransportError carries a stable kind — calm, precise user message.
+    const described = describeError(err);
+    const kind: ChatErrorPayload["kind"] =
+      described.kind === "no-key" || described.kind === "auth"
+        ? "no-key"
+        : described.kind === "rate-limit" || described.kind === "http"
+          ? "http"
+          : described.kind === "timeout"
+            ? "network"
+            : "network";
 
-    const userMessage =
-      kind === "no-key"
-        ? "No AI key configured. Add GROQ_API_KEY to your .env file."
-        : kind === "http"
-          ? "AI provider rejected the key. Check your .env."
-          : "Network error. Check your connection.";
+    if (kind === "network" || kind === "http") {
+      console.error("model request failed:", modelRouter.diagnostics());
+    }
 
     sendToWindow(win, IPC.CHAT_ERROR, {
       requestId: payload.requestId,
-      message: userMessage,
+      message: described.message,
       kind,
     });
 
@@ -558,8 +570,8 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
 // ---------------------------------------------------------------------------
 // IPC — set current companion (so system prompt can adapt)
 // ---------------------------------------------------------------------------
-ipcMain.on("quip:set-companion", (_e, id: "pix" | "kai" | "ren") => {
-  if (id === "pix" || id === "kai" || id === "ren") {
+ipcMain.on("quip:set-companion", (_e, id: "pix" | "kai" | "zee") => {
+  if (id === "pix" || id === "kai" || id === "zee") {
     defaultCompanionId = id;
     const win = BrowserWindow.fromWebContents(_e.sender);
     if (win) windowCompanionMap.set(win.id, id);
@@ -574,18 +586,75 @@ ipcMain.handle(
   async (_e, payload: TaskExecutePayload): Promise<TaskResultPayload> => {
     const profile = deviceProfile ?? (await ensureProfile(app.getPath("userData")));
     const platform = profile.platform;
+    const workspacePath = app.getAppPath();
 
     // Set up approval callback — forwards to renderer
     const win = BrowserWindow.fromWebContents(_e.sender);
     const companionId = win ? windowCompanionMap.get(win.id) ?? defaultCompanionId : defaultCompanionId;
 
-    // Set up approval callback — forwards to renderer
     execPermissionSystem.onApprovalRequested = (request: ApprovalRequest) => {
       sendToWindow(win, "quip:approval-request", request);
     };
 
+    // ─── Quiz intent: model-generated quiz, returned inline ─────────────
+    const quizIntent = await import("./engine/intent-parser-v2").then(
+      (m) => m.parseIntentV2(payload.command)
+    );
+    if (quizIntent.action === "quiz" && quizIntent.isTask) {
+      try {
+        const history = payload.command;
+        const raw = await modelRouter.complete(
+          "You generate quizzes from material. Return ONLY compact JSON.",
+          [{
+            role: "user",
+            content: history.includes("\n")
+              ? buildQuizPrompt(history, 5)
+              : buildQuizPrompt(history || "general knowledge basics", 5),
+          }],
+          30000
+        );
+        const questions = normalizeQuizQuestions(JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] ?? "{}"));
+        if (questions.length > 0) {
+          return {
+            requestId: payload.requestId,
+            success: true,
+            summary: `I made a ${questions.length}-question quiz for you. Let's go!`,
+            notes: ["quiz generated"],
+            plan: {
+              id: payload.requestId,
+              requestId: payload.requestId,
+              intent: { type: "quiz", target: "quiz", query: "", confidence: 0.95, verbs: ["quiz"], raw: payload.command },
+              subtasks: [],
+              summary: "Quiz generated",
+              isChat: false,
+              createdAt: Date.now(),
+            } as any,
+            quiz: questions,
+          };
+        }
+        // Fall through to normal execution if quiz generation failed
+      } catch (e: any) {
+        return {
+          requestId: payload.requestId,
+          success: false,
+          summary: "I couldn't generate a quiz right now — my model connection isn't responding.",
+          notes: [`quiz error: ${String(e?.message ?? e).slice(0, 80)}`],
+          plan: {
+            id: payload.requestId,
+            requestId: payload.requestId,
+            intent: { type: "quiz", target: null, query: null, confidence: 0, verbs: [], raw: payload.command },
+            subtasks: [],
+            summary: "Quiz failed",
+            isChat: false,
+            createdAt: Date.now(),
+          } as any,
+        };
+      }
+    }
+
     const result = await orchestrator.execute(payload.command, {
       platform,
+      workspacePath,
       onProgress: (update) => {
         sendToWindow(win, IPC.TASK_PROGRESS, {
           requestId: payload.requestId,
@@ -618,12 +687,13 @@ ipcMain.handle(
       plan: {
         id: payload.requestId,
         requestId: payload.requestId,
-        intent: { type: "open_app", target: null, query: null, confidence: 0, verbs: [], raw: payload.command },
+        intent: { type: quizIntent.action, target: quizIntent.target || null, query: quizIntent.query || null, confidence: quizIntent.confidence, verbs: [], raw: payload.command },
         subtasks: [],
         summary: result.summary,
         isChat: result.stepsTotal === 0,
         createdAt: Date.now(),
       } as any,
+      ...(result.quiz ? { quiz: result.quiz } : {}),
     };
   }
 );
@@ -669,7 +739,7 @@ ipcMain.on(
 // ---------------------------------------------------------------------------
 // IPC — Phase 3: Swarm Mode (managed by SwarmManager)
 // ---------------------------------------------------------------------------
-ipcMain.handle(IPC.SPAWN_COMPANION, (_e, payload: { companionId: "pix" | "kai" | "ren"; headless?: boolean; autoTask?: string }) => {
+ipcMain.handle(IPC.SPAWN_COMPANION, (_e, payload: { companionId: "pix" | "kai" | "zee"; headless?: boolean; autoTask?: string }) => {
   const winId = swarmManager.spawn(payload.companionId, {
     headless: payload.headless ?? false,
     autoTask: payload.autoTask,
@@ -685,7 +755,7 @@ ipcMain.handle(IPC.GET_SWARM_INSTANCES, () => {
   return swarmManager.getInstances();
 });
 
-ipcMain.on(IPC.INTER_COMPANION_MSG, (_e, payload: { to: "pix" | "kai" | "ren"; message: string }) => {
+ipcMain.on(IPC.INTER_COMPANION_MSG, (_e, payload: { to: "pix" | "kai" | "zee"; message: string }) => {
   const fromWin = BrowserWindow.fromWebContents(_e.sender);
   if (!fromWin) return;
   swarmManager.routeMessage(fromWin.id, payload.to, payload.message);
@@ -756,6 +826,7 @@ ipcMain.handle(IPC.GET_DEVICE_PROFILE, async () => {
 
 ipcMain.handle(IPC.RESCAN_DEVICE, async () => {
   try {
+    invalidateAppIndex();
     deviceProfile = await ensureProfile(app.getPath("userData"), 0); // force rescan
     if (deviceProfile) {
       worldModel = await ensureWorldModel(app.getPath("userData"), deviceProfile, fsStorage);
@@ -834,7 +905,7 @@ ipcMain.handle(IPC.RESET_USER_PROFILE, () => {
 // IPC — companion mood
 // ---------------------------------------------------------------------------
 ipcMain.handle(IPC.GET_COMPANION_MOOD, (_e, id: string) => {
-  if (id !== "pix" && id !== "kai" && id !== "ren") return null;
+  if (id !== "pix" && id !== "kai" && id !== "zee") return null;
   return companionMood.getMood(id);
 });
 
