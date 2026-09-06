@@ -75,3 +75,6 @@ htmlcov/
 # Palade
 palade.config.ts
 .palade/
+
+# Test build output
+dist-test/
