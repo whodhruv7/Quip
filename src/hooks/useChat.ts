@@ -13,7 +13,6 @@ import type {
   CompanionId,
   TaskProgress,
   TaskResultPayload,
-  QuizQuestionPayload,
 } from "@/types";
 import {
   loadCurrentMessages,
@@ -30,8 +29,7 @@ const uid = () => crypto.randomUUID();
 export function useChat(
   companionId: CompanionId,
   initialMessages?: ChatMessage[],
-  quipApi = window.quip,
-  onQuiz?: (questions: QuizQuestionPayload[], title: string) => void
+  quipApi = window.quip
 ) {
   const [messages, setMessages] = useState<ChatMessage[]>(
     () => initialMessages ?? loadCurrentMessages(companionId)
@@ -160,10 +158,6 @@ export function useChat(
         };
         setMessages((prev) => [...prev, assistantMsg]);
         setBusy(false);
-        // Quiz capability: open the compact quiz panel with generated questions
-        if (taskResult.quiz && taskResult.quiz.length > 0) {
-          onQuiz?.(taskResult.quiz, taskResult.plan?.summary ?? "");
-        }
         return;
       }
 
@@ -209,7 +203,7 @@ export function useChat(
         setBusy(false);
       }
     },
-    [busy, companionId, onQuiz]
+    [busy, companionId]
   );
 
   const clear = useCallback(() => {

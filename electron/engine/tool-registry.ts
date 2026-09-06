@@ -8,7 +8,6 @@
 //   read_page       → Agent-Reach web reader
 //   desktop actions → desktop-controller (focus/close/type/key/click/scroll/
 //                     drag/clipboard)
-//   quiz            → quiz capability (model-generated, delivered via result)
 //
 // Every ToolResult carries verified state — never fake success.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -26,6 +25,7 @@ import {
 } from "./app-discovery";
 import { resolveLocalTarget, openLocalTarget } from "./file-discovery";
 import { executeDesktopAction } from "./desktop-controller";
+import { executeFileOp } from "./file-ops";
 import {
   openBrowserSurface,
   navigateBrowser,
@@ -211,6 +211,15 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
   },
 
   async click(step, _ctx) {
+    const variant = step.params.variant as "double" | "right" | undefined;
+    if (variant === "double" || variant === "right") {
+      return fromVerification(await executeDesktopAction({
+        type: "click.variant",
+        variant,
+        x: parseFloat(step.params.x ?? "0"),
+        y: parseFloat(step.params.y ?? "0"),
+      }));
+    }
     return fromVerification(await executeDesktopAction({
       type: "click",
       x: parseFloat(step.params.x ?? "0"),
@@ -234,6 +243,103 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
 
   async read_page(step, _ctx) {
     return fromVerification(await readWebPage(step.params.url));
+  },
+
+  async window_control(step, _ctx) {
+    const op = (step.params.op ?? "minimize") as "minimize" | "maximize" | "restore";
+    if (step.params.op === "move") {
+      return fromVerification(await executeDesktopAction({
+        type: "window.move",
+        target: step.params.target ?? step.target,
+        x: parseFloat(step.params.x ?? "0"),
+        y: parseFloat(step.params.y ?? "0"),
+      }));
+    }
+    if (step.params.op === "resize") {
+      return fromVerification(await executeDesktopAction({
+        type: "window.resize",
+        target: step.params.target ?? step.target,
+        width: parseFloat(step.params.width ?? "1000"),
+        height: parseFloat(step.params.height ?? "700"),
+      }));
+    }
+    return fromVerification(await executeDesktopAction({
+      type: "window.control",
+      op: op === "restore" ? "restore" : op,
+      target: step.params.target ?? step.target,
+    }));
+  },
+
+  async screen(_step, _ctx) {
+    return fromVerification(await executeDesktopAction({ type: "screen.capture" }));
+  },
+
+  async windows_list(_step, _ctx) {
+    return fromVerification(await executeDesktopAction({ type: "windows.list" }));
+  },
+
+  async file_op(step, _ctx) {
+    const op = step.params.op as string;
+    const fileAction = (() => {
+      switch (op) {
+        case "read":
+          return { op: "read", path: step.params.path ?? "" } as const;
+        case "write":
+        case "append":
+          return { op: "write", path: step.params.path ?? "", content: step.params.content ?? "", append: op === "append" } as const;
+        case "delete":
+          return { op: "delete", path: step.params.path ?? "" } as const;
+        case "copy":
+          return { op: "copy", from: step.params.from ?? step.params.path ?? "", to: step.params.to ?? "" } as const;
+        case "move":
+          return { op: "move", from: step.params.from ?? step.params.path ?? "", to: step.params.to ?? "" } as const;
+        case "mkdir":
+          return { op: "mkdir", path: step.params.path ?? "" } as const;
+        case "list":
+          return { op: "list", path: step.params.path ?? "" } as const;
+        case "search":
+          return { op: "search", query: step.params.query ?? step.params.path ?? "", base: step.params.base } as const;
+        default:
+          return null;
+      }
+    })();
+    if (!fileAction) {
+      return { success: false, output: `Unknown file operation: ${op}`, note: "unsupported-file-op" };
+    }
+    return fromVerification(executeFileOp(fileAction as any));
+  },
+
+  async site_search(step, _ctx) {
+    const site = step.params.site ?? "web";
+    const query = step.params.query ?? "";
+    const SEARCH_URLS: Record<string, string> = {
+      reddit: `https://www.reddit.com/search/?q=${encodeURIComponent(query)}`,
+      x: `https://x.com/search?q=${encodeURIComponent(query)}`,
+      twitter: `https://x.com/search?q=${encodeURIComponent(query)}`,
+      github: `https://github.com/search?q=${encodeURIComponent(query)}&type=repositories`,
+      youtube: `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`,
+    };
+    const searchUrl = SEARCH_URLS[site];
+    if (!searchUrl) {
+      return { success: false, output: `I don't know how to search ${site}.`, note: "unknown-site" };
+    }
+    const opened = await openBrowserSurface(searchUrl);
+    if (!opened.ok) {
+      return fromVerification(opened);
+    }
+    // Read the results page for an honest summary (best effort — some sites
+    // require login; if reading fails the open itself is still real).
+    const read = await readWebPage(searchUrl);
+    const summary = read.ok && read.summary
+      ? `Opened ${site} search for "${query}" — top of the results page:\n${read.summary.slice(0, 1200)}`
+      : `Opened ${site} search for "${query}" in the browser.` +
+        (read.ok ? "" : " I couldn't read the results page — the site may require login.");
+    return {
+      success: true,
+      output: summary,
+      note: "site-search",
+      evidence: [`search url: ${searchUrl}`, read.ok ? "results page read" : "results page not readable"],
+    };
   },
 
   async compose_email(step, _ctx) {
@@ -262,11 +368,6 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
       return fromVerification(verification);
     }
     return { success: false, output: `Unsupported system action: ${step.target}`, note: "unsupported" };
-  },
-
-  async quiz(_step, _ctx) {
-    // Quiz generation is handled by the orchestrator via the model.
-    return { success: true, output: "quiz-handled-by-orchestrator", note: "quiz" };
   },
 };
 

@@ -12,6 +12,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { clipboard } from "electron";
+import path from "node:path";
+import fs from "node:fs";
 import {
   ok,
   fail,
@@ -28,10 +30,16 @@ export type DesktopAction =
   | { type: "type"; text: string }
   | { type: "key"; keys: string[] }
   | { type: "click"; x: number; y: number }
+  | { type: "click.variant"; variant: "double" | "right"; x: number; y: number }
   | { type: "scroll"; deltaY: number }
   | { type: "clipboard.read" }
   | { type: "clipboard.write"; text: string }
-  | { type: "drag"; from: { x: number; y: number }; to: { x: number; y: number } };
+  | { type: "drag"; from: { x: number; y: number }; to: { x: number; y: number } }
+  | { type: "window.control"; op: "minimize" | "maximize" | "restore"; target: string }
+  | { type: "window.move"; target: string; x: number; y: number }
+  | { type: "window.resize"; target: string; width: number; height: number }
+  | { type: "screen.capture" }
+  | { type: "windows.list" };
 
 // ─── PowerShell helpers ──────────────────────────────────────────────────────
 
@@ -175,6 +183,119 @@ async function mouseDrag(
   return fail("I couldn't perform the drag.", ["drag sequence failed"], "drag-failed");
 }
 
+async function mouseClickVariant(
+  variant: "double" | "right",
+  x: number,
+  y: number
+): Promise<ActionVerification> {
+  const seq =
+    variant === "double"
+      ? "[M]::mouse_event(2,0,0,0,[UIntPtr]::Zero); [M]::mouse_event(4,0,0,0,[UIntPtr]::Zero); Start-Sleep -Milliseconds 40; [M]::mouse_event(2,0,0,0,[UIntPtr]::Zero); [M]::mouse_event(4,0,0,0,[UIntPtr]::Zero)"
+      : "[M]::mouse_event(8,0,0,0,[UIntPtr]::Zero); [M]::mouse_event(16,0,0,0,[UIntPtr]::Zero)";
+  const res = await runCapture(
+    `powershell -NoProfile -Command "${MOUSE_ADD_TYPE}; [M]::SetCursorPos(${x},${y})|Out-Null; Start-Sleep -Milliseconds 80; ${seq}; '${variant === "double" ? "double-clicked" : "right-clicked"}'"`,
+    8000
+  );
+  if (res && (res.stdout.includes("double-clicked") || res.stdout.includes("right-clicked"))) {
+    return ok(
+      variant === "double"
+        ? `Double-clicked at (${x}, ${y}).`
+        : `Right-clicked at (${x}, ${y}).`,
+      ["SetCursorPos + mouse_event executed"]
+    );
+  }
+  return fail(`I couldn't perform the ${variant} click.`, ["mouse_event failed"], "click-variant-failed");
+}
+
+// ─── Window control (minimize / maximize / restore / move / resize) ─────────
+
+const WINDOW_ADD_TYPE = `Add-Type 'using System;using System.Runtime.InteropServices;public class W{[DllImport("user32.dll")]public static extern bool ShowWindow(IntPtr h,int c);[DllImport("user32.dll")]public static extern bool SetWindowPos(IntPtr h,IntPtr a,int x,int y,int w,int hh,uint f);}'`;
+
+function findWindowCmd(target: string, then: string): string {
+  const selector = target
+    ? `Get-Process | Where-Object { $_.MainWindowTitle -like ${psQuote("*" + target + "*")} } | Select-Object -First 1`
+    : `Get-Process | Where-Object { $_.MainWindowTitle } | Sort-Object -Property MainWindowHandle | Select-Object -Last 1`;
+  return `powershell -NoProfile -Command "${WINDOW_ADD_TYPE}; $w = ${selector}; if ($w -and $w.MainWindowHandle -ne 0) { ${then} } else { 'not-found' }"`;
+}
+
+async function windowControl(
+  op: "minimize" | "maximize" | "restore",
+  target: string
+): Promise<ActionVerification> {
+  // ShowWindow codes: 6 = minimize, 3 = maximize, 9 = restore
+  const code = op === "minimize" ? 6 : op === "maximize" ? 3 : 9;
+  const then = `[W]::ShowWindow($w.MainWindowHandle, ${code})|Out-Null; '${op}-done'`;
+  const res = await runCapture(findWindowCmd(target, then), 8000);
+  if (res && res.stdout.includes(`${op}-done`)) {
+    return ok(`${op[0].toUpperCase() + op.slice(1)}d the window for "${target}".`, ["ShowWindow executed"]);
+  }
+  return fail(
+    `I couldn't find a window matching "${target}" to ${op}.`,
+    ["no window handle matched"],
+    "window-control-not-found"
+  );
+}
+
+async function windowMove(target: string, x: number, y: number): Promise<ActionVerification> {
+  // SWP_NOSIZE(0x1) | SWP_NOZORDER(0x4) | SWP_NOACTIVATE(0x10) = 0x15
+  const then = `[W]::SetWindowPos($w.MainWindowHandle, [IntPtr]::Zero, ${x}, ${y}, 0, 0, 0x15)|Out-Null; 'moved'`;
+  const res = await runCapture(findWindowCmd(target, then), 8000);
+  if (res && res.stdout.includes("moved")) {
+    return ok(`Moved the "${target}" window to (${x}, ${y}).`, ["SetWindowPos executed"]);
+  }
+  return fail(`I couldn't find a window matching "${target}" to move.`, ["no window handle"], "window-move-not-found");
+}
+
+async function windowResize(target: string, width: number, height: number): Promise<ActionVerification> {
+  // SWP_NOMOVE(0x2) | SWP_NOZORDER(0x4) | SWP_NOACTIVATE(0x10) = 0x16
+  const then = `[W]::SetWindowPos($w.MainWindowHandle, [IntPtr]::Zero, 0, 0, ${width}, ${height}, 0x16)|Out-Null; 'resized'`;
+  const res = await runCapture(findWindowCmd(target, then), 8000);
+  if (res && res.stdout.includes("resized")) {
+    return ok(`Resized the "${target}" window to ${width}×${height}.`, ["SetWindowPos executed"]);
+  }
+  return fail(`I couldn't find a window matching "${target}" to resize.`, ["no window handle"], "window-resize-not-found");
+}
+
+// ─── Screen capture + window listing ─────────────────────────────────────────
+
+async function screenCapture(): Promise<ActionVerification> {
+  const { app } = await import("electron");
+  const dir = path.join(app.getPath("userData"), "screens");
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch {
+    /* fallthrough — save will fail and report honestly */
+  }
+  const file = path.join(dir, `quip-screen-${Date.now()}.png`);
+  const psFile = file.replace(/\\/g, "\\\\");
+  const res = await runCapture(
+    `powershell -NoProfile -Command "Add-Type -AssemblyName System.Drawing; Add-Type -AssemblyName System.Windows.Forms; $b = [System.Windows.Forms.SystemInformation]::VirtualScreen; $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height; $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size); $bmp.Save('${psFile}'); $g.Dispose(); $bmp.Dispose(); 'saved'"`,
+    12000
+  );
+  if (res && res.stdout.includes("saved")) {
+    try {
+      const stat = fs.statSync(file);
+      if (stat.size > 0) {
+        return ok(`Captured the screen.`, [`saved: ${file}`, `size: ${stat.size} bytes`]);
+      }
+    } catch {
+      /* stat failed — fall through to failure */
+    }
+  }
+  return fail("I couldn't capture the screen.", ["CopyFromScreen failed or file missing"], "screen-capture-failed");
+}
+
+async function windowsList(): Promise<ActionVerification> {
+  const titles = await listWindowTitles();
+  if (titles.length === 0) {
+    return fail("I couldn't list the open windows.", ["no visible windows found"], "windows-list-failed");
+  }
+  return ok(
+    `There are ${titles.length} open windows:\n${titles.slice(0, 15).map((t) => `• ${t}`).join("\n")}`,
+    [`${titles.length} visible windows`]
+  );
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export async function executeDesktopAction(action: DesktopAction): Promise<ActionVerification> {
@@ -216,11 +337,29 @@ export async function executeDesktopAction(action: DesktopAction): Promise<Actio
     case "click":
       return mouseClick(Math.round(action.x), Math.round(action.y));
 
+    case "click.variant":
+      return mouseClickVariant(action.variant, Math.round(action.x), Math.round(action.y));
+
     case "scroll":
       return mouseScroll(action.deltaY);
 
     case "drag":
       return mouseDrag(action.from, action.to);
+
+    case "window.control":
+      return windowControl(action.op, action.target);
+
+    case "window.move":
+      return windowMove(action.target, Math.round(action.x), Math.round(action.y));
+
+    case "window.resize":
+      return windowResize(action.target, Math.round(action.width), Math.round(action.height));
+
+    case "screen.capture":
+      return screenCapture();
+
+    case "windows.list":
+      return windowsList();
 
     case "clipboard.read": {
       const text = clipboard.readText();

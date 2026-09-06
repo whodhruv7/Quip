@@ -9,6 +9,11 @@ const CURRENT_KEY_PREFIX = "quip:current:";   // quip:current:pix
 const SESSIONS_KEY = "quip:sessions";
 const PREFS_KEY = "quip:prefs";
 
+// All valid companion ids (kept in sync with companion-config).
+const VALID_COMPANION_IDS = new Set<string>([
+  "pix", "kai", "ren", "bubbles", "capy", "ivy",
+]);
+
 function currentKey(cid: CompanionId) {
   return `${CURRENT_KEY_PREFIX}${cid}`;
 }
@@ -33,7 +38,15 @@ export function loadPrefs(): QuipPrefs {
   try {
     const raw = localStorage.getItem(PREFS_KEY);
     if (!raw) return DEFAULT_PREFS;
-    return { ...DEFAULT_PREFS, ...JSON.parse(raw) };
+    const parsed = JSON.parse(raw) as Partial<QuipPrefs> & { companionId?: string };
+    // Migration: older builds used "zee" — it is "ren" now.
+    if ((parsed.companionId as string) === "zee") {
+      parsed.companionId = "ren";
+    }
+    if (parsed.companionId && !VALID_COMPANION_IDS.has(parsed.companionId)) {
+      delete parsed.companionId;
+    }
+    return { ...DEFAULT_PREFS, ...parsed };
   } catch {
     return DEFAULT_PREFS;
   }
@@ -51,7 +64,19 @@ export function savePrefs(prefs: Partial<QuipPrefs>): void {
 // --- Current active messages for a companion ---
 export function loadCurrentMessages(cid: CompanionId): ChatMessage[] {
   try {
-    const raw = localStorage.getItem(currentKey(cid));
+    let raw = localStorage.getItem(currentKey(cid));
+    // Migration: older builds stored Ren's messages under "zee".
+    if (!raw && cid === "ren") {
+      raw = localStorage.getItem(`${CURRENT_KEY_PREFIX}zee`);
+      if (raw) {
+        try {
+          localStorage.setItem(currentKey("ren"), raw);
+          localStorage.removeItem(`${CURRENT_KEY_PREFIX}zee`);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];

@@ -37,6 +37,7 @@ import type {
   TaskExecutePayload,
   TaskProgressPayload,
   ConfirmationResolvePayload,
+  WindowMode,
 } from "./shared";
 
 import { bootstrap, BootstrapResult } from "./system/bootstrap";
@@ -77,7 +78,6 @@ const memoryExtractor = new MemoryExtractorBrain({
 // Execution Engine V2
 import { orchestrator } from "./engine/orchestrator";
 import { permissionSystem as execPermissionSystem, type ApprovalRequest } from "./engine/permission-modes";
-import { buildQuizPrompt, normalizeQuizQuestions } from "../src/quiz/quiz-engine";
 import { invalidateAppIndex } from "./engine/app-discovery";
 import { contextStore } from "./engine/context-store";
 
@@ -99,7 +99,7 @@ import type {
 // ─── State ───────────────────────────────────────────────────────────────────
 const isDev = process.env.NODE_ENV === "development";
 const windows = new Map<number, BrowserWindow>();
-const windowCompanionMap = new Map<number, "pix" | "kai" | "zee">();
+const windowCompanionMap = new Map<number, "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy">();
 let tray: Tray | null = null;
 
 let deviceProfile: DeviceProfile | null = null;
@@ -107,7 +107,7 @@ let worldModel: WorldModel | null = null;
 let spatialConfig: SpatialConfig | null = null;
 
 // The default companion (set by renderer via IPC). Defaults to "pix".
-let defaultCompanionId: "pix" | "kai" | "zee" = "pix";
+let defaultCompanionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy" = "pix";
 
 const pendingConfirmations = new Map<
   string,
@@ -148,6 +148,74 @@ function clampPosition(x: number, y: number, w: number, h: number) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Window modes — companion sprite / small panel / full app.
+//
+// companion : a tiny transparent window holding just the companion sprite.
+// panel     : the window grows — small chat panel with the companion beside it.
+// full      : the full Quip application, centered.
+// ---------------------------------------------------------------------------
+const COMPANION_MODE_SIZE = { width: 132, height: 176 };
+const PANEL_MODE_SIZE = { width: 548, height: 560 };
+const windowModes = new Map<number, WindowMode>();
+
+function fullAppBounds(): { width: number; height: number } {
+  const area = screen.getPrimaryDisplay().workArea;
+  return {
+    width: Math.min(1060, area.width - 48),
+    height: Math.min(680, area.height - 48),
+  };
+}
+
+/** Keep the bottom-right corner fixed so the companion stays visually in place. */
+function anchorBottomRight(
+  cur: { x: number; y: number; width: number; height: number },
+  nextW: number,
+  nextH: number
+) {
+  return clampPosition(cur.x + cur.width - nextW, cur.y + cur.height - nextH, nextW, nextH);
+}
+
+function setWindowMode(win: BrowserWindow, mode: WindowMode) {
+  if (win.isDestroyed()) return;
+  const [x, y] = win.getPosition();
+  const [w, h] = win.getSize();
+  const cur = { x, y, width: w, height: h };
+  const area = screen.getPrimaryDisplay().workArea;
+
+  let next: { x: number; y: number; width: number; height: number };
+  if (mode === "panel") {
+    const c = anchorBottomRight(cur, PANEL_MODE_SIZE.width, PANEL_MODE_SIZE.height);
+    next = { x: c.x, y: c.y, width: PANEL_MODE_SIZE.width, height: PANEL_MODE_SIZE.height };
+  } else if (mode === "full") {
+    const size = fullAppBounds();
+    next = {
+      x: area.x + Math.round((area.width - size.width) / 2),
+      y: area.y + Math.round((area.height - size.height) / 2),
+      width: size.width,
+      height: size.height,
+    };
+  } else {
+    const c = anchorBottomRight(cur, COMPANION_MODE_SIZE.width, COMPANION_MODE_SIZE.height);
+    next = { x: c.x, y: c.y, width: COMPANION_MODE_SIZE.width, height: COMPANION_MODE_SIZE.height };
+  }
+
+  win.setResizable(true);
+  win.setBounds(next);
+  win.setResizable(mode === "full");
+  win.setAlwaysOnTop(mode !== "full", "screen-saver");
+  if (mode === "full") {
+    win.setMinimumSize(760, 520);
+  } else {
+    win.setMinimumSize(0, 0);
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  }
+
+  windowModes.set(win.id, mode);
+  if (!win.isVisible()) win.showInactive();
+  win.webContents.send(IPC.WINDOW_MODE_CHANGED, mode);
+}
+
 /**
  * Build a token-efficient system prompt. Sections are prioritized and
  * capped at ~500 tokens. Knowledge graph + memories are filtered by
@@ -155,7 +223,7 @@ function clampPosition(x: number, y: number, w: number, h: number) {
  *
  * @param userMessage - the current user message (for relevance filtering)
  */
-function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "zee" = "pix"): string {
+function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy" = "pix"): string {
   const env = environmentBrain.get();
   const sections: string[] = [];
 
@@ -163,7 +231,10 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "z
   const companionPersonalities: Record<string, string> = {
     pix: "Pix — playful, energetic, creative. Light humor. Social + creative tasks.",
     kai: "Kai — calm, analytical, wise. Clear explanations. Planning + research.",
-    zee: "Zee — curious, empathetic, reflective. Personal + emotional support.",
+    ren: "Ren — curious, empathetic, reflective. Personal + emotional support.",
+    bubbles: "Bubbles — bubbly, joyful, playful. Cheerful energy, celebratory, light on her feet.",
+    capy: "Capy — unbothered, warm, steady. Cozy calm. Nothing is a crisis.",
+    ivy: "Ivy — loyal, reliable, helpful. Gets things done, always follows through.",
   };
   sections.push(
     "You are QUIP, a calm, concise AI companion on the user's desktop. " +
@@ -309,25 +380,17 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "z
 // ---------------------------------------------------------------------------
 // Window
 // ---------------------------------------------------------------------------
-function createWindow(companionId: "pix" | "kai" | "zee" = "pix", offsetX = 0, offsetY = 0) {
-  const panel = spatialConfig?.chatPanel ?? {
-    x: 0,
-    y: 0,
-    width: 440,
-    height: 680,
-  };
+function createWindow(companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy" = "pix", offsetX = 0, offsetY = 0) {
+  // Quip always boots as the desktop companion — a small sprite on screen.
+  // The user taps it to open the panel, and expands from there.
   const area = screen.getPrimaryDisplay().workArea;
   const saved = readPosition();
-  const w = panel.width;
-  const h = panel.height;
+  const w = COMPANION_MODE_SIZE.width;
+  const h = COMPANION_MODE_SIZE.height;
 
   let x: number, y: number;
   if (saved) {
     const clamped = clampPosition(saved.x, saved.y, w, h);
-    x = clamped.x + offsetX;
-    y = clamped.y + offsetY;
-  } else if (panel.x > 0 || panel.y > 0) {
-    const clamped = clampPosition(panel.x, panel.y, w, h);
     x = clamped.x + offsetX;
     y = clamped.y + offsetY;
   } else {
@@ -361,6 +424,7 @@ function createWindow(companionId: "pix" | "kai" | "zee" = "pix", offsetX = 0, o
 
   windows.set(win.id, win);
   windowCompanionMap.set(win.id, companionId);
+  windowModes.set(win.id, "companion");
 
   win.setAlwaysOnTop(true, "screen-saver");
   win.setVisibleOnAllWorkspaces(true, {
@@ -371,8 +435,8 @@ function createWindow(companionId: "pix" | "kai" | "zee" = "pix", offsetX = 0, o
 
   win.once("ready-to-show", () => {
     if (!win.isDestroyed()) {
-      win.show();
-      win.focus();
+      // Calm boot: appear without stealing focus from the user's work.
+      win.showInactive();
       win.moveTop();
     }
   });
@@ -386,7 +450,9 @@ function createWindow(companionId: "pix" | "kai" | "zee" = "pix", offsetX = 0, o
   }
 
   win.on("move", () => {
-    if (windows.size === 1) {
+    // Persist the anchor position — but not while in full mode (the full
+    // window is centered; the companion anchor should stay where it was).
+    if (windows.size === 1 && windowModes.get(win.id) !== "full") {
       const [px, py] = win.getPosition();
       writePosition(px, py);
     }
@@ -465,6 +531,21 @@ ipcMain.handle(IPC.GET_WINDOW_POSITION, (_e) => {
   if (!win) return null;
   const [x, y] = win.getPosition();
   return { x, y };
+});
+
+// ---------------------------------------------------------------------------
+// IPC — window modes (companion / panel / full)
+// ---------------------------------------------------------------------------
+ipcMain.handle(IPC.WINDOW_MODE_SET, (_e, mode: WindowMode) => {
+  const win = BrowserWindow.fromWebContents(_e.sender);
+  if (!win || (mode !== "companion" && mode !== "panel" && mode !== "full")) return false;
+  setWindowMode(win, mode);
+  return true;
+});
+
+ipcMain.handle(IPC.WINDOW_MODE_GET, (_e) => {
+  const win = BrowserWindow.fromWebContents(_e.sender);
+  return (win && windowModes.get(win.id)) || "companion";
 });
 
 // ---------------------------------------------------------------------------
@@ -570,8 +651,8 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
 // ---------------------------------------------------------------------------
 // IPC — set current companion (so system prompt can adapt)
 // ---------------------------------------------------------------------------
-ipcMain.on("quip:set-companion", (_e, id: "pix" | "kai" | "zee") => {
-  if (id === "pix" || id === "kai" || id === "zee") {
+ipcMain.on("quip:set-companion", (_e, id: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy") => {
+  if (id === "pix" || id === "kai" || id === "ren" || id === "bubbles" || id === "capy" || id === "ivy") {
     defaultCompanionId = id;
     const win = BrowserWindow.fromWebContents(_e.sender);
     if (win) windowCompanionMap.set(win.id, id);
@@ -596,61 +677,11 @@ ipcMain.handle(
       sendToWindow(win, "quip:approval-request", request);
     };
 
-    // ─── Quiz intent: model-generated quiz, returned inline ─────────────
-    const quizIntent = await import("./engine/intent-parser-v2").then(
+    // Parse intent once for plan metadata (orchestrator re-parses internally;
+    // this is a pure regex parse — no model call, negligible cost).
+    const intentInfo = await import("./engine/intent-parser-v2").then(
       (m) => m.parseIntentV2(payload.command)
     );
-    if (quizIntent.action === "quiz" && quizIntent.isTask) {
-      try {
-        const history = payload.command;
-        const raw = await modelRouter.complete(
-          "You generate quizzes from material. Return ONLY compact JSON.",
-          [{
-            role: "user",
-            content: history.includes("\n")
-              ? buildQuizPrompt(history, 5)
-              : buildQuizPrompt(history || "general knowledge basics", 5),
-          }],
-          30000
-        );
-        const questions = normalizeQuizQuestions(JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] ?? "{}"));
-        if (questions.length > 0) {
-          return {
-            requestId: payload.requestId,
-            success: true,
-            summary: `I made a ${questions.length}-question quiz for you. Let's go!`,
-            notes: ["quiz generated"],
-            plan: {
-              id: payload.requestId,
-              requestId: payload.requestId,
-              intent: { type: "quiz", target: "quiz", query: "", confidence: 0.95, verbs: ["quiz"], raw: payload.command },
-              subtasks: [],
-              summary: "Quiz generated",
-              isChat: false,
-              createdAt: Date.now(),
-            } as any,
-            quiz: questions,
-          };
-        }
-        // Fall through to normal execution if quiz generation failed
-      } catch (e: any) {
-        return {
-          requestId: payload.requestId,
-          success: false,
-          summary: "I couldn't generate a quiz right now — my model connection isn't responding.",
-          notes: [`quiz error: ${String(e?.message ?? e).slice(0, 80)}`],
-          plan: {
-            id: payload.requestId,
-            requestId: payload.requestId,
-            intent: { type: "quiz", target: null, query: null, confidence: 0, verbs: [], raw: payload.command },
-            subtasks: [],
-            summary: "Quiz failed",
-            isChat: false,
-            createdAt: Date.now(),
-          } as any,
-        };
-      }
-    }
 
     const result = await orchestrator.execute(payload.command, {
       platform,
@@ -687,13 +718,12 @@ ipcMain.handle(
       plan: {
         id: payload.requestId,
         requestId: payload.requestId,
-        intent: { type: quizIntent.action, target: quizIntent.target || null, query: quizIntent.query || null, confidence: quizIntent.confidence, verbs: [], raw: payload.command },
+        intent: { type: intentInfo.action, target: intentInfo.target || null, query: intentInfo.query || null, confidence: intentInfo.confidence, verbs: [], raw: payload.command },
         subtasks: [],
         summary: result.summary,
         isChat: result.stepsTotal === 0,
         createdAt: Date.now(),
       } as any,
-      ...(result.quiz ? { quiz: result.quiz } : {}),
     };
   }
 );
@@ -739,7 +769,7 @@ ipcMain.on(
 // ---------------------------------------------------------------------------
 // IPC — Phase 3: Swarm Mode (managed by SwarmManager)
 // ---------------------------------------------------------------------------
-ipcMain.handle(IPC.SPAWN_COMPANION, (_e, payload: { companionId: "pix" | "kai" | "zee"; headless?: boolean; autoTask?: string }) => {
+ipcMain.handle(IPC.SPAWN_COMPANION, (_e, payload: { companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy"; headless?: boolean; autoTask?: string }) => {
   const winId = swarmManager.spawn(payload.companionId, {
     headless: payload.headless ?? false,
     autoTask: payload.autoTask,
@@ -755,7 +785,7 @@ ipcMain.handle(IPC.GET_SWARM_INSTANCES, () => {
   return swarmManager.getInstances();
 });
 
-ipcMain.on(IPC.INTER_COMPANION_MSG, (_e, payload: { to: "pix" | "kai" | "zee"; message: string }) => {
+ipcMain.on(IPC.INTER_COMPANION_MSG, (_e, payload: { to: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy"; message: string }) => {
   const fromWin = BrowserWindow.fromWebContents(_e.sender);
   if (!fromWin) return;
   swarmManager.routeMessage(fromWin.id, payload.to, payload.message);
@@ -905,7 +935,7 @@ ipcMain.handle(IPC.RESET_USER_PROFILE, () => {
 // IPC — companion mood
 // ---------------------------------------------------------------------------
 ipcMain.handle(IPC.GET_COMPANION_MOOD, (_e, id: string) => {
-  if (id !== "pix" && id !== "kai" && id !== "zee") return null;
+  if (id !== "pix" && id !== "kai" && id !== "ren" && id !== "bubbles" && id !== "capy" && id !== "ivy") return null;
   return companionMood.getMood(id);
 });
 

@@ -347,7 +347,7 @@ export function SettingsPanel({
               Your companions grow with you. As you talk, complete tasks, and create memories together, they unlock cosmetic upgrades.
             </div>
             {progression ? (
-              (["pix", "kai", "zee"] as CompanionId[]).map((id) => {
+              (["pix", "kai", "ren", "bubbles", "capy", "ivy"] as CompanionId[]).map((id) => {
                 const p = progression[id];
                 if (!p) return null;
                 const depthPct = Math.round(p.depth * 100);

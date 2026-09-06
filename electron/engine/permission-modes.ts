@@ -59,6 +59,30 @@ export function getRiskLevel(action: string): RiskLevel {
   return "safe";
 }
 
+/** Risk for a concrete step — refines compound actions (e.g. file_op ops). */
+export function riskForStep(
+  action: string,
+  params?: Record<string, string>
+): RiskLevel {
+  if (action === "file_op") {
+    switch (params?.op) {
+      case "delete":
+      case "move":
+        return "dangerous";
+      case "write":
+      case "append":
+      case "mkdir":
+        return "medium";
+      default:
+        return "safe";
+    }
+  }
+  if (action === "window_control") return "medium";
+  if (action === "screen" || action === "windows_list") return "safe";
+  if (action === "site_search") return "safe";
+  return getRiskLevel(action);
+}
+
 class PermissionSystem {
   private mode: PermissionMode = "approve_task";
   private pendingApprovals = new Map<string, (result: ApprovalResult) => void>();
@@ -104,6 +128,20 @@ class PermissionSystem {
     }
   }
 
+  /** Per-step confirmation using refined risk (compound actions aware). */
+  needsStepConfirmation(step: { action: string; params?: Record<string, string> }): boolean {
+    const risk = riskForStep(step.action, step.params);
+    if (risk === "dangerous") return true;
+    switch (this.mode) {
+      case "ask_every_time":
+        return risk !== "safe";
+      case "approve_task":
+        return false;
+      case "full_access":
+        return false;
+    }
+  }
+
   /** Highest risk across the plan's steps. */
   planRisk(actions: string[]): RiskLevel {
     if (actions.some((a) => getRiskLevel(a) === "dangerous")) return "dangerous";
@@ -114,6 +152,28 @@ class PermissionSystem {
   /** Does the whole plan need approval before execution? */
   planNeedsApproval(actions: string[]): boolean {
     const risk = this.planRisk(actions);
+    if (risk === "dangerous") return true;
+    switch (this.mode) {
+      case "ask_every_time":
+        return risk !== "safe";
+      case "approve_task":
+        return risk !== "safe";
+      case "full_access":
+        return false;
+    }
+  }
+
+  /** Highest risk across concrete steps (action + params aware). */
+  stepsRisk(steps: { action: string; params?: Record<string, string> }[]): RiskLevel {
+    const risks = steps.map((s) => riskForStep(s.action, s.params));
+    if (risks.includes("dangerous")) return "dangerous";
+    if (risks.includes("medium")) return "medium";
+    return "safe";
+  }
+
+  /** Does the plan (concrete steps) need approval before execution? */
+  stepsNeedApproval(steps: { action: string; params?: Record<string, string> }[]): boolean {
+    const risk = this.stepsRisk(steps);
     if (risk === "dangerous") return true;
     switch (this.mode) {
       case "ask_every_time":

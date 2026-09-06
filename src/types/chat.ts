@@ -1,6 +1,6 @@
 
 export type PixState = "idle" | "hover" | "thinking" | "responding" | "sleeping";
-export type CompanionId = "pix" | "kai" | "zee";
+export type CompanionId = "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy";
 
 export interface ExecutionResult {
   success: boolean;

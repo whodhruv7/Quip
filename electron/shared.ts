@@ -6,6 +6,11 @@ export const IPC = {
   MOVE_WINDOW: "quip:move-window",
   GET_WINDOW_POSITION: "quip:get-window-position",
 
+  // Window modes — companion sprite / small panel / full app
+  WINDOW_MODE_SET: "quip:set-window-mode",
+  WINDOW_MODE_GET: "quip:get-window-mode",
+  WINDOW_MODE_CHANGED: "quip:window-mode-changed",
+
   // Chat streaming
   CHAT_SEND: "quip:chat-send",
   CHAT_CHUNK: "quip:chat-chunk",
@@ -83,6 +88,15 @@ export const IPC = {
   AUTO_TASK: "quip:auto-task",
   SWARM_BROADCAST: "quip:swarm-broadcast",
 } as const;
+
+// ─── Window mode ───────────────────────────────────────────────────────────
+
+/**
+ * companion — only the companion sprite is on screen (small transparent window)
+ * panel     — small chat panel beside the companion
+ * full      — the full Quip application interface
+ */
+export type WindowMode = "companion" | "panel" | "full";
 
 // ─── Chat payloads ─────────────────────────────────────────────────────────
 export interface ChatSendPayload {
@@ -179,22 +193,22 @@ export interface CommunicationDNAPayload {
 // ─── Phase 3 payloads ──────────────────────────────────────────────────────
 
 export interface SpawnCompanionPayload {
-  companionId: "pix" | "kai" | "zee";
+  companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy";
   headless?: boolean;
   autoTask?: string;
 }
 
 export interface SwarmInstance {
   winId: number;
-  companionId: "pix" | "kai" | "zee";
+  companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy";
   headless: boolean;
   spawnedAt: number;
   label: string;
 }
 
 export interface InterCompanionMsgPayload {
-  from: "pix" | "kai" | "zee";
-  to: "pix" | "kai" | "zee";
+  from: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy";
+  to: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy";
   message: string;
 }
 

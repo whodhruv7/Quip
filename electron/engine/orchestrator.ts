@@ -18,11 +18,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { parseIntentV2, type ParsedIntent, type TaskStep } from "./intent-parser-v2";
-import { permissionSystem, getRiskLevel, type ApprovalRequest, type RiskLevel } from "./permission-modes";
+import { permissionSystem, riskForStep, type ApprovalRequest, type RiskLevel } from "./permission-modes";
 import { executeTool, type ToolResult, type ToolContext } from "./tool-registry";
 import { contextStore } from "./context-store";
 import type { ModelRouter } from "../system/model-router";
-import type { QuizQuestionPayload } from "../../src/types";
 
 export interface ExecutionResult {
   success: boolean;
@@ -31,8 +30,6 @@ export interface ExecutionResult {
   stepsCompleted: number;
   stepsTotal: number;
   durationMs: number;
-  /** Quiz questions when the intent was quiz (model-generated). */
-  quiz?: QuizQuestionPayload[];
 }
 
 export interface ProgressUpdate {
@@ -143,10 +140,9 @@ class Orchestrator {
     }
 
     // ─── Step 2: Risk-gated permission check ───────────────────────────────
-    const planActions = intent.steps.map((s) => s.action);
-    const planRisk: RiskLevel = permissionSystem.planRisk(planActions);
+    const planRisk: RiskLevel = permissionSystem.stepsRisk(intent.steps);
 
-    if (permissionSystem.planNeedsApproval(planActions)) {
+    if (permissionSystem.stepsNeedApproval(intent.steps)) {
       const stepDescriptions = intent.steps.map((s, i) => `${i + 1}. ${s.description}`);
       const approved = await permissionSystem.requestApproval(
         intent.summary || "Execute task",
@@ -181,11 +177,11 @@ class Orchestrator {
       });
 
       // Per-step confirmation for medium/dangerous actions in ask_every_time
-      if (permissionSystem.getMode() === "ask_every_time" && permissionSystem.needsConfirmation(step.action)) {
+      if (permissionSystem.getMode() === "ask_every_time" && permissionSystem.needsStepConfirmation(step)) {
         const approved = await permissionSystem.requestApproval(
           step.description,
           [step.description],
-          getRiskLevel(step.action)
+          riskForStep(step.action, step.params)
         );
         if (!approved) {
           notes.push(`${step.description} — skipped (declined)`);

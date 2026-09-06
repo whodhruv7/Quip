@@ -105,12 +105,6 @@ test("clipboard read and write routes", () => {
   assert.equal(write.steps[0].params.text, "hello world");
 });
 
-test("quiz me routes to quiz intent", () => {
-  const r = parseIntentV2("quiz me on photosynthesis");
-  assert.equal(r.action, "quiz");
-  assert.equal(r.isTask, true);
-});
-
 test("open downloads resolves known folder", () => {
   const r = parseIntentV2("open downloads");
   assert.equal(r.steps[0].action, "open_folder");

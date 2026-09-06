@@ -1,5 +1,6 @@
 
 import { CompanionId } from "./chat";
+import type { WindowMode } from "../../electron/shared";
 import { TaskResultPayload, TaskProgress, ConfirmationRequest } from "./tasks";
 import { DeviceProfile } from "./device";
 import { SpatialConfig, EnvironmentState, BootstrapProgress } from "./other";
@@ -21,6 +22,9 @@ export interface ApprovalRequestUI {
 export interface WindowAPI {
   moveWindow: (dx: number, dy: number) => void;
   getWindowPosition: () => Promise<{ x: number; y: number } | null>;
+  setWindowMode: (mode: WindowMode) => Promise<boolean>;
+  getWindowMode: () => Promise<WindowMode>;
+  onWindowModeChanged: (cb: (mode: WindowMode) => void) => () => void;
 }
 
 export interface ChatAPI {

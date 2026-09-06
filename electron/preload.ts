@@ -9,6 +9,7 @@ import type {
   ChatSendPayload,
   TaskExecutePayload,
   ConfirmationResolvePayload,
+  WindowMode,
 } from "./shared";
 
 const api = {
@@ -20,6 +21,17 @@ const api = {
       x: number;
       y: number;
     } | null>,
+
+  // ─── Window modes: companion sprite → small panel → full app ────────
+  setWindowMode: (mode: WindowMode) =>
+    ipcRenderer.invoke(IPC.WINDOW_MODE_SET, mode) as Promise<boolean>,
+  getWindowMode: () =>
+    ipcRenderer.invoke(IPC.WINDOW_MODE_GET) as Promise<WindowMode>,
+  onWindowModeChanged: (cb: (mode: WindowMode) => void) => {
+    const handler = (_e: unknown, mode: WindowMode) => cb(mode);
+    ipcRenderer.on(IPC.WINDOW_MODE_CHANGED, handler as any);
+    return () => ipcRenderer.removeListener(IPC.WINDOW_MODE_CHANGED, handler as any);
+  },
 
   // ─── Chat streaming ──────────────────────────────────────────────────
   chatSend: (payload: ChatSendPayload) =>
@@ -56,7 +68,7 @@ const api = {
     ipcRenderer.invoke(IPC.TASK_EXECUTE, payload),
 
   // ─── Set active companion (so the system prompt adapts personality/mood) ─
-  setCompanion: (id: "pix" | "kai" | "zee") =>
+  setCompanion: (id: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy") =>
     ipcRenderer.send("quip:set-companion", id),
   
   // ─── Execution Engine V2 — Permission modes ────────────────────────
@@ -193,13 +205,13 @@ const api = {
     ipcRenderer.invoke(IPC.RECORD_REFLECTION_FEEDBACK, { feedback }),
 
   // ─── Phase 3: Swarm Mode ─────────────────────────────────────────────
-  spawnCompanion: (companionId: "pix" | "kai" | "zee", headless?: boolean, autoTask?: string) =>
+  spawnCompanion: (companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy", headless?: boolean, autoTask?: string) =>
     ipcRenderer.invoke(IPC.SPAWN_COMPANION, { companionId, headless, autoTask }),
   dismissCompanion: (winId: number) =>
     ipcRenderer.invoke(IPC.DISMISS_COMPANION, { winId }),
   getSwarmInstances: () =>
     ipcRenderer.invoke(IPC.GET_SWARM_INSTANCES),
-  sendInterCompanionMsg: (to: "pix" | "kai" | "zee", message: string) =>
+  sendInterCompanionMsg: (to: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy", message: string) =>
     ipcRenderer.send(IPC.INTER_COMPANION_MSG, { to, message }),
   onInterCompanionMsg: (cb: (msg: { from: string; to: string; message: string }) => void) => {
     const handler = (_e: unknown, data: any) => cb(data);

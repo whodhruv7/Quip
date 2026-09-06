@@ -3,7 +3,9 @@
     "target": "ES2022",
     "module": "CommonJS",
     "moduleResolution": "Node",
-    "lib": ["ES2022"],
+    "lib": [
+      "ES2022"
+    ],
     "outDir": "../dist-test",
     "rootDir": "..",
     "strict": true,
@@ -17,7 +19,6 @@
     "../electron/engine/permission-modes.ts",
     "../electron/engine/window-policy.ts",
     "../electron/system/model-config.ts",
-    "../src/quiz/quiz-engine.ts",
     "../src/lib/companion-config.ts",
     "../src/types/**/*.ts"
   ]

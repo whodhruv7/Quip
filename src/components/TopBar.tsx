@@ -1,8 +1,10 @@
 // Quip V2 — Top bar (SIMPLE).
 //
-// Just: companion dots (left) + new chat + settings + close (right).
-// No model badge (was clutter). Clean, minimal.
+// Companion dots (left) + square expand button + new chat + settings + close.
+// The square expand button grows the small panel into the full Quip app
+// (and shrinks it back). No model badge (was clutter). Clean, minimal.
 
+import type { WindowMode } from "../../electron/shared";
 import type { CompanionId } from "@/types";
 import { getCompanion } from "@/lib/companion-config";
 
@@ -14,10 +16,14 @@ interface TopBarProps {
   onNewChat: () => void;
   onClose?: () => void;
   onHideChat?: () => void;
+  /** Current layout mode — the square button swaps between expand/shrink */
+  mode?: "panel" | "full";
+  onToggleExpand?: () => void;
 }
 
-export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onReflectionToggle, onNewChat, onClose, onHideChat }: TopBarProps) {
+export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onReflectionToggle, onNewChat, onClose, onHideChat, mode = "panel", onToggleExpand }: TopBarProps) {
   const handleClose = onClose ?? onHideChat;
+  const accent = getCompanion(companionId);
 
   return (
     <div
@@ -29,9 +35,9 @@ export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onRef
         borderBottom: "1px solid rgba(0,0,0,0.04)",
       }}
     >
-      {/* Companion dots — switch between Pix/Kai/Zee */}
+      {/* Companion dots — switch between all 6 companions */}
       <div className="flex items-center gap-1">
-        {(["pix", "kai", "zee"] as CompanionId[]).map((id) => {
+        {(["pix", "kai", "ren", "bubbles", "capy", "ivy"] as CompanionId[]).map((id) => {
           const c = getCompanion(id);
           const active = id === companionId;
           return (
@@ -61,6 +67,33 @@ export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onRef
 
       {/* Spacer */}
       <div className="flex-1" />
+
+      {/* Square expand button — panel ⇄ full app */}
+      <button
+        onClick={onToggleExpand}
+        className="flex h-7 w-7 items-center justify-center rounded-[7px] transition-all"
+        style={{
+          border: `1.5px solid ${accent.primary}66`,
+          background: mode === "full" ? `${accent.primary}18` : "rgba(255,255,255,0.7)",
+          color: accent.primary,
+        }}
+        title={mode === "full" ? "Back to small panel" : "Expand to full app"}
+        aria-label={mode === "full" ? "Back to small panel" : "Expand to full app"}
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          {mode === "full" ? (
+            <>
+              <path d="M9 3H4v5M15 21h5v-5" />
+              <rect x="8.5" y="8.5" width="7" height="7" rx="1.2" />
+            </>
+          ) : (
+            <>
+              <path d="M4 9V4h5M20 15v5h-5" />
+              <rect x="8.5" y="8.5" width="7" height="7" rx="1.2" />
+            </>
+          )}
+        </svg>
+      </button>
 
       {/* New chat */}
       <button

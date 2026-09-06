@@ -1,19 +1,23 @@
-// Quip V0.1 — Companion sprites (Pix, Kai, Ren)
+// Quip V0.1 — Companion sprites (Pix, Kai, Ren, Bubbles, Capy, Ivy)
 //
 // Each companion is a CUTE, PIXELATED SVG spirit. Think 32x32 pixel art scaled
 // up — blocky but SOFT. Not retro-gaming, not Minecraft. Premium pixel: crisp
 // edges, rounded shapes, pastel colors, glowing aura.
 //
-// Reference: the 3 pixelated companions from the concept art.
-//   Pix  — aqua/pink, playful spark, round body
-//   Kai  — blue/indigo, wise star, angular body
-//   Ren  — green/teal, calm ring, oval body
+//   Pix     — aqua/pink, playful spark, round body
+//   Kai     — indigo/violet, wise star, angular body
+//   Ren     — purple/gold, bold explorer, dark body
+//   Bubbles — teal/sky, joyful blob, wobbly round body
+//   Capy    — warm tan, calm capybara, cozy body with little ears
+//   Ivy     — green/mint, loyal gecko helper, body with tail curl
 //
 // Each has: idle, hover, thinking, responding, sleeping states.
 
 import { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { CompanionId, PixState } from "@/types";
+import type { CompanionTheme } from "@/lib/companion-config";
+import { COMPANIONS } from "@/lib/companion-config";
 
 // ---------------------------------------------------------------------------
 // Motion variants — subtle, calm, alive
@@ -51,65 +55,6 @@ const blinkVar = {
   open: { scaleY: 1, transition: { duration: 0.07 } },
   blink: { scaleY: 0.08, transition: { duration: 0.07 } },
 };
-
-// ---------------------------------------------------------------------------
-// Theme per companion
-// ---------------------------------------------------------------------------
-export interface CompanionTheme {
-  id: CompanionId;
-  name: string;
-  subtitle: string;
-  primary: string;    // body glow
-  secondary: string;  // accent
-  dark: string;       // face bg
-  eyeColor: string;
-  cheekColor: string;
-  auraA: string;
-  auraB: string;
-  mouthThinking: string;
-}
-
-export const COMPANIONS: CompanionTheme[] = [
-  {
-    id: "pix",
-    name: "Pix",
-    subtitle: "The Creative Spark",
-    primary: "#6FD6FF",
-    secondary: "#FF9FEF",
-    dark: "#0C1018",
-    eyeColor: "#6FD6FF",
-    cheekColor: "rgba(255,159,239,0.45)",
-    auraA: "rgba(111,214,255,0.30)",
-    auraB: "rgba(255,159,239,0.18)",
-    mouthThinking: "#FF9FEF",
-  },
-  {
-    id: "kai",
-    name: "Kai",
-    subtitle: "The Wise Guide",
-    primary: "#7B8CFF",
-    secondary: "#A78BFA",
-    dark: "#0C0E18",
-    eyeColor: "#7B8CFF",
-    cheekColor: "rgba(167,139,250,0.40)",
-    auraA: "rgba(123,140,255,0.28)",
-    auraB: "rgba(167,139,250,0.16)",
-    mouthThinking: "#A78BFA",
-  },
-  {
-    id: "zee",
-    name: "Zee",
-    subtitle: "The Fearless Explorer",
-    primary: "#1a1a1a",
-    secondary: "#FFD700",
-    dark: "#0a0a0a",
-    eyeColor: "#FFD700",
-    cheekColor: "rgba(255,215,0,0.35)",
-    auraA: "rgba(26,26,26,0.40)",
-    auraB: "rgba(255,215,0,0.20)",
-    mouthThinking: "#FFD700",
-  },
-];
 
 // ---------------------------------------------------------------------------
 // Companion SVG body shapes (each unique)
@@ -203,7 +148,7 @@ function KaiBody({ t, asleep, blinking, eyeOffset = { x: 0, y: 0 } }: { t: Compa
   );
 }
 
-function ZeeBody({ t, asleep, blinking, eyeOffset = { x: 0, y: 0 } }: { t: CompanionTheme; asleep: boolean; blinking: boolean; eyeOffset?: { x: number; y: number } }) {
+function RenBody({ t, asleep, blinking, eyeOffset = { x: 0, y: 0 } }: { t: CompanionTheme; asleep: boolean; blinking: boolean; eyeOffset?: { x: number; y: number } }) {
   return (
     <>
       {/* Bold angular antenna */}
@@ -250,6 +195,151 @@ function ZeeBody({ t, asleep, blinking, eyeOffset = { x: 0, y: 0 } }: { t: Compa
   );
 }
 
+function BubblesBody({ t, asleep, blinking, eyeOffset = { x: 0, y: 0 } }: { t: CompanionTheme; asleep: boolean; blinking: boolean; eyeOffset?: { x: number; y: number } }) {
+  return (
+    <>
+      {/* Bubble antenna — a tiny floating bubble */}
+      <motion.g animate={{ y: [-1, -2.6, -1], opacity: [0.7, 1, 0.7] }}
+        transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}>
+        <line x1="16" y1="4" x2="16" y2="2" stroke={t.primary} strokeWidth="1.2" strokeLinecap="round" opacity="0.7" />
+        <circle cx="16" cy="1.2" r="1.4" fill="none" stroke={t.primary} strokeWidth="0.8" />
+      </motion.g>
+      {/* Wobbly round blob body — extra round, extra soft */}
+      <motion.rect
+        x="4" y="6" width="24" height="22"
+        rx="12"
+        fill="white" stroke="rgba(0,0,0,0.04)" strokeWidth="0.8"
+        animate={{ scale: [1, 1.02, 0.99, 1] }}
+        transition={{ duration: 3.2, repeat: Infinity, ease: "easeInOut" }}
+        style={{ transformOrigin: "16px 17px" }}
+      />
+      {/* Water highlight — a little shine on the top-left */}
+      <rect x="7" y="8" width="3" height="2" rx="1" fill={t.secondary} opacity="0.35" />
+      {/* Face panel */}
+      <rect x="7" y="10" width="18" height="12" rx="6" fill={t.dark} />
+      {/* Eyes — big, joyful round pixels */}
+      <motion.g variants={blinkVar} initial="open"
+        animate={asleep ? "blink" : blinking ? "blink" : "open"}
+        style={{ originY: "15px", x: eyeOffset.x, y: eyeOffset.y }}>
+        <rect x="10" y="13" width="4.2" height="4.2" rx="1.4" fill={t.eyeColor} />
+        <rect x="17.8" y="13" width="4.2" height="4.2" rx="1.4" fill={t.eyeColor} />
+      </motion.g>
+      {/* Eye highlights */}
+      {!asleep && (
+        <>
+          <rect x="10.4" y="13.4" width="1.4" height="1.4" rx="0.5" fill="white" opacity="0.75" />
+          <rect x="18.2" y="13.4" width="1.4" height="1.4" rx="0.5" fill="white" opacity="0.75" />
+        </>
+      )}
+      {/* Cheeks */}
+      {!asleep && <><rect x="7" y="17" width="2.5" height="2" rx="1" fill={t.cheekColor} />
+      <rect x="22.5" y="17" width="2.5" height="2" rx="1" fill={t.cheekColor} /></>}
+      {/* Mouth — happy open smile */}
+      {asleep ? (
+        <motion.rect x="14" y="19" width="4" height="1.2" rx="0.6" fill="#3A4658"
+          animate={{ opacity: [0.4, 0.8, 0.4] }} transition={{ duration: 3, repeat: Infinity }} />
+      ) : (
+        <path d="M 13.6 19 Q 16 21.4 18.4 19" fill="none" stroke="#3A4658" strokeWidth="1.1" strokeLinecap="round" />
+      )}
+      {/* No feet — blobs don't have feet. A soft puddle base instead */}
+      <ellipse cx="16" cy="29" rx="7" ry="1.6" fill={t.secondary} opacity="0.25" />
+    </>
+  );
+}
+
+function CapyBody({ t, asleep, blinking, eyeOffset = { x: 0, y: 0 } }: { t: CompanionTheme; asleep: boolean; blinking: boolean; eyeOffset?: { x: number; y: number } }) {
+  return (
+    <>
+      {/* Little rounded ears on top */}
+      <motion.g animate={{ y: [-0.4, -1.2, -0.4] }}
+        transition={{ duration: 3.4, repeat: Infinity, ease: "easeInOut" }}>
+        <rect x="7" y="4" width="4" height="4" rx="1.6" fill="white" stroke="rgba(0,0,0,0.04)" strokeWidth="0.6" />
+        <rect x="21" y="4" width="4" height="4" rx="1.6" fill="white" stroke="rgba(0,0,0,0.04)" strokeWidth="0.6" />
+      </motion.g>
+      {/* Cozy barrel body — wide and calm */}
+      <rect x="3.5" y="7" width="25" height="21" rx="9" fill="white" stroke="rgba(0,0,0,0.04)" strokeWidth="0.8" />
+      {/* Muzzle panel — slightly warmer face bg */}
+      <rect x="7" y="11" width="18" height="11.5" rx="5" fill={t.dark} />
+      {/* Eyes — relaxed, half-lidded calm look */}
+      <motion.g variants={blinkVar} initial="open"
+        animate={asleep ? "blink" : blinking ? "blink" : "open"}
+        style={{ originY: "14.5px", x: eyeOffset.x, y: eyeOffset.y }}>
+        <rect x="10" y="13" width="3.8" height="3.2" rx="1.2" fill={t.eyeColor} />
+        <rect x="18.2" y="13" width="3.8" height="3.2" rx="1.2" fill={t.eyeColor} />
+      </motion.g>
+      {!asleep && (
+        <>
+          <rect x="10.4" y="13.3" width="1.2" height="1.2" rx="0.4" fill="white" opacity="0.6" />
+          <rect x="18.6" y="13.3" width="1.2" height="1.2" rx="0.4" fill="white" opacity="0.6" />
+        </>
+      )}
+      {/* Cheeks */}
+      {!asleep && <><rect x="7" y="16.5" width="2.5" height="2" rx="1" fill={t.cheekColor} />
+      <rect x="22.5" y="16.5" width="2.5" height="2" rx="1" fill={t.cheekColor} /></>}
+      {/* Mouth — tiny, unbothered */}
+      {asleep ? (
+        <motion.rect x="14.4" y="19" width="3.2" height="1" rx="0.5" fill="#3A4658"
+          animate={{ opacity: [0.4, 0.8, 0.4] }} transition={{ duration: 3, repeat: Infinity }} />
+      ) : (
+        <rect x="14.4" y="19" width="3.2" height="1.3" rx="0.65" fill="#3A4658" />
+      )}
+      {/* Sturdy little feet */}
+      <rect x="8" y="27" width="5.5" height="3" rx="1.5" fill="white" stroke="rgba(0,0,0,0.04)" strokeWidth="0.5" />
+      <rect x="18.5" y="27" width="5.5" height="3" rx="1.5" fill="white" stroke="rgba(0,0,0,0.04)" strokeWidth="0.5" />
+    </>
+  );
+}
+
+function IvyBody({ t, asleep, blinking, eyeOffset = { x: 0, y: 0 } }: { t: CompanionTheme; asleep: boolean; blinking: boolean; eyeOffset?: { x: number; y: number } }) {
+  return (
+    <>
+      {/* Sprout antenna — a tiny leaf */}
+      <motion.g animate={{ rotate: [0, 5, -5, 0], y: [-0.6, -1.8, -0.6] }}
+        transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+        style={{ transformOrigin: "16px 4px" }}>
+        <line x1="16" y1="4" x2="16" y2="1.5" stroke={t.primary} strokeWidth="1.1" strokeLinecap="round" opacity="0.8" />
+        <path d="M 16 1.5 Q 18.6 0.4 18.8 3 Q 17 4.4 16 3 Z" fill={t.secondary} />
+      </motion.g>
+      {/* Gecko body — slightly longer, with a tail curl on the right */}
+      <rect x="4" y="6" width="23" height="22" rx="9" fill="white" stroke="rgba(0,0,0,0.04)" strokeWidth="0.8" />
+      <motion.path
+        d="M 27 22 Q 30.5 23 30 26.5 Q 29.6 29 27 28.5"
+        fill="none" stroke="white" strokeWidth="2.4" strokeLinecap="round"
+        animate={{ d: ["M 27 22 Q 30.5 23 30 26.5 Q 29.6 29 27 28.5", "M 27 22 Q 31 22.5 30.4 26 Q 29.6 28.6 27 28.5", "M 27 22 Q 30.5 23 30 26.5 Q 29.6 29 27 28.5"] }}
+        transition={{ duration: 3.4, repeat: Infinity, ease: "easeInOut" }}
+      />
+      {/* Face panel */}
+      <rect x="7" y="10" width="18" height="12" rx="5" fill={t.dark} />
+      {/* Eyes — alert, friendly */}
+      <motion.g variants={blinkVar} initial="open"
+        animate={asleep ? "blink" : blinking ? "blink" : "open"}
+        style={{ originY: "15px", x: eyeOffset.x, y: eyeOffset.y }}>
+        <rect x="10" y="13" width="3.8" height="3.8" rx="1" fill={t.eyeColor} />
+        <rect x="18.2" y="13" width="3.8" height="3.8" rx="1" fill={t.eyeColor} />
+      </motion.g>
+      {!asleep && (
+        <>
+          <rect x="10.4" y="13.3" width="1.3" height="1.3" rx="0.4" fill="white" opacity="0.7" />
+          <rect x="18.6" y="13.3" width="1.3" height="1.3" rx="0.4" fill="white" opacity="0.7" />
+        </>
+      )}
+      {/* Cheeks */}
+      {!asleep && <><rect x="7" y="17" width="2.5" height="2" rx="1" fill={t.cheekColor} />
+      <rect x="22.5" y="17" width="2.5" height="2" rx="1" fill={t.cheekColor} /></>}
+      {/* Mouth — ready to help */}
+      {asleep ? (
+        <motion.rect x="14" y="19" width="4" height="1.2" rx="0.6" fill="#3A4658"
+          animate={{ opacity: [0.4, 0.8, 0.4] }} transition={{ duration: 3, repeat: Infinity }} />
+      ) : (
+        <rect x="14" y="19" width="4" height="1.6" rx="0.8" fill="#3A4658" />
+      )}
+      {/* Quick gecko feet */}
+      <rect x="9" y="27" width="4.5" height="3" rx="1.4" fill="white" stroke="rgba(0,0,0,0.04)" strokeWidth="0.5" />
+      <rect x="18.5" y="27" width="4.5" height="3" rx="1.4" fill="white" stroke="rgba(0,0,0,0.04)" strokeWidth="0.5" />
+    </>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
@@ -268,7 +358,7 @@ export function Companion({ id, state, size = 80, unlockedCosmetics = [], moodSp
   const [eyeOffset, setEyeOffset] = useState({ x: 0, y: 0 });
   const [wakingUp, setWakingUp] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const theme = COMPANIONS.find((c) => c.id === id)!;
+  const theme = COMPANIONS.find((c) => c.id === id) ?? COMPANIONS[0];
   const asleep = state === "sleeping";
   const prevState = useRef(state);
 
@@ -329,7 +419,13 @@ export function Companion({ id, state, size = 80, unlockedCosmetics = [], moodSp
     return () => clearTimeout(timer);
   }, [asleep, moodSpeed]);
 
-  const Body = id === "kai" ? KaiBody : id === "zee" ? ZeeBody : PixBody;
+  const Body =
+    id === "kai" ? KaiBody :
+    id === "ren" ? RenBody :
+    id === "bubbles" ? BubblesBody :
+    id === "capy" ? CapyBody :
+    id === "ivy" ? IvyBody :
+    PixBody;
 
   // Scale the float animation duration by mood speed
   const floatVariants = pixFloat;
@@ -470,8 +566,8 @@ function Cosmetics({ id, unlocked, theme }: { id: CompanionId; unlocked: string[
         </g>
       )}
 
-      {/* Zee: Curiosity Spark (tier 1) */}
-      {id === "zee" && unlocked.includes("zee-tier1") && (
+      {/* Ren: Curiosity Spark (tier 1) */}
+      {id === "ren" && unlocked.includes("ren-tier1") && (
         <motion.g
           animate={{ opacity: [0.5, 1, 0.5] }}
           transition={{ duration: 2, repeat: Infinity }}
@@ -480,8 +576,8 @@ function Cosmetics({ id, unlocked, theme }: { id: CompanionId; unlocked: string[
         </motion.g>
       )}
 
-      {/* Zee: Galaxy Trail (tier 2) */}
-      {id === "zee" && unlocked.includes("zee-tier2") && (
+      {/* Ren: Galaxy Trail (tier 2) */}
+      {id === "ren" && unlocked.includes("ren-tier2") && (
         <motion.g
           animate={{ opacity: [0.3, 0.8, 0.3] }}
           transition={{ duration: 3, repeat: Infinity }}
@@ -492,8 +588,70 @@ function Cosmetics({ id, unlocked, theme }: { id: CompanionId; unlocked: string[
         </motion.g>
       )}
 
+      {/* Bubbles: Foam Friend (tier 1) */}
+      {id === "bubbles" && unlocked.includes("bubbles-tier1") && (
+        <motion.g
+          animate={{ y: [-0.6, -1.6, -0.6], opacity: [0.6, 0.95, 0.6] }}
+          transition={{ duration: 2.2, repeat: Infinity }}
+        >
+          <circle cx="25" cy="7" r="1.6" fill="none" stroke={theme.primary} strokeWidth="0.7" />
+          <circle cx="27.6" cy="10" r="0.8" fill="none" stroke={theme.primary} strokeWidth="0.5" opacity="0.7" />
+        </motion.g>
+      )}
+
+      {/* Bubbles: Raindrop Charm (tier 2) */}
+      {id === "bubbles" && unlocked.includes("bubbles-tier2") && (
+        <motion.g
+          animate={{ opacity: [0.4, 0.9, 0.4] }}
+          transition={{ duration: 2.6, repeat: Infinity }}
+        >
+          <path d="M 6 6 Q 7.4 8 6 9.4 Q 4.6 8 6 6 Z" fill={theme.secondary} />
+        </motion.g>
+      )}
+
+      {/* Capy: Orange Slice (tier 1) — the classic capybara treat */}
+      {id === "capy" && unlocked.includes("capy-tier1") && (
+        <g transform="translate(13.5 -1)">
+          <circle cx="2.5" cy="2.5" r="2.5" fill="#FFB347" />
+          <circle cx="2.5" cy="2.5" r="1.6" fill="#FFE0A3" />
+          <g stroke="#FFB347" strokeWidth="0.4">
+            <line x1="2.5" y1="1" x2="2.5" y2="4" />
+            <line x1="1" y1="2.5" x2="4" y2="2.5" />
+          </g>
+        </g>
+      )}
+
+      {/* Capy: Cozy Blanket (tier 2) */}
+      {id === "capy" && unlocked.includes("capy-tier2") && (
+        <g>
+          <path d="M 6 23 Q 16 26 26 23 L 25.4 26 Q 16 28.6 6.6 26 Z" fill={theme.secondary} opacity="0.8" />
+          <rect x="12" y="25.5" width="3" height="4" rx="1" fill={theme.secondary} opacity="0.65" transform="rotate(12 13.5 27.5)" />
+        </g>
+      )}
+
+      {/* Ivy: Vine Wrap (tier 1) */}
+      {id === "ivy" && unlocked.includes("ivy-tier1") && (
+        <g>
+          <path d="M 5 20 Q 3 17 5 14" fill="none" stroke="#4ade80" strokeWidth="0.8" strokeLinecap="round" opacity="0.85" />
+          <path d="M 4.2 16.4 Q 2.6 15.6 2.4 14 Q 4 14.2 4.6 15.4 Z" fill="#4ade80" opacity="0.85" />
+        </g>
+      )}
+
+      {/* Ivy: Berry Charm (tier 2) */}
+      {id === "ivy" && unlocked.includes("ivy-tier2") && (
+        <motion.g
+          animate={{ opacity: [0.5, 1, 0.5] }}
+          transition={{ duration: 2.4, repeat: Infinity }}
+        >
+          <circle cx="25.5" cy="8" r="1" fill="#7BE3A6" />
+          <circle cx="27.8" cy="10.2" r="0.7" fill="#7BE3A6" opacity="0.8" />
+          <line x1="25.5" y1="8" x2="27.8" y2="10.2" stroke="#4ade80" strokeWidth="0.4" />
+        </motion.g>
+      )}
+
       {/* Tier 3 — subtle aura boost for all companions */}
-      {(unlocked.includes("pix-tier3") || unlocked.includes("kai-tier3") || unlocked.includes("zee-tier3")) && (
+      {(unlocked.includes("pix-tier3") || unlocked.includes("kai-tier3") || unlocked.includes("ren-tier3") ||
+        unlocked.includes("bubbles-tier3") || unlocked.includes("capy-tier3") || unlocked.includes("ivy-tier3")) && (
         <motion.circle
           cx="16"
           cy="16"

@@ -1,15 +1,34 @@
-// Tests: companion theme config completeness (pix / kai / zee aligned)
+// Tests: companion system — exactly 6 companions, one shared system
 import test from "node:test";
 import assert from "node:assert/strict";
 import { COMPANIONS, getCompanion } from "../dist-test/src/lib/companion-config.js";
 
-const EXPECTED_IDS = ["pix", "kai", "zee"];
+// Pix, Kai, Ren are Quip originals; Bubbles, Capy, Ivy joined from Skales.
+const EXPECTED_IDS = ["pix", "kai", "ren", "bubbles", "capy", "ivy"];
 
-test("companions are exactly pix, kai, zee — no stray 'ren' ID", () => {
+test("Quip has exactly 6 companions", () => {
+  assert.equal(COMPANIONS.length, 6);
   assert.deepEqual(
     COMPANIONS.map((c) => c.id).sort(),
     [...EXPECTED_IDS].sort()
   );
+});
+
+test("originals Pix, Kai and Ren remain functional (ren replaced old 'zee')", () => {
+  for (const id of ["pix", "kai", "ren"]) {
+    const c = getCompanion(id);
+    assert.equal(c.id, id);
+    assert.ok(c.name.length > 0);
+  }
+  // The old "zee" id no longer exists as a real companion — it falls back to pix
+  assert.equal(getCompanion("zee").id, "pix");
+  assert.equal(getCompanion("ren").id, "ren");
+});
+
+test("Skales-origin companions (bubbles, capy, ivy) are integrated as first-class companions", () => {
+  assert.equal(getCompanion("bubbles").name, "Bubbles");
+  assert.equal(getCompanion("capy").name, "Capy");
+  assert.equal(getCompanion("ivy").name, "Ivy");
 });
 
 test("every companion has complete theme fields in Quip's palette", () => {
@@ -26,12 +45,18 @@ test("every companion has complete theme fields in Quip's palette", () => {
   }
 });
 
+test("all 6 companions have distinct primary colors (visual identity)", () => {
+  const primaries = COMPANIONS.map((c) => c.primary);
+  assert.equal(new Set(primaries).size, 6, "primary colors should be unique");
+});
+
+test("no companion uses the broken all-black theme", () => {
+  for (const companion of COMPANIONS) {
+    assert.notEqual(companion.primary, "#1a1a1a");
+  }
+});
+
 test("getCompanion falls back to pix for unknown ids", () => {
   const c = getCompanion("not-a-companion");
   assert.equal(c.id, "pix");
-});
-
-test("zee no longer uses the broken all-black theme", () => {
-  const zee = getCompanion("zee");
-  assert.notEqual(zee.primary, "#1a1a1a");
 });

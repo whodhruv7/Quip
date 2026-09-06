@@ -34,7 +34,11 @@ export type ActionType =
   | "scroll"
   | "clipboard"
   | "read_page"
-  | "quiz"
+  | "window_control"
+  | "screen"
+  | "windows_list"
+  | "file_op"
+  | "site_search"
   | "system_action"
   | "chat";
 
@@ -255,27 +259,6 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
     };
   }
 
-  // ─── QUIZ ────────────────────────────────────────────────────────────────
-  if (/\b(quiz me|quiz myself|test me|make (me )?a quiz|create (me )?a quiz|generate (me )?a quiz|start a quiz)\b/.test(text)) {
-    const fromMatch = text.match(/\b(?:from|about|on)\s+(.+)$/);
-    return {
-      ...base,
-      action: "quiz",
-      target: "quiz",
-      query: fromMatch?.[1]?.trim() ?? "",
-      isTask: true,
-      isMultiStep: false,
-      steps: [{
-        action: "quiz",
-        target: "quiz",
-        params: { source: fromMatch?.[1]?.trim() ?? "", query: fromMatch?.[1]?.trim() ?? "" },
-        description: "Create a quiz",
-      }],
-      summary: "Starting a quiz",
-      confidence: 0.95,
-    };
-  }
-
   // ─── PLAY MEDIA (handles "open youtube and play mitwa" correctly) ───────
   const hasPlay = PLAY_WORDS.some((w) => text.includes(w));
   if (hasPlay) {
@@ -416,6 +399,26 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
     };
   }
 
+  // ─── LIST WINDOWS ───────────────────────────────────────────────────────
+  if (/\b(list|show|what|which)\b/.test(text) && /\bopen windows\b|\bwindows (?:are )?(?:open|running)\b|\blist windows\b/.test(text)) {
+    return {
+      ...base,
+      action: "windows_list",
+      target: "windows",
+      query: "",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "windows_list",
+        target: "windows",
+        params: {},
+        description: "List the open windows",
+      }],
+      summary: "Listing open windows",
+      confidence: 0.85,
+    };
+  }
+
   // Close / focus apps: "close vs code", "focus chrome"
   for (const [words, action] of [[CLOSE_WORDS, "close_app"], [FOCUS_WORDS, "focus_app"]] as const) {
     const verb = startsWithAny(text, words as unknown as string[]) ?? (words.some((w) => text.startsWith(w)) ? words[0] : null);
@@ -528,6 +531,279 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
         description: `Scroll ${scrollMatch[1] ?? "down"}`,
       }],
       summary: `Scrolled ${scrollMatch[1] ?? "down"}`,
+      confidence: 0.9,
+    };
+  }
+
+  // ─── SCREENSHOT ─────────────────────────────────────────────────────────
+  if (/\b(screenshot|screen ?shot|capture (?:the )?screen|grab (?:the )?screen)\b/.test(text)) {
+    return {
+      ...base,
+      action: "screen",
+      target: "screen",
+      query: "",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "screen",
+        target: "screen",
+        params: {},
+        description: "Capture the screen",
+      }],
+      summary: "Capturing the screen",
+      confidence: 0.9,
+    };
+  }
+
+  // ─── WINDOW CONTROLS (minimize / maximize / restore / move / resize) ────
+  const winVerb = text.match(/^(minimize|maximize|restore|unmaximize)\s+(?:the\s+|my\s+)?([\w\s.-]*?)(?:\s+window)?$/);
+  if (winVerb) {
+    const op = winVerb[1] === "unmaximize" ? "restore" : winVerb[1];
+    const target = winVerb[2].replace(/^(the|my)\s+/, "").replace(/\s+window$/, "").trim();
+    return {
+      ...base,
+      action: "window_control",
+      target: target || "foreground",
+      query: op,
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "window_control",
+        target: target || "foreground",
+        params: { op, target },
+        description: `${op[0].toUpperCase() + op.slice(1)} ${target ? `"${target}"` : "the foreground"} window`,
+      }],
+      summary: `${op} window`,
+      confidence: 0.85,
+    };
+  }
+  const winMove = text.match(/^move\s+(?:the\s+)?(.+?)\s+window\s+to\s+(\d+)\s*[,\s]\s*(\d+)$/);
+  if (winMove) {
+    const target = winMove[1].replace(/^(the|my)\s+/, "").trim();
+    return {
+      ...base,
+      action: "window_control",
+      target,
+      query: "move",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "window_control",
+        target,
+        params: { op: "move", target, x: winMove[2], y: winMove[3] },
+        description: `Move the "${target}" window to (${winMove[2]}, ${winMove[3]})`,
+      }],
+      summary: "Moving window",
+      confidence: 0.8,
+    };
+  }
+  const winResize = text.match(/^resize\s+(?:the\s+)?(.+?)\s+window\s+to\s+(\d+)\s*(?:x|\u00d7|by|,|\s)\s*(\d+)$/);
+  if (winResize) {
+    const target = winResize[1].replace(/^(the|my)\s+/, "").trim();
+    return {
+      ...base,
+      action: "window_control",
+      target,
+      query: "resize",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "window_control",
+        target,
+        params: { op: "resize", target, width: winResize[2], height: winResize[3] },
+        description: `Resize the "${target}" window to ${winResize[2]}×${winResize[3]}`,
+      }],
+      summary: "Resizing window",
+      confidence: 0.8,
+    };
+  }
+
+  // ─── CLICK VARIANTS (double / right) ─────────────────────────────────────
+  const clickVar = text.match(/^(double|right)\s+click(?:\s+at)?\s+(\d+)\s*[,\s]\s*(\d+)$/);
+  if (clickVar) {
+    return {
+      ...base,
+      action: "click",
+      target: `${clickVar[2]},${clickVar[3]}`,
+      query: clickVar[1],
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "click",
+        target: `${clickVar[2]},${clickVar[3]}`,
+        params: { x: clickVar[2], y: clickVar[3], variant: clickVar[1] === "double" ? "double" : "right" },
+        description: `${clickVar[1] === "double" ? "Double-click" : "Right-click"} at (${clickVar[2]}, ${clickVar[3]})`,
+      }],
+      summary: "Clicked",
+      confidence: 0.9,
+    };
+  }
+
+  // ─── FILE OPERATIONS ─────────────────────────────────────────────────────
+  const folderCreate = text.match(/^(?:create|make|new)\s+(?:a\s+)?(?:new\s+)?(?:folder|directory)\s+(?:called\s+|named\s+)?(.+)$/);
+  if (folderCreate) {
+    const p = folderCreate[1].replace(/^(?:the|my)\s+/, "").trim();
+    return {
+      ...base,
+      action: "file_op",
+      target: p,
+      query: "mkdir",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "file_op",
+        target: p,
+        params: { op: "mkdir", path: p },
+        description: `Create folder "${p}"`,
+      }],
+      summary: "Creating folder",
+      confidence: 0.85,
+    };
+  }
+  const fileCreate = text.match(/^(?:create|make|new)\s+(?:a\s+)?(?:new\s+)?file\s+(?:called\s+|named\s+)?(.+)$/);
+  if (fileCreate) {
+    const p = fileCreate[1].replace(/^(?:the|my)\s+/, "").trim();
+    return {
+      ...base,
+      action: "file_op",
+      target: p,
+      query: "write",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "file_op",
+        target: p,
+        params: { op: "write", path: p, content: "" },
+        description: `Create file "${p}"`,
+      }],
+      summary: "Creating file",
+      confidence: 0.85,
+    };
+  }
+  const fileRead = text.match(/^(?:read|show me)\s+(?:the\s+)?file\s+(.+)$/);
+  if (fileRead) {
+    const p = fileRead[1].replace(/^(?:the|my)\s+/, "").trim();
+    return {
+      ...base,
+      action: "file_op",
+      target: p,
+      query: "read",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "file_op",
+        target: p,
+        params: { op: "read", path: p },
+        description: `Read file "${p}"`,
+      }],
+      summary: "Reading file",
+      confidence: 0.85,
+    };
+  }
+  const fileDelete = text.match(/^(?:delete|remove)\s+(?:the\s+)?(?:file|folder)\s+(.+)$/);
+  if (fileDelete) {
+    const p = fileDelete[1].replace(/^(?:the|my)\s+/, "").trim();
+    return {
+      ...base,
+      action: "file_op",
+      target: p,
+      query: "delete",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "file_op",
+        target: p,
+        params: { op: "delete", path: p },
+        description: `Delete "${p}"`,
+      }],
+      summary: "Deleting",
+      confidence: 0.85,
+    };
+  }
+  const fileCopy = text.match(/^copy\s+(?:the\s+)?(?:file\s+|folder\s+)?(.+?)\s+to\s+(.+)$/);
+  if (fileCopy && !/\bclipboard\b/.test(text)) {
+    const from = fileCopy[1].replace(/^(?:the|my)\s+/, "").trim();
+    const to = fileCopy[2].trim();
+    if (/\bfile\b|\bfolder\b|\.(txt|md|pdf|docx?|xlsx?|pptx?|png|jpe?g|csv|json|zip|log)\b/i.test(raw)) {
+      return {
+        ...base,
+        action: "file_op",
+        target: from,
+        query: "copy",
+        isTask: true,
+        isMultiStep: false,
+        steps: [{
+          action: "file_op",
+          target: from,
+          params: { op: "copy", from, to },
+          description: `Copy "${from}" to "${to}"`,
+        }],
+        summary: "Copying",
+        confidence: 0.8,
+      };
+    }
+  }
+  const fileMove = text.match(/^move\s+(?:the\s+)?(?:file|folder)\s+(.+?)\s+to\s+(.+)$/);
+  if (fileMove) {
+    const from = fileMove[1].replace(/^(?:the|my)\s+/, "").trim();
+    const to = fileMove[2].trim();
+    return {
+      ...base,
+      action: "file_op",
+      target: from,
+      query: "move",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "file_op",
+        target: from,
+        params: { op: "move", from, to },
+        description: `Move "${from}" to "${to}"`,
+      }],
+      summary: "Moving",
+      confidence: 0.8,
+    };
+  }
+  const fileSearch = text.match(/^(?:find|locate|search\s+for)\s+(?:a\s+)?files?\s+(?:called\s+|named\s+|with\s+)?(.+)$/);
+  if (fileSearch) {
+    const q = fileSearch[1].replace(/^(?:the|my)\s+/, "").replace(/[?]+$/, "").trim();
+    return {
+      ...base,
+      action: "file_op",
+      target: q,
+      query: "search",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "file_op",
+        target: q,
+        params: { op: "search", query: q },
+        description: `Search for files matching "${q}"`,
+      }],
+      summary: "Searching files",
+      confidence: 0.8,
+    };
+  }
+
+  // ─── SITE SEARCH (reddit / x / github / youtube) ─────────────────────────
+  const siteSearch = text.match(/\bsearch\s+(reddit|x|twitter|github|youtube)\s+for\s+(.+)$/);
+  if (siteSearch) {
+    const site = siteSearch[1] === "twitter" ? "x" : siteSearch[1];
+    const q = siteSearch[2].replace(/[?]+$/, "").trim();
+    return {
+      ...base,
+      action: "site_search",
+      target: site,
+      query: q,
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "site_search",
+        target: site,
+        params: { site, query: q },
+        description: `Search ${site === "x" ? "X" : site[0].toUpperCase() + site.slice(1)} for "${q}"`,
+      }],
+      summary: `Searching ${site}`,
       confidence: 0.9,
     };
   }

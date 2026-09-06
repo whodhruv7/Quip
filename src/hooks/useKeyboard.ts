@@ -5,7 +5,7 @@
 //   Esc               → close chat panel (or settings if open)
 //   Cmd/Ctrl+,        → open settings
 //   Cmd/Ctrl+Shift+N  → new chat
-//   Cmd/Ctrl+1/2/3    → switch companion (Pix/Kai/Zee)
+//   Cmd/Ctrl+1/2/3    → switch companion (Pix/Kai/Ren)
 //
 // Respects input fields — shortcuts don't fire when typing in a textarea/input
 // (except Esc, which clears the input).
@@ -17,7 +17,7 @@ interface KeyboardShortcutsProps {
   onCloseChat: () => void;
   onOpenSettings: () => void;
   onNewChat: () => void;
-  onSwitchCompanion: (id: "pix" | "kai" | "zee") => void;
+  onSwitchCompanion: (id: "pix" | "kai" | "ren") => void;
   isSettingsOpen: boolean;
 }
 
@@ -76,7 +76,7 @@ export function useKeyboardShortcuts({
       // Cmd/Ctrl+1/2/3 — switch companion
       if (mod && (e.key === "1" || e.key === "2" || e.key === "3")) {
         e.preventDefault();
-        const companions = ["pix", "kai", "zee"] as const;
+        const companions = ["pix", "kai", "ren"] as const;
         onSwitchCompanion(companions[Number(e.key) - 1]);
         return;
       }
