@@ -43,9 +43,12 @@ async function getAppIndex() {
         return (0, app_discovery_1.getCachedAppIndex)() ?? [];
     }
 }
-/** Allow tests / manual rescan to invalidate the cached app index. */
+/** Allow tests / manual rescan to invalidate the cached app index.
+ *  Clears BOTH the registry's in-flight promise and the discovery cache —
+ *  one entry point, no stale index can survive a rescan. */
 function invalidateAppIndex() {
     appIndexPromise = null;
+    (0, app_discovery_1.invalidateAppIndex)();
 }
 // ─── Executors ───────────────────────────────────────────────────────────────
 const Executors = {
@@ -180,6 +183,24 @@ const Executors = {
             return fromVerification(await (0, desktop_controller_1.executeDesktopAction)({ type: "click.variant", variant, x, y }));
         }
         return fromVerification(await (0, desktop_controller_1.executeDesktopAction)({ type: "click", x, y }));
+    },
+    async mouse_move(step, _ctx) {
+        const x = parseFloat(step.params.x ?? "");
+        const y = parseFloat(step.params.y ?? "");
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            return { success: false, output: "I need coordinates to move the mouse.", note: "missing-coords" };
+        }
+        return fromVerification(await (0, desktop_controller_1.executeDesktopAction)({ type: "mouse.move", x, y }));
+    },
+    async drag(step, _ctx) {
+        const fromX = parseFloat(step.params.fromX ?? "");
+        const fromY = parseFloat(step.params.fromY ?? "");
+        const toX = parseFloat(step.params.toX ?? "");
+        const toY = parseFloat(step.params.toY ?? "");
+        if (![fromX, fromY, toX, toY].every(Number.isFinite)) {
+            return { success: false, output: "I need a start and an end point to drag.", note: "missing-coords" };
+        }
+        return fromVerification(await (0, desktop_controller_1.executeDesktopAction)({ type: "drag", from: { x: fromX, y: fromY }, to: { x: toX, y: toY } }));
     },
     async scroll(step, _ctx) {
         return fromVerification(await (0, desktop_controller_1.executeDesktopAction)({

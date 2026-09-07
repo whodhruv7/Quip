@@ -40,6 +40,7 @@ export function useChat(
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequestUI | null>(null);
+  const [taskProgress, setTaskProgress] = useState<TaskProgress | null>(null);
   const activeRequestId = useRef<string | null>(null);
   const quipApiRef = useRef(quipApi);
   quipApiRef.current = quipApi;
@@ -56,6 +57,8 @@ export function useChat(
     setSessions(loadSessions().filter((s) => s.companionId === companionId));
     setError(null);
     setBusy(false);
+    setApprovalRequest(null);
+    setTaskProgress(null);
     activeRequestId.current = null;
     try {
       quipApiRef.current.setCompanion(companionId);
@@ -103,11 +106,17 @@ export function useChat(
       setApprovalRequest(req);
     });
 
+    // Live step progress for multi-step tasks — the trust layer the user sees.
+    const offProgress = quipApiRef.current.onTaskProgress((p: TaskProgress) => {
+      setTaskProgress(p);
+    });
+
     return () => {
       offChunk();
       offDone();
       offErr();
       offConfirm();
+      offProgress();
     };
   }, [companionId]);
 
@@ -157,6 +166,7 @@ export function useChat(
             : { success: false, summary: taskResult.summary, notes: taskResult.notes },
         };
         setMessages((prev) => [...prev, assistantMsg]);
+        setTaskProgress(null);
         setBusy(false);
         return;
       }
@@ -171,18 +181,18 @@ export function useChat(
       };
 
       activeRequestId.current = assistantMsg.id;
-      let currentMessages: ChatMessage[] = [];
-      setMessages((prev) => {
-        currentMessages = prev;
-        return [...prev, assistantMsg];
-      });
-
-      const history = currentMessages
-        .filter((m) => !m.proactive)
+      // History from the ref — the ref is committed after the user message
+      // render, so it ALWAYS reflects reality. (Reading a state updater's
+      // capture here sent the model stale or empty history, which is why
+      // follow-ups used to lose context.)
+      const history = messagesRef.current
+        .filter((m) => !m.proactive && !m.streaming && m.content.trim().length > 0)
         .map((m) => ({
           role: m.role,
           content: m.content,
         }));
+
+      setMessages((prev) => [...prev, assistantMsg]);
 
       try {
         await quipApiRef.current.chatSend({
@@ -200,6 +210,7 @@ export function useChat(
           )
         );
         activeRequestId.current = null;
+        setTaskProgress(null);
         setBusy(false);
       }
     },
@@ -266,5 +277,5 @@ export function useChat(
   }, []);
   useProactiveCheckIn(messages, setMessages, busy, companionId);
 
-  return { messages, busy, error, send, clear, addNotice, sessions, newChat, openSession, clearError, approvalRequest, resolveApproval };
+  return { messages, busy, error, send, clear, addNotice, sessions, newChat, openSession, clearError, approvalRequest, resolveApproval, taskProgress };
 }

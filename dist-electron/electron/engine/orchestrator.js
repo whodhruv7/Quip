@@ -18,7 +18,7 @@
 //   - App index cached 24h; no repeated environment scans per message.
 // ─────────────────────────────────────────────────────────────────────────────
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.orchestrator = void 0;
+exports.orchestrator = exports.RETRYABLE_ACTIONS = void 0;
 const intent_parser_v2_1 = require("./intent-parser-v2");
 const permission_modes_1 = require("./permission-modes");
 const tool_registry_1 = require("./tool-registry");
@@ -26,6 +26,24 @@ const context_store_1 = require("./context-store");
 const ASSIST_SCHEMA = `Reply with ONLY compact JSON, no prose:
 {"action":"open|play|search|navigate|type|click|scroll|close|focus|clipboard|read|chat","target":"short target name","query":"search/song/file text or empty","url":"https URL if navigating, else empty"}
 Rules: "open VS Code" → open,target:"vs code". "open YouTube and play X" → play,target:"youtube",query:"X". Open installed desktop apps as apps, websites as websites.`;
+/**
+ * Actions that may be retried after a failure — loading/reading a state is
+ * idempotent. Interactive input (type/press/click/drag/clipboard write) is
+ * NOT: a retry would double-type, double-click or duplicate a paste.
+ */
+exports.RETRYABLE_ACTIONS = new Set([
+    "open_app",
+    "open_website",
+    "open_url",
+    "open_folder",
+    "open_file",
+    "search_web",
+    "search_youtube",
+    "site_search",
+    "read_page",
+    "screen",
+    "windows_list",
+]);
 class Orchestrator {
     modelRouterRef = null;
     /** Injected once by main.ts (keeps module importable in tests). */
@@ -184,12 +202,23 @@ class Orchestrator {
         const t = command.toLowerCase();
         return /\b(open|launch|start|play|search|close|focus|type|press|click|scroll|copy|paste|read|goto|go to|find|kill|navigate)\b/.test(t);
     }
-    /** Build a full intent from model-assist JSON. */
+    /** Build a full intent from model-assist JSON — or fall back to the
+     *  deterministic parse when the assist is not actionable. Guards prevent
+     *  the model from inventing empty-target opens or corner clicks. */
     buildIntentFromAssist(original, normalized, assist) {
         const action = String(assist.action).toLowerCase();
-        const target = String(assist.target ?? "");
-        const query = String(assist.query ?? "");
-        const url = String(assist.url ?? "");
+        const target = String(assist.target ?? "").trim();
+        const query = String(assist.query ?? "").trim();
+        const url = String(assist.url ?? "").trim();
+        // A single-flight validation gate: the assist must name what to act on.
+        const needsTarget = ["open", "close", "focus", "type", "navigate", "read"].includes(action);
+        const needsSomething = ["play", "search"].includes(action);
+        if (needsTarget && !target && !url)
+            return (0, intent_parser_v2_1.parseIntentV2)(original);
+        if (needsSomething && !query && !target)
+            return (0, intent_parser_v2_1.parseIntentV2)(original);
+        if (action === "chat")
+            return (0, intent_parser_v2_1.parseIntentV2)(original);
         const stepMap = {
             open: url
                 ? { action: "open_url", target: url, params: { url }, description: `Open ${target || url}` }
@@ -209,9 +238,10 @@ class Orchestrator {
             navigate: url
                 ? { action: "open_url", target: url, params: { url }, description: `Go to ${url}` }
                 : { action: "open_website", target, params: { url: "", label: target }, description: `Go to ${target}` },
-            type: { action: "type_text", target: "", params: { text: query }, description: `Type "${query}"` },
-            click: { action: "click", target: "", params: { x: "0", y: "0" }, description: "Click" },
-            scroll: { action: "scroll", target: "", params: { deltaY: "-360" }, description: "Scroll" },
+            type: { action: "type_text", target: "", params: { text: query || target }, description: `Type "${query || target}"` },
+            // The cursor's CURRENT position — never a blind (0,0) corner click.
+            click: { action: "click", target: "cursor", params: {}, description: "Click at the current cursor position" },
+            scroll: { action: "scroll", target: "down", params: { deltaY: "-360" }, description: "Scroll down" },
             close: { action: "close_app", target, params: { target }, description: `Close ${target}` },
             focus: { action: "focus_app", target, params: { target }, description: `Focus ${target}` },
             clipboard: { action: "clipboard", target: "read", params: { mode: "read" }, description: "Read clipboard" },
@@ -220,6 +250,9 @@ class Orchestrator {
         const step = stepMap[action];
         if (!step) {
             return (0, intent_parser_v2_1.parseIntentV2)(original); // fall back to deterministic result
+        }
+        if (action === "type" && !(query || target)) {
+            return (0, intent_parser_v2_1.parseIntentV2)(original); // refuse to type nothing
         }
         return {
             original,
@@ -267,13 +300,17 @@ class Orchestrator {
         }
     }
     async executeWithRetry(step, ctx, maxRetries) {
+        // Retries are ONLY for idempotent actions. Re-sending type/press/click/
+        // clipboard after a failure would double-type or double-click — run
+        // those exactly once and report honestly.
+        const attempts = exports.RETRYABLE_ACTIONS.has(step.action) ? maxRetries : 0;
         let lastError = null;
-        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        for (let attempt = 0; attempt <= attempts; attempt++) {
             const result = await (0, tool_registry_1.executeTool)(step.action, step, ctx);
             if (result.success)
                 return result;
             lastError = result;
-            if (attempt < maxRetries) {
+            if (attempt < attempts) {
                 await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
             }
         }

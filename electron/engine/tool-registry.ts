@@ -21,6 +21,7 @@ import {
   getCachedAppIndex,
   resolveApp,
   launchApp,
+  invalidateAppIndex as invalidateDiscoveryCache,
   type InstalledApp,
 } from "./app-discovery";
 import { executeDesktopAction } from "./desktop-controller";
@@ -67,9 +68,12 @@ async function getAppIndex(): Promise<InstalledApp[]> {
   }
 }
 
-/** Allow tests / manual rescan to invalidate the cached app index. */
+/** Allow tests / manual rescan to invalidate the cached app index.
+ *  Clears BOTH the registry's in-flight promise and the discovery cache —
+ *  one entry point, no stale index can survive a rescan. */
 export function invalidateAppIndex(): void {
   appIndexPromise = null;
+  invalidateDiscoveryCache();
 }
 
 // ─── Executors ───────────────────────────────────────────────────────────────
@@ -220,6 +224,28 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
       return fromVerification(await executeDesktopAction({ type: "click.variant", variant, x, y }));
     }
     return fromVerification(await executeDesktopAction({ type: "click", x, y }));
+  },
+
+  async mouse_move(step, _ctx) {
+    const x = parseFloat(step.params.x ?? "");
+    const y = parseFloat(step.params.y ?? "");
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return { success: false, output: "I need coordinates to move the mouse.", note: "missing-coords" };
+    }
+    return fromVerification(await executeDesktopAction({ type: "mouse.move", x, y }));
+  },
+
+  async drag(step, _ctx) {
+    const fromX = parseFloat(step.params.fromX ?? "");
+    const fromY = parseFloat(step.params.fromY ?? "");
+    const toX = parseFloat(step.params.toX ?? "");
+    const toY = parseFloat(step.params.toY ?? "");
+    if (![fromX, fromY, toX, toY].every(Number.isFinite)) {
+      return { success: false, output: "I need a start and an end point to drag.", note: "missing-coords" };
+    }
+    return fromVerification(
+      await executeDesktopAction({ type: "drag", from: { x: fromX, y: fromY }, to: { x: toX, y: toY } })
+    );
   },
 
   async scroll(step, _ctx) {

@@ -78,7 +78,8 @@ const memoryExtractor = new MemoryExtractorBrain({
 // Execution Engine V2
 import { orchestrator } from "./engine/orchestrator";
 import { permissionSystem as execPermissionSystem, type ApprovalRequest } from "./engine/permission-modes";
-import { invalidateAppIndex } from "./engine/app-discovery";
+import { invalidateAppIndex } from "./engine/tool-registry";
+import { parseIntentV2 } from "./engine/intent-parser-v2";
 import { contextStore } from "./engine/context-store";
 
 // The orchestrator uses the model ONLY for ambiguous intent (compact schema,
@@ -687,9 +688,7 @@ ipcMain.handle(
 
     // Parse intent once for plan metadata (orchestrator re-parses internally;
     // this is a pure regex parse — no model call, negligible cost).
-    const intentInfo = await import("./engine/intent-parser-v2").then(
-      (m) => m.parseIntentV2(payload.command)
-    );
+    const intentInfo = parseIntentV2(payload.command);
 
     const result = await orchestrator.execute(payload.command, {
       platform,

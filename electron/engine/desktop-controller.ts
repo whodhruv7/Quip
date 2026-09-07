@@ -31,6 +31,7 @@ export type DesktopAction =
   | { type: "key"; keys: string[] }
   | { type: "click"; x?: number; y?: number }
   | { type: "click.variant"; variant: "double" | "right"; x?: number; y?: number }
+  | { type: "mouse.move"; x: number; y: number }
   | { type: "scroll"; deltaY: number }
   | { type: "clipboard.read" }
   | { type: "clipboard.write"; text: string }
@@ -111,7 +112,7 @@ async function focusWindow(target: string): Promise<ActionVerification> {
   );
 }
 
-/** Close an app window by title/process substring (graceful CloseMainWindow). */
+/** Close an app by title/process substring — ALL matching windows, verified. */
 async function closeWindow(target: string): Promise<ActionVerification> {
   const before = await windowWithTitleExists(target);
   if (!before) {
@@ -121,15 +122,18 @@ async function closeWindow(target: string): Promise<ActionVerification> {
       "close-target-not-found"
     );
   }
+  // Close EVERY matching top-level window — Chrome/Edge/Explorer often run
+  // several; closing only the first left the rest open.
   const res = await runCapture(
-    `powershell -NoProfile -Command "$w = Get-Process | Where-Object { $_.MainWindowTitle -like ${psQuote("*" + target + "*")} } | Select-Object -First 1; if ($w) { $w.CloseMainWindow() | Out-Null; Start-Sleep -Milliseconds 800; if ($w.HasExited) { 'closed' } else { 'close-sent' } } else { 'not-found' }"`,
+    `powershell -NoProfile -Command "$procs = @(Get-Process | Where-Object { $_.MainWindowTitle -like ${psQuote("*" + target + "*")} }); if ($procs.Count -gt 0) { $n = 0; foreach ($p in $procs) { try { if ($p.CloseMainWindow()) { $n++ } } catch {} }; Start-Sleep -Milliseconds 800; Write-Output ('closing:' + $n) } else { 'not-found' }"`,
       8000
   );
-  if (res && (res.stdout.includes("closed") || res.stdout.includes("close-sent"))) {
+  if (res && res.stdout.includes("closing:")) {
+    const count = res.stdout.split("closing:")[1]?.trim() ?? "0";
     const stillThere = await windowWithTitleExists(target);
     return stillThere
-      ? ok(`Sent close to "${target}" (window may still be shutting down).`, ["CloseMainWindow sent"])
-      : ok(`Closed "${target}".`, ["window no longer listed after close"]);
+      ? ok(`Sent close to "${target}" (${count} window${count === "1" ? "" : "s"}) — some may still be shutting down.`, [`close sent to ${count} window(s)`])
+      : ok(`Closed "${target}".`, [`close sent to ${count} window(s)`, "no matching windows remain"]);
   }
   return fail(`I couldn't close "${target}".`, ["CloseMainWindow failed"], "close-failed");
 }
@@ -225,15 +229,51 @@ async function mouseClickVariant(
   return fail(`I couldn't perform the ${variant} click.`, ["mouse_event failed"], "click-variant-failed");
 }
 
+/** Move the cursor and VERIFY it actually arrived (±2px). */
+async function mouseMove(x: number, y: number): Promise<ActionVerification> {
+  const res = await runCapture(
+    `powershell -NoProfile -Command "${MOUSE_ADD_TYPE}; [M]::SetCursorPos(${x},${y})|Out-Null; Start-Sleep -Milliseconds 60; Add-Type -AssemblyName System.Windows.Forms; $p = [System.Windows.Forms.Cursor]::Position; Write-Output \"$($p.X),$($p.Y)\""`,
+    8000
+  );
+  const m = res?.stdout?.trim().match(/^(\d+)\s*,\s*(\d+)$/);
+  if (m) {
+    const gx = parseInt(m[1], 10);
+    const gy = parseInt(m[2], 10);
+    if (Math.abs(gx - x) <= 2 && Math.abs(gy - y) <= 2) {
+      return ok(`Moved the mouse to (${x}, ${y}).`, [`cursor verified at ${gx},${gy}`]);
+    }
+    return fail(
+      `I moved the mouse but it reported (${gx}, ${gy}) instead of (${x}, ${y}).`,
+      ["position mismatch — the cursor may be clipped by the screen edge"],
+      "move-mismatch"
+    );
+  }
+  return fail("I couldn't move the mouse.", ["SetCursorPos failed"], "move-failed");
+}
+
 // ─── Window control (minimize / maximize / restore / move / resize) ─────────
 
-const WINDOW_ADD_TYPE = `Add-Type 'using System;using System.Runtime.InteropServices;public class W{[DllImport("user32.dll")]public static extern bool ShowWindow(IntPtr h,int c);[DllImport("user32.dll")]public static extern bool SetWindowPos(IntPtr h,IntPtr a,int x,int y,int w,int hh,uint f);}'`;
+const WINDOW_ADD_TYPE = `Add-Type 'using System;using System.Runtime.InteropServices;public class W{[DllImport("user32.dll")]public static extern bool ShowWindow(IntPtr h,int c);[DllImport("user32.dll")]public static extern bool SetWindowPos(IntPtr h,IntPtr a,int x,int y,int w,int hh,uint f);[DllImport("user32.dll")]public static extern IntPtr GetForegroundWindow();}'`;
 
 function findWindowCmd(target: string, then: string): string {
   const selector = target
     ? `Get-Process | Where-Object { $_.MainWindowTitle -like ${psQuote("*" + target + "*")} } | Select-Object -First 1`
-    : `Get-Process | Where-Object { $_.MainWindowTitle } | Sort-Object -Property MainWindowHandle | Select-Object -Last 1`;
-  return `powershell -NoProfile -Command "${WINDOW_ADD_TYPE}; $w = ${selector}; if ($w -and $w.MainWindowHandle -ne 0) { ${then} } else { 'not-found' }"`;
+    // No target → the CURRENT FOREGROUND window (never "the last created",
+    // which used to minimize an unrelated window). If Quip itself is in the
+    // foreground, fall back to the most recently created non-Quip window.
+    : `$fg = [W]::GetForegroundWindow(); $w = Get-Process | Where-Object { $_.MainWindowHandle -eq $fg -and $_.ProcessName -notlike '${processLLCName()}' } | Select-Object -First 1; if (-not $w) { $w = Get-Process | Where-Object { $_.MainWindowTitle -and $_.ProcessName -notlike '${processLLCName()}' } | Sort-Object MainWindowHandle | Select-Object -Last 1 }`;
+  return `powershell -NoProfile -Command "${WINDOW_ADD_TYPE}; ${selector}; if ($w -and $w.MainWindowHandle -ne 0) { ${then} } else { 'not-found' }"`;
+}
+
+/** This process's own name (so "minimize" never minimizes Quip by accident). */
+function processLLCName(): string {
+  try {
+    // electron's app name — lowercase, wildcard-wrapped by the caller
+    const { app } = require("electron") as typeof import("electron");
+    return (app.getName() || "quip").toLowerCase();
+  } catch {
+    return "quip";
+  }
 }
 
 async function windowControl(
@@ -367,6 +407,9 @@ export async function executeDesktopAction(action: DesktopAction): Promise<Actio
       }
       return mouseClickVariant(action.variant, Math.round(vPoint.x), Math.round(vPoint.y));
     }
+
+    case "mouse.move":
+      return mouseMove(Math.round(action.x), Math.round(action.y));
 
     case "scroll":
       return mouseScroll(action.deltaY);

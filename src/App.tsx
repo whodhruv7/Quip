@@ -61,7 +61,7 @@ export default function App() {
   );
   const [quipSay, setQuipSay] = useState<string | null>(null);
 
-  const { messages, busy: chatBusy, error, send, newChat, clearError, approvalRequest, resolveApproval } =
+  const { messages, busy: chatBusy, error, send, newChat, clearError, approvalRequest, resolveApproval, taskProgress } =
     useChat(companionId, restoredMessages);
 
   // ─── Window mode sync (renderer state ↔ Electron window) ────────────────
@@ -101,6 +101,17 @@ export default function App() {
     lastTap.current = now;
     enterMode(viewMode === "companion" ? "panel" : "companion");
   }, [drag, enterMode, viewMode]);
+
+  // ─── Approval requests must be VISIBLE ──────────────────────────────────
+  // If a task needs confirmation while Quip is in companion-only mode, open
+  // the panel so the user can actually see and answer it (otherwise the
+  // request would time out unanswered).
+  useEffect(() => {
+    if (approvalRequest && viewMode === "companion") {
+      enterMode("panel");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [approvalRequest]);
 
   // ─── First run: open the panel so the scan overlay has room ────────────
   useEffect(() => {
@@ -272,6 +283,52 @@ export default function App() {
           <ChatLayout messages={messages} busy={chatBusy} />
         )}
       </div>
+
+      {/* Live task progress — step x/y with what is actually running */}
+      <AnimatePresence>
+        {taskProgress && (
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 6 }}
+            style={{
+              margin: "0 12px 6px",
+              padding: "7px 12px",
+              borderRadius: 12,
+              background: `${theme.primary}0f`,
+              border: `1px solid ${theme.primary}2e`,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              fontSize: 11.5,
+              color: "#374151",
+            }}
+          >
+            <span
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: "50%",
+                background: theme.primary,
+                flexShrink: 0,
+                animation: "quipPulse 1.2s ease-in-out infinite",
+              }}
+            />
+            <span style={{ fontWeight: 600, color: theme.primary, flexShrink: 0 }}>
+              Step {taskProgress.step}/{taskProgress.total}
+            </span>
+            <span
+              style={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {taskProgress.description}
+            </span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {approvalRequest && (

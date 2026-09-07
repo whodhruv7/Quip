@@ -95,6 +95,11 @@ export function useProactiveCheckIn(
       // Quiet hours: absolutely no proactive pings late at night
       if (isQuietHours()) return;
 
+      // Don't interrupt an active conversation: if the user said something
+      // recently, the companion stays quiet and present.
+      const lastUser = [...messages].reverse().find((m) => m.role === "user");
+      if (lastUser && Date.now() - lastUser.ts < 3 * 60 * 1000) return;
+
       // Don't stack proactive messages
       const lastMsg = messages[messages.length - 1];
       if (lastMsg && lastMsg.role === "assistant" && lastMsg.proactive) return;

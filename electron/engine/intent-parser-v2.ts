@@ -40,6 +40,8 @@ export type ActionType =
   | "file_op"
   | "site_search"
   | "system_action"
+  | "drag"
+  | "mouse_move"
   | "chat";
 
 export interface TaskStep {
@@ -182,13 +184,30 @@ function matchHint(
 const FILLER_WORDS = [
   "can you", "could you", "would you", "please", "kindly",
   "i want to", "i want", "i need to", "i need", "help me", "just",
+  "let's", "lets",
 ];
 
 function normalizeCommand(raw: string): string {
   let text = raw.toLowerCase().trim();
-  for (const filler of FILLER_WORDS) {
-    text = text.replace(new RegExp(`\\b${filler}\\b`, "gi"), " ");
+  // Strip polite fillers ONLY at the start (and a trailing "please").
+  // A global strip corrupts content — "play i want it that way" must keep
+  // the song name intact, not lose "i want".
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const filler of FILLER_WORDS) {
+      if (text === filler) {
+        text = "";
+        changed = true;
+        break;
+      }
+      if (text.startsWith(filler + " ")) {
+        text = text.slice(filler.length + 1);
+        changed = true;
+      }
+    }
   }
+  text = text.replace(/\s+please$/, "");
   text = text.replace(/["“”]/g, "").replace(/\s+/g, " ").trim();
   text = text.replace(/[.!?]+$/, "");
   return text;
@@ -205,10 +224,23 @@ function removeWords(text: string, words: string[]): string {
 const URL_RE = /^https?:\/\/\S+$/i;
 
 const PLAY_WORDS = ["play", "baja", "bajao", "listen to", "listen"];
+// Play detection is WORD-BOUNDARY + POSITION-guarded (see the PLAY MEDIA
+// section). A substring check here was the source of spontaneous commands:
+// "display" contains "play", so "display settings" used to trigger YouTube
+// playback.
 const OPEN_WORDS = ["open", "launch", "start", "khol", "chala", "chalao", "go to", "goto"];
 const SEARCH_WORDS = ["search", "find", "look up", "google"];
 const CLOSE_WORDS = ["close", "quit", "kill", "exit"];
 const FOCUS_WORDS = ["focus", "switch to", "bring", "show"];
+
+/** Local-file-looking queries must never leak into a web search. */
+function looksLikeLocalFileQuery(q: string): boolean {
+  return (
+    /\.(pdf|docx?|txt|xlsx?|pptx?|png|jpe?g|gif|mp3|mp4|zip|csv|json|md)\b/i.test(q) ||
+    /\b(file|files|folder|documents?|photos?|screenshots?|pdf|spreadsheet|presentation|invoice|resume)\b/i.test(q) ||
+    /\b(on|in|under)\s+(?:my\s+|the\s+)?(desktop|downloads|documents|pictures|music|videos)\b/i.test(q)
+  );
+}
 
 function startsWithAny(text: string, words: string[]): string | null {
   for (const w of words) {
@@ -250,8 +282,10 @@ function routeOpenClause(clause: string): TaskStep | null {
     };
   }
 
-  // Website hints ("open youtube", "open gmail")
-  const site = matchHint(rest, SITE_HINTS);
+  // Website hints ("open youtube", "open gmail") — but NOT when the user
+  // asked for a local folder that happens to share a name ("open my docs folder")
+  const mentionsFolder = /\b(folder|directory)\b/.test(rest);
+  const site = mentionsFolder ? null : matchHint(rest, SITE_HINTS);
   if (site) {
     return {
       action: "open_website",
@@ -343,7 +377,10 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
   // "Open VS Code and open my Quip project." → 2 steps
   // "Open Chrome, go to YouTube, search for Mitwa and play it." → 4 steps
   // "Open Reddit and search for quip tips." → site-aware search step
-  const rawClauses = text.split(/\s+(?:and|then)\s+|,\s+/).map((s) => s.trim()).filter(Boolean);
+  const rawClauses = text
+    .split(/\s+(?:and|then)\s+|,\s+/)
+    .map((s) => s.trim().replace(/^then\s+/, ""))
+    .filter(Boolean);
   if (rawClauses.length > 1) {
     const chainSteps: TaskStep[] = [];
     let chainOk = true;
@@ -370,11 +407,7 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
         const vague = !q || q.replace(/\b(this|that|it|them|the|a|an|post|page|article)\b/g, "").trim().length < 3;
         // Local-file-looking queries must NOT become web searches — bail the
         // chain and let the dedicated local-first file-search block handle it.
-        const localish =
-          /\.(pdf|docx?|txt|xlsx?|pptx?|png|jpe?g|gif|mp3|mp4|zip|csv|json|md)\b/i.test(q) ||
-          /\b(file|files|folder|documents?|photos?|screenshots?|pdf|spreadsheet|presentation|invoice|resume)\b/i.test(q) ||
-          /\b(on|in|under)\s+(?:my\s+|the\s+)?(desktop|downloads|documents|pictures|music|videos)\b/i.test(q);
-        if (localish) { chainOk = false; break; }
+        if (looksLikeLocalFileQuery(q)) { chainOk = false; break; }
         if (!vague) {
           const siteForSearch = lastSite && ["reddit", "x", "twitter", "github", "youtube"].includes(lastSite)
             ? (lastSite === "twitter" ? "x" : lastSite)
@@ -427,6 +460,17 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
         if (keys.length) {
           step = { action: "press_key", target: keys.join("+"), params: { keys: keys.join(",") }, description: `Press ${keys.join("+")}` };
         }
+      } else if (/^scroll\b/.test(clause)) {
+        const dir = /\bup\b/.test(clause) ? "up" : "down";
+        const mag = clause.match(/(\d+)/);
+        const amount = mag ? parseInt(mag[1], 10) : 360;
+        const deltaY = dir === "up" ? String(amount) : String(-amount);
+        step = { action: "scroll", target: dir, params: { deltaY }, description: `Scroll ${dir}` };
+      } else if (/^(?:left\s+)?click\b/.test(clause)) {
+        const cm = clause.match(/(\d+)\s*[,\s]\s*(\d+)/);
+        step = cm
+          ? { action: "click", target: `${cm[1]},${cm[2]}`, params: { x: cm[1], y: cm[2] }, description: `Click at (${cm[1]}, ${cm[2]})` }
+          : { action: "click", target: "cursor", params: {}, description: "Click at the current cursor position" };
       }
 
       if (!step) { chainOk = false; break; }
@@ -451,8 +495,14 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
   }
 
   // ─── PLAY MEDIA (handles "open youtube and play mitwa" correctly) ───────
-  const hasPlay = PLAY_WORDS.some((w) => text.includes(w));
-  if (hasPlay) {
+  // Word-boundary + POSITION check: the play verb must LEAD the request
+  // (possibly after "go and / and / then"). Mid-sentence "play" — "the play
+  // was amazing", "I listen to music while working" — is conversation, and
+  // auto-executing it was exactly the spontaneous-command chaos.
+  const playLead =
+    !!startsWithAny(text, PLAY_WORDS) ||
+    /^(?:go\s+(?:and|then)\s+|and\s+|then\s+)\s*(?:play|baja|bajao|listen)/.test(text);
+  if (playLead) {
     const site = matchHint(text, SITE_HINTS);
     const useSpotifyApp = /\bspotify\b/.test(text) && !/\bweb\b/.test(text);
     const cleanQuery = removeWords(text, [
@@ -554,19 +604,42 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
     const write = /\b(copy|write|put|set)\b/.test(text) || /\bcopy\b/.test(text);
     const read = /\b(read|show|paste|what'?s|what is|get)\b/.test(text);
     if (write && !read) {
-      const content = raw.match(/\bcopy\s+"([^"]+)"|\bcopy\s+(?:the\s+)?text\s+(.+)$/i);
+      const quoted = raw.match(/\bcopy\s+"([^"]+)"/i);
+      const plain = quoted ? null : text.match(/^copy\s+(.+?)\s+(?:to|into)\s+(?:the\s+)?clipboard$/);
+      const content = quoted?.[1] ?? plain?.[1] ?? "";
+      if (!content.trim() || /^(this|that|it|the selection|selection|them)$/i.test(content.trim())) {
+        // No extractable content ("copy this to clipboard") → copy the
+        // CURRENT SELECTION via ctrl+c. Never write an empty clipboard and
+        // claim success.
+        return {
+          ...base,
+          action: "key",
+          target: "ctrl+c",
+          query: "",
+          isTask: true,
+          isMultiStep: false,
+          steps: [{
+            action: "press_key",
+            target: "ctrl+c",
+            params: { keys: "ctrl,c" },
+            description: "Copy the current selection",
+          }],
+          summary: "Copied the selection",
+          confidence: 0.75,
+        };
+      }
       return {
         ...base,
         action: "clipboard",
         target: "write",
-        query: content?.[1] ?? content?.[2] ?? "",
+        query: content,
         isTask: true,
         isMultiStep: false,
         steps: [{
           action: "clipboard",
           target: "write",
-          params: { text: content?.[1] ?? content?.[2] ?? "", mode: "write" },
-          description: "Copy text to the clipboard",
+          params: { text: content, mode: "write" },
+          description: `Copy "${content}" to the clipboard`,
         }],
         summary: "Copied to clipboard",
         confidence: 0.85,
@@ -649,11 +722,79 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
     };
   }
 
-  // Close / focus apps: "close vs code", "focus chrome"
+  // "show me the file X" / "show my documents" — BEFORE the focus loop.
+  // ("show" used to be a focus verb, so "show me the file notes.txt" became
+  //  focus_app("me the file notes.txt") — a wrong-window action.)
+  const fileReadEarly = text.match(/^(?:read|show me)\s+(?:the\s+)?file\s+(.+)$/);
+  if (fileReadEarly) {
+    const p = fileReadEarly[1].replace(/^(?:the|my)\s+/, "").trim();
+    return {
+      ...base,
+      action: "file_op",
+      target: p,
+      query: "read",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "file_op",
+        target: p,
+        params: { op: "read", path: p },
+        description: `Read file "${p}"`,
+      }],
+      summary: "Reading file",
+      confidence: 0.85,
+    };
+  }
+  const showFolder = text.match(/^show(?:\s+me)?\s+(?:my\s+|the\s+)?(downloads?|documents?|pictures|photos|music|videos|desktop)\s*(?:folder)?$/);
+  if (showFolder) {
+    const folder = FOLDER_HINTS[showFolder[1]] ?? "downloads";
+    return {
+      ...base,
+      action: "open_folder",
+      target: folder,
+      query: "",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "open_folder",
+        target: folder,
+        params: { location: folder },
+        description: `Open the ${folder} folder`,
+      }],
+      summary: `Opened the ${folder} folder`,
+      confidence: 0.85,
+    };
+  }
+
+  // Close / focus apps: "close vs code", "focus chrome", "quit chrome".
+  // startsWithAny is word-safe; the old substring fallback here turned
+  // "quit chrome" into target "ed chrome" — it is gone for good.
   for (const [words, action] of [[CLOSE_WORDS, "close_app"], [FOCUS_WORDS, "focus_app"]] as const) {
-    const verb = startsWithAny(text, words as unknown as string[]) ?? (words.some((w) => text.startsWith(w)) ? words[0] : null);
+    const verb = startsWithAny(text, words as unknown as string[]);
     if (verb) {
       const rest = text.slice(verb.length).replace(/^(the|my)\s+/, "").trim();
+      if (verb === "show") {
+        // "show" only ever focuses a NAMED app ("show chrome"). Anything
+        // else ("show me the weather") is a question, not a device command.
+        const namedApp = matchHint(rest, APP_HINTS);
+        if (!namedApp) continue;
+        return {
+          ...base,
+          action: "focus_app",
+          target: namedApp.value,
+          query: "",
+          isTask: true,
+          isMultiStep: false,
+          steps: [{
+            action: "focus_app",
+            target: namedApp.value,
+            params: { target: namedApp.value },
+            description: `Focus ${namedApp.value}`,
+          }],
+          summary: `Focused ${namedApp.value}`,
+          confidence: 0.8,
+        };
+      }
       const appHint = matchHint(rest, APP_HINTS);
       const target = appHint ? appHint.value : rest;
       if (target && target.length > 1) {
@@ -668,7 +809,7 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
             action: action as ActionType,
             target,
             params: { target },
-            description: `${verb === "close" || CLOSE_WORDS.includes(verb) ? "Close" : "Focus"} ${target}`,
+            description: `${action === "close_app" ? "Close" : "Focus"} ${target}`,
           }],
           summary: `${action === "close_app" ? "Closed" : "Focused"} ${target}`,
           confidence: 0.85,
@@ -805,6 +946,28 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
   }
 
   // ─── WINDOW CONTROLS (minimize / maximize / restore / move / resize) ────
+  // MOUSE MOVE — BEFORE window controls: "move mouse to 500,300" must move
+  // the cursor, not "move the window called mouse".
+  const mouseMove = text.match(/^(?:move\s+)?(?:the\s+)?mouse(?:\s+cursor)?\s+(?:to\s+)?(\d+)\s*[,\s]\s*(\d+)$/);
+  if (mouseMove) {
+    const [, mx, my] = mouseMove;
+    return {
+      ...base,
+      action: "mouse_move",
+      target: `${mx},${my}`,
+      query: "",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "mouse_move",
+        target: `${mx},${my}`,
+        params: { x: mx, y: my },
+        description: `Move the mouse to (${mx}, ${my})`,
+      }],
+      summary: "Moved the mouse",
+      confidence: 0.85,
+    };
+  }
   const winVerb = text.match(/^(minimize|maximize|restore|unmaximize)\s+(?:the\s+|my\s+)?([\w\s.-]*?)(?:\s+window)?$/);
   if (winVerb) {
     const op = winVerb[1] === "unmaximize" ? "restore" : winVerb[1];
@@ -826,9 +989,9 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
       confidence: 0.85,
     };
   }
-  const winMove = text.match(/^move\s+(?:the\s+)?(.+?)\s+window\s+to\s+(\d+)\s*[,\s]\s*(\d+)$/);
+  const winMove = text.match(/^move\s+(?:the\s+)?(.+?)\s+(?:window\s+)?to\s+(\d+)\s*[,\s]\s*(\d+)$/);
   if (winMove) {
-    const target = winMove[1].replace(/^(the|my)\s+/, "").trim();
+    const target = winMove[1].replace(/^(the|my)\s+/, "").replace(/\s+window$/, "").trim();
     return {
       ...base,
       action: "window_control",
@@ -864,6 +1027,28 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
       }],
       summary: "Resizing window",
       confidence: 0.8,
+    };
+  }
+
+  // ─── DRAG & DROP ─────────────────────────────────────────────────────
+  const dragMatch = text.match(/^drag(?:\s+from)?\s+(\d+)\s*[,\s]\s*(\d+)\s+(?:to|into)\s+(\d+)\s*[,\s]\s*(\d+)$/);
+  if (dragMatch) {
+    const [, fx, fy, tx, ty] = dragMatch;
+    return {
+      ...base,
+      action: "drag",
+      target: `${fx},${fy}->${tx},${ty}`,
+      query: "",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "drag",
+        target: `${fx},${fy}->${tx},${ty}`,
+        params: { fromX: fx, fromY: fy, toX: tx, toY: ty },
+        description: `Drag from (${fx}, ${fy}) to (${tx}, ${ty})`,
+      }],
+      summary: `Dragged to (${tx}, ${ty})`,
+      confidence: 0.85,
     };
   }
 
@@ -929,26 +1114,7 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
       confidence: 0.85,
     };
   }
-  const fileRead = text.match(/^(?:read|show me)\s+(?:the\s+)?file\s+(.+)$/);
-  if (fileRead) {
-    const p = fileRead[1].replace(/^(?:the|my)\s+/, "").trim();
-    return {
-      ...base,
-      action: "file_op",
-      target: p,
-      query: "read",
-      isTask: true,
-      isMultiStep: false,
-      steps: [{
-        action: "file_op",
-        target: p,
-        params: { op: "read", path: p },
-        description: `Read file "${p}"`,
-      }],
-      summary: "Reading file",
-      confidence: 0.85,
-    };
-  }
+  // (file READ is handled earlier — it must win over the "show"/focus verbs)
   const fileDelete = text.match(/^(?:delete|remove)\s+(?:the\s+)?(?:file|folder)\s+(.+)$/);
   if (fileDelete) {
     const p = fileDelete[1].replace(/^(?:the|my)\s+/, "").trim();
@@ -1155,6 +1321,25 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
         }],
         summary: `Searched YouTube for ${query}`,
         confidence: 0.9,
+      };
+    }
+    if (query && looksLikeLocalFileQuery(query)) {
+      // "search for my invoice" → local file search, never a Google search.
+      return {
+        ...base,
+        action: "file_op",
+        target: query,
+        query: "search",
+        isTask: true,
+        isMultiStep: false,
+        steps: [{
+          action: "file_op",
+          target: query,
+          params: { op: "search", query },
+          description: `Search for files matching "${query}"`,
+        }],
+        summary: "Searching files",
+        confidence: 0.8,
       };
     }
     if (query) {

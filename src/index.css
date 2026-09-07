@@ -231,3 +231,11 @@ body {
   display: block;
   padding: 0;
 }
+
+/* ─── Task progress pulse ─────────────────────────────────────────────
+   The small dot on the live step-progress chip gently breathes while a
+   multi-step task runs. Calm by design — no aggressive flashing. */
+@keyframes quipPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.82); }
+}

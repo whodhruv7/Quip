@@ -185,11 +185,17 @@ class PermissionSystem {
     }
   }
 
-  /** Create an approval request and wait for user response. */
+  /**
+   * Create an approval request and wait for user response.
+   * Safety valve: if the renderer never answers (companion-only mode, user
+   * away), the request auto-declines after 60s instead of hanging the task
+   * forever. A timed-out request is reported honestly as declined.
+   */
   requestApproval(
     title: string,
     steps: string[],
-    risk: RiskLevel = "medium"
+    risk: RiskLevel = "medium",
+    timeoutMs = 60000
   ): Promise<ApprovalResult> {
     // Safe actions never block
     if (risk === "safe") return Promise.resolve({ approved: true, mode: this.mode });
@@ -204,7 +210,18 @@ class PermissionSystem {
         risk,
         timestamp: Date.now(),
       };
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          this.pendingApprovals.delete(id);
+          resolve({ approved: false, mode: this.mode });
+        }
+      }, timeoutMs);
       this.pendingApprovals.set(id, (result) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         this.pendingApprovals.delete(id);
         resolve(result);
       });

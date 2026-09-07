@@ -125,43 +125,252 @@ function hostnameOf(url: string): string {
 
 // ─── YouTube ─────────────────────────────────────────────────────────────────
 
-/** Scrape the first video ID for a YouTube search query. */
-export async function searchYouTubeVideoId(query: string): Promise<string | null> {
+export interface YouTubeResult {
+  videoId: string;
+  title: string;
+}
+
+const VIDEO_RENDERER_RE =
+  /"videoRenderer":\{"videoId":"([\w-]{11})".{0,800}?"title":\{"runs":\[\{"text":"((?:[^"\\]|\\.)*)"/g;
+
+function unescapeJsonString(s: string): string {
+  try {
+    return JSON.parse(`"${s}"`) as string;
+  } catch {
+    return s.replace(/\\u0026/g, "&").replace(/\\"/g, '"');
+  }
+}
+
+/**
+ * Extract the ORGANIC video results (id + title) from a YouTube search page.
+ * Only "videoRenderer" entries are taken — ads, channels, playlists and
+ * shelves use different renderer keys, so they never pollute the results.
+ */
+export function extractYouTubeResults(html: string, max = 10): YouTubeResult[] {
+  const results: YouTubeResult[] = [];
+  const seen = new Set<string>();
+  VIDEO_RENDERER_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = VIDEO_RENDERER_RE.exec(html)) && results.length < max) {
+    const videoId = m[1];
+    if (seen.has(videoId)) continue;
+    seen.add(videoId);
+    const title = unescapeJsonString(m[2]).replace(/\s+/g, " ").trim();
+    if (title) results.push({ videoId, title });
+  }
+  return results;
+}
+
+/**
+ * Score how well a result title matches what the user asked for.
+ * Positive: token overlap, exact/substring title, official audio markers.
+ * Negative: covers, live, reactions, remixes, full-album dumps — things
+ * that are NOT the requested song.
+ */
+export function scoreYouTubeResult(title: string, query: string): number {
+  const t = title.toLowerCase();
+  const q = query.toLowerCase().trim();
+  if (!q || !t) return 0;
+  const qTokens = q.split(/\s+/).filter(Boolean);
+  const tTokens = new Set(t.split(/[^a-z0-9]+/).filter(Boolean));
+
+  let overlap = 0;
+  for (const w of qTokens) if (tTokens.has(w)) overlap++;
+  let score = overlap / qTokens.length;
+
+  if (t === q) score += 0.5;
+  else if (t.includes(q)) score += 0.3;
+
+  const strong = qTokens.filter((w) => w.length >= 3);
+  if (strong.length) {
+    const strongHits = strong.filter((w) => tTokens.has(w)).length;
+    score += 0.2 * (strongHits / strong.length);
+  }
+
+  if (/\b(live|cover|reaction|remix|mashup|karaoke|tutorial|lesson|8d|slowed|sped up)\b/.test(t)) score -= 0.15;
+  if (/\b(full album|all songs|jukebox|playlist|mix|top \d+)\b/.test(t)) score -= 0.2;
+  if (/\b(official (audio|video|music video)|lyrical? video|topic)\b/.test(t)) score += 0.12;
+  if (/\bvideo song\b|\bfull video\b/.test(t) && /\b(song|gaana)\b/.test(q)) score += 0.05;
+
+  return score;
+}
+
+/**
+ * Pick the result that actually IS what the user asked for — not blindly the
+ * first one. Returns null when no result is a confident match.
+ */
+export function pickBestYouTubeResult(
+  results: YouTubeResult[],
+  query: string
+): { best: YouTubeResult; score: number; confident: boolean } | null {
+  if (results.length === 0) return null;
+  let best = results[0];
+  let bestScore = -Infinity;
+  for (const r of results) {
+    const s = scoreYouTubeResult(r.title, query);
+    if (s > bestScore) {
+      best = r;
+      bestScore = s;
+    }
+  }
+  // Confident = meaningful overlap with the request (not a random video).
+  const confident = bestScore >= 0.45;
+  return { best, score: bestScore, confident };
+}
+
+/** Scrape YouTube search results (id + title) for a query. */
+export async function searchYouTubeResults(query: string): Promise<YouTubeResult[]> {
   try {
     const res = await fetch(
       `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`,
       { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" } }
     );
     const html = await res.text();
+    const results = extractYouTubeResults(html);
+    if (results.length > 0) return results;
+    // Fallback: bare first-videoId scrape (no titles available)
     const match = html.match(/"videoId":"([a-zA-Z0-9_-]{11})"/);
-    return match?.[1] ?? null;
+    return match ? [{ videoId: match[1], title: "" }] : [];
   } catch {
-    return null;
+    return [];
   }
 }
 
-/** Search YouTube and open the first playable result — VERIFIED /watch URL. */
+// ─── Playback verification (the surface is OUR BrowserWindow) ───────────────
+
+interface PlaybackProbe {
+  found: boolean;
+  playing: boolean;
+  detail: string;
+}
+
+async function probePlayback(surface: BrowserWindow): Promise<PlaybackProbe> {
+  try {
+    const state = (await surface.webContents.executeJavaScript(
+      `(function(){
+        var v = document.querySelector('video.html5-main-video') || document.querySelector('video');
+        if (!v) return { found: false };
+        return { found: true, paused: !!v.paused, ended: !!v.ended, time: v.currentTime || 0, duration: v.duration || 0 };
+      })()`,
+      true
+    )) as { found: boolean; paused?: boolean; ended?: boolean; time?: number; duration?: number };
+    if (!state?.found) return { found: false, playing: false, detail: "no video element yet" };
+    const playing = !state.paused && !state.ended;
+    const t = typeof state.time === "number" ? state.time.toFixed(1) : "0";
+    return {
+      found: true,
+      playing,
+      detail: playing
+        ? `video element present, playing at ${t}s`
+        : `video present but ${state.ended ? "ended" : "paused"}`,
+    };
+  } catch {
+    return { found: false, playing: false, detail: "page probe unavailable" };
+  }
+}
+
+/**
+ * Wait for real playback on the YouTube surface; nudge the play button once
+ * if the video is still paused. Never fabricates success — the caller
+ * receives an honest playing/not-verified verdict.
+ */
+async function ensurePlayback(surface: BrowserWindow, timeoutMs = 10000): Promise<PlaybackProbe> {
+  const deadline = Date.now() + timeoutMs;
+  let nudged = false;
+  let last: PlaybackProbe = { found: false, playing: false, detail: "not probed" };
+  while (Date.now() < deadline) {
+    last = await probePlayback(surface);
+    if (last.playing) return last;
+    if (last.found && !last.playing && !nudged) {
+      // One honest nudge: click the YouTube play button / resume the element.
+      try {
+        await surface.webContents.executeJavaScript(
+          `(function(){
+            var v = document.querySelector('video.html5-main-video') || document.querySelector('video');
+            if (v && v.paused) {
+              var btn = document.querySelector('.ytp-large-play-button');
+              if (btn) btn.click();
+              var p = v.play();
+              if (p && p.catch) p.catch(function(){});
+            }
+          })()`,
+          true
+        );
+      } catch {
+        /* nudge is best-effort */
+      }
+      nudged = true;
+      await new Promise((r) => setTimeout(r, 1500));
+      continue;
+    }
+    await new Promise((r) => setTimeout(r, 700));
+  }
+  return last;
+}
+
+/**
+ * Search YouTube, UNDERSTAND which result matches the request, open it and
+ * VERIFY playback. Order of honesty:
+ *   1. best-matching result + verified playing → "Playing …"
+ *   2. best-matching result, playback not confirmable → say exactly that
+ *   3. no confident match → open the search page and say so
+ * The first result is never blindly trusted.
+ */
 export async function playFirstYouTubeResult(query: string): Promise<ActionVerification> {
   if (!query.trim()) {
     return fail("I don't know what to play — the search was empty.", [], "empty-query");
   }
-  const videoId = await searchYouTubeVideoId(query);
-  if (videoId) {
-    const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+
+  const results = await searchYouTubeResults(query);
+  const pick = pickBestYouTubeResult(results, query);
+  // Only auto-play a result we actually UNDERSTOOD — a confident title match
+  // for what was asked. An unrelated video opened silently is precisely the
+  // old "searched but didn't understand the song" failure.
+  if (pick && pick.confident) {
+    const chosen = pick.best;
+    const matchedNote = chosen.title
+      ? `matched "${query}" → "${chosen.title}"`
+      : `matched "${query}" → video ${chosen.videoId}`;
+    const watchUrl = `https://www.youtube.com/watch?v=${chosen.videoId}`;
     const opened = await openBrowserSurface(watchUrl);
     if (opened.ok) {
       contextStore.update({ lastMediaQuery: query, activeWebsite: "youtube" });
-      return ok(`Playing "${query}" on YouTube.`, [`direct watch URL: ${watchUrl}`]);
+      const surface = taskSurface;
+      if (surface && !surface.isDestroyed()) {
+        const playback = await ensurePlayback(surface);
+        const evidence = [matchedNote, `video ${chosen.videoId} — ${playback.detail}`];
+        if (playback.playing) {
+          return ok(
+            chosen.title
+              ? `Playing "${chosen.title}" on YouTube.`
+              : `Playing the top match for "${query}" on YouTube.`,
+            evidence
+          );
+        }
+        return ok(
+          chosen.title
+            ? `Opened "${chosen.title}" on YouTube — I couldn't confirm playback started (it may need one click).`
+            : `Opened the match for "${query}" on YouTube — playback not confirmed.`,
+          evidence
+        );
+      }
+      return ok(
+        chosen.title
+          ? `Opened "${chosen.title}" on YouTube.`
+          : `Opened the match for "${query}" on YouTube.`,
+        [matchedNote]
+      );
     }
-    // Surface failed — fall back to search page
+    // Surface failed — fall through to the search page.
   }
+
   const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
   const opened = await openBrowserSurface(searchUrl);
   contextStore.update({ lastMediaQuery: query, activeWebsite: "youtube" });
   return opened.ok
     ? ok(
-        `Opened YouTube search results for "${query}" — couldn't auto-pick a video.`,
-        ["videoId scrape failed", "search page opened"]
+        `Opened YouTube search results for "${query}" — no result clearly matched, so I didn't auto-pick one.`,
+        ["no confident result match", "search page opened"]
       )
     : fail(`I couldn't open YouTube for "${query}".`, ["both direct and search failed"], "youtube-failed");
 }

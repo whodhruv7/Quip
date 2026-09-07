@@ -39,7 +39,7 @@ const KNOWN_FOLDERS: Record<string, () => string> = {
   home: () => HOME,
 };
 
-export function resolveKnownFolder(word: string): string | null {
+function resolveKnownFolder(word: string): string | null {
   const fn = KNOWN_FOLDERS[word.toLowerCase().trim()];
   return fn ? fn() : null;
 }

@@ -1,39 +1,6 @@
 "use strict";
 // Quip V2 — Electron main process (orchestration hub).
 // Wires all 10 brain layers + bootstrap + IPC. API keys stay in env only.
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -102,7 +69,8 @@ const memoryExtractor = new memory_extractor_1.MemoryExtractorBrain({
 // Execution Engine V2
 const orchestrator_1 = require("./engine/orchestrator");
 const permission_modes_1 = require("./engine/permission-modes");
-const app_discovery_1 = require("./engine/app-discovery");
+const tool_registry_1 = require("./engine/tool-registry");
+const intent_parser_v2_1 = require("./engine/intent-parser-v2");
 const context_store_1 = require("./engine/context-store");
 // The orchestrator uses the model ONLY for ambiguous intent (compact schema,
 // one small call) — deterministic tools handle the obvious actions.
@@ -633,7 +601,7 @@ electron_1.ipcMain.handle(shared_1.IPC.TASK_EXECUTE, async (_e, payload) => {
     };
     // Parse intent once for plan metadata (orchestrator re-parses internally;
     // this is a pure regex parse — no model call, negligible cost).
-    const intentInfo = await Promise.resolve().then(() => __importStar(require("./engine/intent-parser-v2"))).then((m) => m.parseIntentV2(payload.command));
+    const intentInfo = (0, intent_parser_v2_1.parseIntentV2)(payload.command);
     const result = await orchestrator_1.orchestrator.execute(payload.command, {
         platform,
         workspacePath,
@@ -787,7 +755,7 @@ electron_1.ipcMain.handle(shared_1.IPC.GET_DEVICE_PROFILE, async () => {
 });
 electron_1.ipcMain.handle(shared_1.IPC.RESCAN_DEVICE, async () => {
     try {
-        (0, app_discovery_1.invalidateAppIndex)();
+        (0, tool_registry_1.invalidateAppIndex)();
         deviceProfile = await (0, device_brain_1.ensureProfile)(electron_1.app.getPath("userData"), 0); // force rescan
         if (deviceProfile) {
             worldModel = await (0, world_model_1.ensureWorldModel)(electron_1.app.getPath("userData"), deviceProfile, memory_brain_instance_1.fsStorage);

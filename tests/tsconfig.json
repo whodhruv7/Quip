@@ -18,6 +18,8 @@
     "../electron/engine/context-store.ts",
     "../electron/engine/permission-modes.ts",
     "../electron/engine/window-policy.ts",
+    "../electron/engine/browser-automation.ts",
+    "../electron/engine/orchestrator.ts",
     "../electron/system/model-config.ts",
     "../src/lib/companion-config.ts",
     "../src/types/**/*.ts"
