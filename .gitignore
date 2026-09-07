@@ -1,11 +1,12 @@
-```
 # Dependencies
 node_modules/
 
 # Build artifacts
 dist/
+dist-electron/
 build/
 target/
+*.tsbuildinfo
 
 # Logs and temp files
 *.log
@@ -71,7 +72,7 @@ htmlcov/
 *.tar.bz2
 *.tar.xz
 *.tar.zst
-```
+
 # Palade
 palade.config.ts
 .palade/
