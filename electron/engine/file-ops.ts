@@ -23,10 +23,27 @@ const DENY_DIRS = [
   "appdata\\local\\temp", // still allow inside userData, not system temp
 ];
 
+/** Unix system roots — defense-in-depth so the guard is correct on any OS. */
+const DENY_POSIX_PREFIXES = ["/etc", "/usr", "/bin", "/sbin", "/var", "/sys", "/proc", "/boot", "/dev"];
+
 /** Resolve a user-supplied path to an absolute one inside the user's scope. */
 export function resolveUserPath(raw: string): { ok: true; path: string } | { ok: false; reason: string } {
   let p = raw.trim().replace(/^["']|["']$/g, "");
   if (!p) return { ok: false, reason: "empty path" };
+  // Windows-style paths (C:\…) are absolute on ANY host. Normalize via win32
+  // and run the deny-list before anything else, so the guard can never be
+  // bypassed just because the process happens to run on a POSIX system.
+  if (/^[a-z]:[\\/]/i.test(p)) {
+    p = path.win32.normalize(p);
+    const winLower = p.toLowerCase();
+    if (
+      DENY_DIRS.some((d) => winLower === `c:\\${d}` || winLower.startsWith(`c:\\${d}\\`)) ||
+      /^c:\\windows/i.test(winLower)
+    ) {
+      return { ok: false, reason: "system locations are protected" };
+    }
+    return { ok: true, path: p };
+  }
   // Expand ~ and common folder aliases
   if (p.startsWith("~")) p = path.join(os.homedir(), p.slice(1));
   if (/^(desktop|downloads|documents|pictures|music|videos|movies)/i.test(p) && !path.isAbsolute(p)) {
@@ -34,6 +51,10 @@ export function resolveUserPath(raw: string): { ok: true; path: string } | { ok:
   }
   const abs = path.isAbsolute(p) ? path.normalize(p) : path.join(process.cwd(), p);
   const lower = abs.toLowerCase();
+
+  if (DENY_POSIX_PREFIXES.some((d) => lower === d || lower.startsWith(`${d}/`))) {
+    return { ok: false, reason: "system locations are protected" };
+  }
 
   if (DENY_DIRS.some((d) => lower === `c:\\${d}` || lower.startsWith(`c:\\${d}\\`))) {
     return { ok: false, reason: "system locations are protected" };

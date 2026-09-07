@@ -20,8 +20,6 @@ export const IPC = {
   // Task execution
   TASK_EXECUTE: "quip:task-execute",
   TASK_PROGRESS: "quip:task-progress",
-  CONFIRMATION_REQUEST: "quip:confirmation-request",
-  CONFIRMATION_RESOLVE: "quip:confirmation-resolve",
 
   // Device brain
   GET_DEVICE_PROFILE: "quip:get-device-profile",
@@ -144,18 +142,6 @@ export interface TaskResultPayload {
     subtasks: { id: string; description: string; status: string; output?: string }[];
     isChat: boolean;
   };
-}
-
-export interface ConfirmationPayload {
-  id: string;
-  requestId: string;
-  description: string;
-  capability: string;
-}
-
-export interface ConfirmationResolvePayload {
-  id: string;
-  approved: boolean;
 }
 
 // ─── Phase 2 payloads ──────────────────────────────────────────────────────

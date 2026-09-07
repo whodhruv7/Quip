@@ -47,10 +47,3 @@ export interface TaskProgress {
   total: number;
   description: string;
 }
-
-export interface ConfirmationRequest {
-  id: string;
-  requestId: string;
-  description: string;
-  capability: CapabilityId;
-}

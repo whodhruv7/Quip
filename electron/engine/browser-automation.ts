@@ -15,7 +15,9 @@ import { contextStore } from "./context-store";
 // ─── URL safety gate (Agent-Reach port) ──────────────────────────────────────
 
 const PRIVATE_HOST_RE =
-  /^(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|\[::1\])/i;
+  /^(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|\[::1\]|\[::ffff:|::1)/i;
+// Alternate IP encodings (decimal/hex/mixed) that can smuggle private addresses.
+const ENCODED_HOST_RE = /^(0x[0-9a-f]+|\d+)$/i;
 
 export function isSafePublicUrl(rawUrl: string): { safe: boolean; reason?: string; url?: string } {
   let parsed: URL;
@@ -28,8 +30,11 @@ export function isSafePublicUrl(rawUrl: string): { safe: boolean; reason?: strin
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     return { safe: false, reason: `unsupported protocol: ${parsed.protocol}` };
   }
-  if (PRIVATE_HOST_RE.test(parsed.hostname)) {
+  if (PRIVATE_HOST_RE.test(parsed.hostname) || parsed.hostname.includes("::ffff:")) {
     return { safe: false, reason: "private/internal addresses are not allowed" };
+  }
+  if (ENCODED_HOST_RE.test(parsed.hostname)) {
+    return { safe: false, reason: "numeric host encodings are not allowed" };
   }
   if (parsed.username || parsed.password) {
     return { safe: false, reason: "URLs with embedded credentials are not allowed" };
@@ -197,7 +202,8 @@ export function scoreYouTubeResult(title: string, query: string): number {
 
 /**
  * Pick the result that actually IS what the user asked for — not blindly the
- * first one. Returns null when no result is a confident match.
+ * first one. The caller must check `.confident` before auto-playing; a
+ * `confident: false` pick is returned for introspection, never for execution.
  */
 export function pickBestYouTubeResult(
   results: YouTubeResult[],

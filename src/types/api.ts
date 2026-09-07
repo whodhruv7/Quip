@@ -1,7 +1,7 @@
 
 import { CompanionId } from "./chat";
 import type { WindowMode } from "../../electron/shared";
-import { TaskResultPayload, TaskProgress, ConfirmationRequest } from "./tasks";
+import { TaskResultPayload, TaskProgress } from "./tasks";
 import { DeviceProfile } from "./device";
 import { SpatialConfig, EnvironmentState, BootstrapProgress } from "./other";
 import { UserKnowledge } from "./memory";
@@ -38,8 +38,6 @@ export interface ChatAPI {
 export interface TaskAPI {
   executeTask: (payload: { requestId: string; command: string; }) => Promise<TaskResultPayload>;
   onTaskProgress: (cb: (p: TaskProgress) => void) => () => void;
-  onConfirmationRequest: (cb: (req: ConfirmationRequest) => void) => () => void;
-  resolveConfirmation: (id: string, approved: boolean) => void;
 }
 
 export interface PermissionAPI {

@@ -75,10 +75,15 @@ export default function App() {
     } catch {
       /* non-fatal */
     }
-    const off = window.quip.onWindowModeChanged((m) => {
-      if (alive) setViewMode(m);
-    });
-    return () => { alive = false; off(); };
+    let offMode: (() => void) | undefined;
+    try {
+      offMode = window.quip.onWindowModeChanged((m) => {
+        if (alive) setViewMode(m);
+      });
+    } catch {
+      /* non-fatal — mode sync unavailable */
+    }
+    return () => { alive = false; offMode?.(); };
   }, []);
 
   const enterMode = useCallback((mode: WindowMode) => {

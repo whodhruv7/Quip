@@ -4,14 +4,17 @@
     "module": "CommonJS",
     "moduleResolution": "Node",
     "lib": [
-      "ES2022"
+      "ES2022",
+      "DOM"
     ],
     "outDir": "../dist-test",
     "rootDir": "..",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["src/*"] }
   },
   "include": [
     "../electron/engine/intent-parser-v2.ts",
@@ -20,8 +23,13 @@
     "../electron/engine/window-policy.ts",
     "../electron/engine/browser-automation.ts",
     "../electron/engine/orchestrator.ts",
+    "../electron/engine/file-ops.ts",
+    "../electron/engine/app-discovery.ts",
+    "../electron/engine/tool-registry.ts",
     "../electron/system/model-config.ts",
+    "../electron/system/model-router.ts",
     "../src/lib/companion-config.ts",
+    "../src/lib/storage.ts",
     "../src/types/**/*.ts"
   ]
 }

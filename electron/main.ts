@@ -36,7 +36,6 @@ import type {
   ChatErrorPayload,
   TaskExecutePayload,
   TaskProgressPayload,
-  ConfirmationResolvePayload,
   WindowMode,
 } from "./shared";
 
@@ -92,7 +91,6 @@ import type {
   SpatialConfig,
   EnvironmentState,
   TaskResultPayload,
-  ConfirmationRequest,
   BootstrapProgress,
   CapabilityId,
 } from "../src/types";
@@ -109,11 +107,6 @@ let spatialConfig: SpatialConfig | null = null;
 
 // The default companion (set by renderer via IPC). Defaults to "pix".
 let defaultCompanionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy" = "pix";
-
-const pendingConfirmations = new Map<
-  string,
-  { resolve: (approved: boolean) => void }
->();
 
 // ---------------------------------------------------------------------------
 // Local persistence — window position only.
@@ -760,18 +753,6 @@ ipcMain.handle("quip:cycle-permission-mode", () => {
   execPermissionSystem.cycleMode();
   return { mode: execPermissionSystem.getMode(), label: execPermissionSystem.getModeLabel() };
 });
-
-ipcMain.on(
-  IPC.CONFIRMATION_RESOLVE,
-  (_e, payload: ConfirmationResolvePayload) => {
-    const pending = pendingConfirmations.get(payload.id);
-    if (pending) {
-      pending.resolve(payload.approved);
-      pendingConfirmations.delete(payload.id);
-    }
-  }
-);
-
 
 // ---------------------------------------------------------------------------
 // IPC — Phase 3: Swarm Mode (managed by SwarmManager)

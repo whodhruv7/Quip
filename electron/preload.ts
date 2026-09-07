@@ -8,7 +8,6 @@ import { IPC } from "./shared";
 import type {
   ChatSendPayload,
   TaskExecutePayload,
-  ConfirmationResolvePayload,
   WindowMode,
 } from "./shared";
 
@@ -90,17 +89,6 @@ const api = {
     ipcRenderer.on(IPC.TASK_PROGRESS, handler as any);
     return () => ipcRenderer.removeListener(IPC.TASK_PROGRESS, handler as any);
   },
-  onConfirmationRequest: (cb: (req: any) => void) => {
-    const handler = (_e: unknown, data: any) => cb(data);
-    ipcRenderer.on(IPC.CONFIRMATION_REQUEST, handler as any);
-    return () =>
-      ipcRenderer.removeListener(IPC.CONFIRMATION_REQUEST, handler as any);
-  },
-  resolveConfirmation: (id: string, approved: boolean) =>
-    ipcRenderer.send(IPC.CONFIRMATION_RESOLVE, {
-      id,
-      approved,
-    } as ConfirmationResolvePayload),
 
   // ─── Device brain ────────────────────────────────────────────────────
   getDeviceProfile: () =>

@@ -332,6 +332,36 @@ function routeOpenClause(clause: string): TaskStep | null {
 
 // ─── MAIN PARSER ─────────────────────────────────────────────────────────────
 
+// ─── Hinglish trailing-verb rewrite ─────────────────────────────────────────
+// Natural Hinglish often places the verb AFTER the object ("vs code kholo",
+// "mitwa bajao", "chrome band karo", "resume dhundo"). Rewrite those into the
+// leading-verb English form the parser understands. Bare verbs never rewrite
+// (no guessing), and "chalao" only maps to play when a media noun is present.
+
+const TRAILING_HINGLISH: Array<{ re: RegExp; to: (rest: string) => string }> = [
+  { re: /\s+(?:kholo|khol do|khol na|khol de|chala do|chalu karo)\s*$/i, to: (r) => `open ${r}` },
+  { re: /\s+(?:bajao|baja do|baja de)\s*$/i, to: (r) => `play ${r}` },
+  {
+    re: /\s+(?:chalao|chalu kar)\s*$/i,
+    to: (r) =>
+      /\b(gaana|song|music|video|movie|playlist|trailer|film)\b/i.test(r) ? `play ${r}` : `open ${r}`,
+  },
+  { re: /\s+(?:band karo|band kar do|band kardo|band kr do|band kar)\s*$/i, to: (r) => `close ${r}` },
+  { re: /\s+(?:dhundo|dhoondo|dhund lo|dhund)\s*$/i, to: (r) => `find ${r}` },
+];
+
+function rewriteTrailingHinglishVerb(text: string): string | null {
+  for (const { re, to } of TRAILING_HINGLISH) {
+    const m = text.match(re);
+    if (m && m.index !== undefined) {
+      const rest = text.slice(0, m.index).trim();
+      if (!rest) return null; // bare verb — do not guess a target
+      return to(rest);
+    }
+  }
+  return null;
+}
+
 export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedIntent {
   const normalized = normalizeCommand(raw);
   const text = normalized;
@@ -378,7 +408,7 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
   // "Open Chrome, go to YouTube, search for Mitwa and play it." → 4 steps
   // "Open Reddit and search for quip tips." → site-aware search step
   const rawClauses = text
-    .split(/\s+(?:and|then)\s+|,\s+/)
+    .split(/\s+(?:and|then|aur|phir)\s+|,\s+/)
     .map((s) => s.trim().replace(/^then\s+/, ""))
     .filter(Boolean);
   if (rawClauses.length > 1) {
@@ -1455,6 +1485,17 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
   }
 
   // ─── DEFAULT: CHAT (not a task) ──────────────────────────────────────────
+  // ─── HINGLISH TRAILING VERBS ("youtube kholo", "mitwa bajao") ────────────
+  // Natural Hinglish places the verb after the object. Rewrite into the
+  // leading-verb form the parser already understands, then re-parse.
+  const rewritten = rewriteTrailingHinglishVerb(text);
+  if (rewritten) {
+    const reparsed = parseIntentV2(rewritten, opts);
+    if (reparsed.isTask) {
+      return { ...reparsed, confidence: Math.min(reparsed.confidence, 0.8) };
+    }
+  }
+
   return {
     ...base,
     action: "chat",
