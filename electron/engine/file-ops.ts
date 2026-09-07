@@ -72,6 +72,30 @@ export type FileOp =
   | { op: "list"; path: string }
   | { op: "search"; query: string; base?: string };
 
+/**
+ * Local file search across the named base (or the user's common folders).
+ * Pure Node — no Electron — so tests and the tool registry can reuse it.
+ */
+export function searchFiles(query: string, base?: string): { hits: string[]; searched: string[] } {
+  const baseR = base ? resolveUserPath(base) : { ok: true as const, path: os.homedir() };
+  if (!baseR.ok) return { hits: [], searched: [] };
+  const needle = query.toLowerCase().trim();
+  if (!needle) return { hits: [], searched: [] };
+  const roots = [baseR.path, path.join(os.homedir(), "Desktop"), path.join(os.homedir(), "Documents"), path.join(os.homedir(), "Downloads")];
+  const seen = new Set<string>();
+  const hits: string[] = [];
+  const searched: string[] = [];
+  const deadline = Date.now() + 6000;
+  for (const root of roots) {
+    if (seen.has(root.toLowerCase()) || !statInfo(root).exists) continue;
+    seen.add(root.toLowerCase());
+    searched.push(root);
+    walkSearch(root, needle, hits, deadline, 0);
+    if (hits.length >= 15 || Date.now() > deadline) break;
+  }
+  return { hits, searched };
+}
+
 export function executeFileOp(action: FileOp): ActionVerification {
   switch (action.op) {
     case "read": {
@@ -191,22 +215,9 @@ export function executeFileOp(action: FileOp): ActionVerification {
     }
 
     case "search": {
-      const baseR = action.base ? resolveUserPath(action.base) : { ok: true as const, path: os.homedir() };
-      if (!baseR.ok) return fail(`I won't search there — ${baseR.reason}.`, [], "unsafe-path");
-      const needle = action.query.toLowerCase().trim();
-      if (!needle) return fail("I don't know what file name to search for.", [], "empty-query");
-      const roots = [baseR.path, path.join(os.homedir(), "Desktop"), path.join(os.homedir(), "Documents"), path.join(os.homedir(), "Downloads")];
-      const seen = new Set<string>();
-      const hits: string[] = [];
-      const deadline = Date.now() + 6000;
-      for (const root of roots) {
-        if (seen.has(root.toLowerCase()) || !statInfo(root).exists) continue;
-        seen.add(root.toLowerCase());
-        walkSearch(root, needle, hits, deadline, 0);
-        if (hits.length >= 15 || Date.now() > deadline) break;
-      }
+      const { hits } = searchFiles(action.query, action.base);
       return hits.length
-        ? ok(`Found ${hits.length} matching item${hits.length > 1 ? "s" : ""}:\n${hits.map((h) => `• ${h}`).join("\n")}`, [`searched: ${needle}`])
+        ? ok(`Found ${hits.length} matching item${hits.length > 1 ? "s" : ""}:\n${hits.map((h) => `• ${h}`).join("\n")}`, [`searched: ${action.query}`])
         : fail(`I couldn't find any file matching "${action.query}".`, ["searched common folders"], "search-no-hits");
     }
 

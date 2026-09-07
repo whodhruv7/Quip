@@ -131,6 +131,19 @@ async function mouseClick(x, y) {
     }
     return (0, action_verifier_1.fail)(`I couldn't perform the click.`, ["mouse_event failed"], "click-failed");
 }
+/** Current cursor position (System.Windows.Forms.Cursor). */
+async function cursorPosition() {
+    const res = await (0, action_verifier_1.runCapture)(`powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; $p = [System.Windows.Forms.Cursor]::Position; Write-Output \"$($p.X),$($p.Y)\""`, 6000);
+    const m = res?.stdout?.trim().match(/^(\d+)\s*,\s*(\d+)$/);
+    return m ? { x: parseInt(m[1], 10), y: parseInt(m[2], 10) } : null;
+}
+/** Resolve click coordinates — undefined coords mean "click where the cursor is". */
+async function resolveClickPoint(x, y) {
+    if (typeof x === "number" && Number.isFinite(x) && typeof y === "number" && Number.isFinite(y)) {
+        return { x, y };
+    }
+    return cursorPosition();
+}
 async function mouseScroll(deltaY) {
     const dir = deltaY < 0 ? -1 : 1; // deltaY < 0 = scroll down (natural)
     const amount = Math.min(Math.abs(Math.round(deltaY)), 1000) * dir;
@@ -263,10 +276,20 @@ async function executeDesktopAction(action) {
             }
             return (0, action_verifier_1.fail)("I couldn't send the key press.", ["SendKeys failed"], "key-failed");
         }
-        case "click":
-            return mouseClick(Math.round(action.x), Math.round(action.y));
-        case "click.variant":
-            return mouseClickVariant(action.variant, Math.round(action.x), Math.round(action.y));
+        case "click": {
+            const point = await resolveClickPoint(action.x, action.y);
+            if (!point) {
+                return (0, action_verifier_1.fail)("I couldn't get the current cursor position for the click.", ["cursor probe failed"], "cursor-failed");
+            }
+            return mouseClick(Math.round(point.x), Math.round(point.y));
+        }
+        case "click.variant": {
+            const vPoint = await resolveClickPoint(action.x, action.y);
+            if (!vPoint) {
+                return (0, action_verifier_1.fail)("I couldn't get the current cursor position for the click.", ["cursor probe failed"], "cursor-failed");
+            }
+            return mouseClickVariant(action.variant, Math.round(vPoint.x), Math.round(vPoint.y));
+        }
         case "scroll":
             return mouseScroll(action.deltaY);
         case "drag":

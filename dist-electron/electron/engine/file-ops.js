@@ -15,6 +15,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.resolveUserPath = resolveUserPath;
+exports.searchFiles = searchFiles;
 exports.executeFileOp = executeFileOp;
 const node_os_1 = __importDefault(require("node:os"));
 const node_path_1 = __importDefault(require("node:path"));
@@ -64,6 +65,33 @@ function statInfo(p) {
 }
 function truncate(s, n = 8000) {
     return s.length > n ? s.slice(0, n) + `\n… (truncated, ${s.length} chars total)` : s;
+}
+/**
+ * Local file search across the named base (or the user's common folders).
+ * Pure Node — no Electron — so tests and the tool registry can reuse it.
+ */
+function searchFiles(query, base) {
+    const baseR = base ? resolveUserPath(base) : { ok: true, path: node_os_1.default.homedir() };
+    if (!baseR.ok)
+        return { hits: [], searched: [] };
+    const needle = query.toLowerCase().trim();
+    if (!needle)
+        return { hits: [], searched: [] };
+    const roots = [baseR.path, node_path_1.default.join(node_os_1.default.homedir(), "Desktop"), node_path_1.default.join(node_os_1.default.homedir(), "Documents"), node_path_1.default.join(node_os_1.default.homedir(), "Downloads")];
+    const seen = new Set();
+    const hits = [];
+    const searched = [];
+    const deadline = Date.now() + 6000;
+    for (const root of roots) {
+        if (seen.has(root.toLowerCase()) || !statInfo(root).exists)
+            continue;
+        seen.add(root.toLowerCase());
+        searched.push(root);
+        walkSearch(root, needle, hits, deadline, 0);
+        if (hits.length >= 15 || Date.now() > deadline)
+            break;
+    }
+    return { hits, searched };
 }
 function executeFileOp(action) {
     switch (action.op) {
@@ -193,26 +221,9 @@ function executeFileOp(action) {
                 : `"${action.path}" is empty.`, [`${entries.length} entries`]);
         }
         case "search": {
-            const baseR = action.base ? resolveUserPath(action.base) : { ok: true, path: node_os_1.default.homedir() };
-            if (!baseR.ok)
-                return (0, action_verifier_1.fail)(`I won't search there — ${baseR.reason}.`, [], "unsafe-path");
-            const needle = action.query.toLowerCase().trim();
-            if (!needle)
-                return (0, action_verifier_1.fail)("I don't know what file name to search for.", [], "empty-query");
-            const roots = [baseR.path, node_path_1.default.join(node_os_1.default.homedir(), "Desktop"), node_path_1.default.join(node_os_1.default.homedir(), "Documents"), node_path_1.default.join(node_os_1.default.homedir(), "Downloads")];
-            const seen = new Set();
-            const hits = [];
-            const deadline = Date.now() + 6000;
-            for (const root of roots) {
-                if (seen.has(root.toLowerCase()) || !statInfo(root).exists)
-                    continue;
-                seen.add(root.toLowerCase());
-                walkSearch(root, needle, hits, deadline, 0);
-                if (hits.length >= 15 || Date.now() > deadline)
-                    break;
-            }
+            const { hits } = searchFiles(action.query, action.base);
             return hits.length
-                ? (0, action_verifier_1.ok)(`Found ${hits.length} matching item${hits.length > 1 ? "s" : ""}:\n${hits.map((h) => `• ${h}`).join("\n")}`, [`searched: ${needle}`])
+                ? (0, action_verifier_1.ok)(`Found ${hits.length} matching item${hits.length > 1 ? "s" : ""}:\n${hits.map((h) => `• ${h}`).join("\n")}`, [`searched: ${action.query}`])
                 : (0, action_verifier_1.fail)(`I couldn't find any file matching "${action.query}".`, ["searched common folders"], "search-no-hits");
         }
         default:

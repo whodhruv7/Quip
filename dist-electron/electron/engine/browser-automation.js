@@ -170,11 +170,12 @@ async function readWebPage(rawUrl) {
         const text = await res.text();
         if (!text || text.length < 20)
             throw new Error("empty content");
-        if (text.length > 20000) {
-            return (0, action_verifier_1.ok)(`Read the page (${hostnameOf(url)}) — showing the beginning.`, [`char count: ${text.length}`]);
-        }
+        // Both branches return the actual page text — never drop the content.
+        const body = text.slice(0, 20000);
         context_store_1.contextStore.update({ activeUrl: url });
-        return (0, action_verifier_1.ok)(text.slice(0, 20000), [`reader: r.jina.ai`, `url: ${url}`]);
+        return (0, action_verifier_1.ok)(body, text.length > 20000
+            ? [`reader: r.jina.ai`, `url: ${url}`, `full length: ${text.length} chars — showing the first 20000`]
+            : [`reader: r.jina.ai`, `url: ${url}`]);
     }
     catch (e) {
         // Fallback: direct fetch → strip HTML

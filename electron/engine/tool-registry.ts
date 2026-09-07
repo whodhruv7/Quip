@@ -23,9 +23,9 @@ import {
   launchApp,
   type InstalledApp,
 } from "./app-discovery";
-import { resolveLocalTarget, openLocalTarget } from "./file-discovery";
 import { executeDesktopAction } from "./desktop-controller";
-import { executeFileOp } from "./file-ops";
+import { executeFileOp, searchFiles } from "./file-ops";
+import { resolveLocalTarget, openLocalTarget } from "./file-discovery";
 import {
   openBrowserSurface,
   navigateBrowser,
@@ -212,19 +212,14 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
 
   async click(step, _ctx) {
     const variant = step.params.variant as "double" | "right" | undefined;
+    // No coordinates → click at the CURRENT cursor position (real, honest).
+    const hasCoords = step.params.x !== undefined && step.params.x !== "";
+    const x = hasCoords ? parseFloat(step.params.x) : undefined;
+    const y = hasCoords ? parseFloat(step.params.y) : undefined;
     if (variant === "double" || variant === "right") {
-      return fromVerification(await executeDesktopAction({
-        type: "click.variant",
-        variant,
-        x: parseFloat(step.params.x ?? "0"),
-        y: parseFloat(step.params.y ?? "0"),
-      }));
+      return fromVerification(await executeDesktopAction({ type: "click.variant", variant, x, y }));
     }
-    return fromVerification(await executeDesktopAction({
-      type: "click",
-      x: parseFloat(step.params.x ?? "0"),
-      y: parseFloat(step.params.y ?? "0"),
-    }));
+    return fromVerification(await executeDesktopAction({ type: "click", x, y }));
   },
 
   async scroll(step, _ctx) {
@@ -280,6 +275,51 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
 
   async file_op(step, _ctx) {
     const op = step.params.op as string;
+
+    // ── search: local-first file search, optional "open the first hit" ──
+    if (op === "search") {
+      const query = step.params.query ?? step.params.path ?? "";
+      const base = step.params.base;
+      const res = searchFiles(query, base);
+      if (res.hits.length === 0) {
+        return {
+          success: false,
+          output: `I couldn't find any file matching "${query}".`,
+          note: "searched common folders, no hits",
+          evidence: ["local search found nothing"],
+        };
+      }
+      // "…and open it" → open the first REAL hit and report honestly.
+      if (step.params.openFirst === "true") {
+        const first = res.hits[0];
+        const opened = await openLocalTarget({
+          kind: "file",
+          path: first,
+          displayName: path.basename(first),
+          confidence: 1,
+        });
+        const others = res.hits.slice(1, 5);
+        return {
+          success: opened.ok,
+          output:
+            `Found ${res.hits.length} matching item${res.hits.length > 1 ? "s" : ""}. ` +
+            (opened.ok
+              ? `Opened the first one: ${first}`
+              : `I found "${first}" but couldn't open it — ${opened.summary}`) +
+            (others.length ? `\nOther matches:\n${others.map((h) => `• ${h}`).join("\n")}` : ""),
+          note: opened.ok ? "file-search: opened first hit" : "file-search: open failed",
+          evidence: [`hits: ${res.hits.length}`, opened.ok ? `opened ${first}` : "open failed"],
+        };
+      }
+      return {
+        success: true,
+        output: `Found ${res.hits.length} matching item${res.hits.length > 1 ? "s" : ""}:\n${res.hits.map((h) => `• ${h}`).join("\n")}`,
+        note: "file-search",
+        evidence: [`searched: ${query}`],
+      };
+    }
+
+    // ── everything else: synchronous fs operation with verification ──
     const fileAction = (() => {
       switch (op) {
         case "read":
@@ -297,8 +337,6 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
           return { op: "mkdir", path: step.params.path ?? "" } as const;
         case "list":
           return { op: "list", path: step.params.path ?? "" } as const;
-        case "search":
-          return { op: "search", query: step.params.query ?? step.params.path ?? "", base: step.params.base } as const;
         default:
           return null;
       }

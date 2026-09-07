@@ -147,3 +147,108 @@ test("open X routes to the x.com website (not a folder or app guess)", () => {
   assert.equal(r.steps[0].action, "open_website");
   assert.ok(r.steps[0].target === "x" || r.steps[0].target.includes("x.com"));
 });
+
+// ─── Master-spec multi-step chains ───────────────────────────────────────────
+
+test("multi-step: open VS Code and open my Quip project produces 2 real steps", () => {
+  const r = parseIntentV2("Open VS Code and open my Quip project.");
+  assert.equal(r.isMultiStep, true);
+  assert.equal(r.steps.length, 2);
+  assert.equal(r.steps[0].action, "open_app");
+  assert.equal(r.steps[0].target, "Visual Studio Code");
+  assert.equal(r.steps[1].action, "open_folder");
+  assert.match(r.steps[1].target, /quip/i);
+});
+
+test("multi-step: Chrome → YouTube → search Mitwa → play, full chain", () => {
+  const r = parseIntentV2("Open Chrome, go to YouTube, search for Mitwa and play it.");
+  assert.equal(r.isMultiStep, true);
+  const actions = r.steps.map((s) => s.action);
+  // site_search = open the YouTube results page AND read it back (richer than plain search_youtube)
+  assert.deepEqual(actions, ["open_app", "open_website", "site_search", "play_media"]);
+  const search = r.steps[2];
+  assert.equal(search.params.site, "youtube");
+  assert.equal(search.params.query.toLowerCase(), "mitwa");
+  const play = r.steps[r.steps.length - 1];
+  assert.equal(play.params.query.toLowerCase(), "mitwa");
+});
+
+test("multi-step: open Reddit and search carries the query into a reddit site_search", () => {
+  const r = parseIntentV2("Open Reddit and search for quip tips.");
+  assert.equal(r.isMultiStep, true);
+  assert.equal(r.steps[0].action, "open_website");
+  assert.equal(r.steps[0].target, "reddit");
+  assert.equal(r.steps[1].action, "site_search");
+  assert.equal(r.steps[1].params.site, "reddit");
+  assert.equal(r.steps[1].params.query, "quip tips");
+});
+
+test("vague second clause (open X and find this post) keeps just the site open", () => {
+  const r = parseIntentV2("Open X and find this post.");
+  assert.equal(r.isTask, true);
+  assert.equal(r.steps[0].action, "open_website");
+  assert.equal(r.steps[0].target, "x");
+});
+
+// ─── Local-first file search (never google a local file) ────────────────────
+
+test("find the pdf on my desktop routes to a LOCAL file search, not google", () => {
+  const r = parseIntentV2("find the pdf on my desktop");
+  assert.equal(r.steps[0].action, "file_op");
+  assert.equal(r.steps[0].params.op, "search");
+  assert.equal(r.steps[0].params.base, "desktop");
+  assert.notEqual(r.steps[0].action, "search_web");
+});
+
+test("find resume.pdf routes to a local file search", () => {
+  const r = parseIntentV2("find resume.pdf");
+  assert.equal(r.steps[0].action, "file_op");
+  assert.equal(r.steps[0].params.op, "search");
+  assert.equal(r.steps[0].params.query, "resume.pdf");
+});
+
+test("find the pdf on my desktop and open it opens the first hit", () => {
+  const r = parseIntentV2("Find the PDF on my Desktop and open it.");
+  assert.equal(r.steps[0].action, "file_op");
+  assert.equal(r.steps[0].params.op, "search");
+  assert.equal(r.steps[0].params.openFirst, "true");
+  assert.equal(r.steps[0].params.base, "desktop");
+});
+
+// ─── Natural device commands ────────────────────────────────────────────────
+
+test("copy this copies the current selection via ctrl+c", () => {
+  const r = parseIntentV2("copy this");
+  assert.equal(r.steps[0].action, "press_key");
+  assert.equal(r.steps[0].params.keys, "ctrl,c");
+});
+
+test("paste this pastes via ctrl+v", () => {
+  const r = parseIntentV2("paste this");
+  assert.equal(r.steps[0].action, "press_key");
+  assert.equal(r.steps[0].params.keys, "ctrl,v");
+});
+
+test("bare click this clicks at the current cursor position", () => {
+  const r = parseIntentV2("click this");
+  assert.equal(r.steps[0].action, "click");
+  assert.equal(r.steps[0].params.x, undefined);
+  assert.equal(r.steps[0].params.y, undefined);
+});
+
+// ─── Local target resolution hygiene ────────────────────────────────────────
+
+test("open my quip project target strips possessives cleanly", () => {
+  const r = parseIntentV2("open my quip project");
+  assert.equal(r.steps[0].action, "open_folder");
+  assert.equal(r.steps[0].target, "quip");
+});
+
+test("open my project folder routes to a folder lookup (context-aware)", () => {
+  const r = parseIntentV2("Open my project folder and launch VS Code.");
+  assert.equal(r.isMultiStep, true);
+  assert.equal(r.steps[0].action, "open_folder");
+  assert.match(r.steps[0].target, /folder/);
+  assert.equal(r.steps[1].action, "open_app");
+  assert.equal(r.steps[1].target, "Visual Studio Code");
+});

@@ -12,16 +12,20 @@
 //
 // Every ToolResult carries verified state — never fake success.
 // ─────────────────────────────────────────────────────────────────────────────
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.invalidateAppIndex = invalidateAppIndex;
 exports.executeTool = executeTool;
 const electron_1 = require("electron");
+const node_path_1 = __importDefault(require("node:path"));
 const electron_2 = require("electron");
 const legacy_tools_1 = require("./legacy-tools");
 const app_discovery_1 = require("./app-discovery");
-const file_discovery_1 = require("./file-discovery");
 const desktop_controller_1 = require("./desktop-controller");
 const file_ops_1 = require("./file-ops");
+const file_discovery_1 = require("./file-discovery");
 const browser_automation_1 = require("./browser-automation");
 const context_store_1 = require("./context-store");
 function fromVerification(v) {
@@ -168,19 +172,14 @@ const Executors = {
     },
     async click(step, _ctx) {
         const variant = step.params.variant;
+        // No coordinates → click at the CURRENT cursor position (real, honest).
+        const hasCoords = step.params.x !== undefined && step.params.x !== "";
+        const x = hasCoords ? parseFloat(step.params.x) : undefined;
+        const y = hasCoords ? parseFloat(step.params.y) : undefined;
         if (variant === "double" || variant === "right") {
-            return fromVerification(await (0, desktop_controller_1.executeDesktopAction)({
-                type: "click.variant",
-                variant,
-                x: parseFloat(step.params.x ?? "0"),
-                y: parseFloat(step.params.y ?? "0"),
-            }));
+            return fromVerification(await (0, desktop_controller_1.executeDesktopAction)({ type: "click.variant", variant, x, y }));
         }
-        return fromVerification(await (0, desktop_controller_1.executeDesktopAction)({
-            type: "click",
-            x: parseFloat(step.params.x ?? "0"),
-            y: parseFloat(step.params.y ?? "0"),
-        }));
+        return fromVerification(await (0, desktop_controller_1.executeDesktopAction)({ type: "click", x, y }));
     },
     async scroll(step, _ctx) {
         return fromVerification(await (0, desktop_controller_1.executeDesktopAction)({
@@ -229,6 +228,48 @@ const Executors = {
     },
     async file_op(step, _ctx) {
         const op = step.params.op;
+        // ── search: local-first file search, optional "open the first hit" ──
+        if (op === "search") {
+            const query = step.params.query ?? step.params.path ?? "";
+            const base = step.params.base;
+            const res = (0, file_ops_1.searchFiles)(query, base);
+            if (res.hits.length === 0) {
+                return {
+                    success: false,
+                    output: `I couldn't find any file matching "${query}".`,
+                    note: "searched common folders, no hits",
+                    evidence: ["local search found nothing"],
+                };
+            }
+            // "…and open it" → open the first REAL hit and report honestly.
+            if (step.params.openFirst === "true") {
+                const first = res.hits[0];
+                const opened = await (0, file_discovery_1.openLocalTarget)({
+                    kind: "file",
+                    path: first,
+                    displayName: node_path_1.default.basename(first),
+                    confidence: 1,
+                });
+                const others = res.hits.slice(1, 5);
+                return {
+                    success: opened.ok,
+                    output: `Found ${res.hits.length} matching item${res.hits.length > 1 ? "s" : ""}. ` +
+                        (opened.ok
+                            ? `Opened the first one: ${first}`
+                            : `I found "${first}" but couldn't open it — ${opened.summary}`) +
+                        (others.length ? `\nOther matches:\n${others.map((h) => `• ${h}`).join("\n")}` : ""),
+                    note: opened.ok ? "file-search: opened first hit" : "file-search: open failed",
+                    evidence: [`hits: ${res.hits.length}`, opened.ok ? `opened ${first}` : "open failed"],
+                };
+            }
+            return {
+                success: true,
+                output: `Found ${res.hits.length} matching item${res.hits.length > 1 ? "s" : ""}:\n${res.hits.map((h) => `• ${h}`).join("\n")}`,
+                note: "file-search",
+                evidence: [`searched: ${query}`],
+            };
+        }
+        // ── everything else: synchronous fs operation with verification ──
         const fileAction = (() => {
             switch (op) {
                 case "read":
@@ -246,8 +287,6 @@ const Executors = {
                     return { op: "mkdir", path: step.params.path ?? "" };
                 case "list":
                     return { op: "list", path: step.params.path ?? "" };
-                case "search":
-                    return { op: "search", query: step.params.query ?? step.params.path ?? "", base: step.params.base };
                 default:
                     return null;
             }

@@ -29,8 +29,8 @@ export type DesktopAction =
   | { type: "close"; target: string }
   | { type: "type"; text: string }
   | { type: "key"; keys: string[] }
-  | { type: "click"; x: number; y: number }
-  | { type: "click.variant"; variant: "double" | "right"; x: number; y: number }
+  | { type: "click"; x?: number; y?: number }
+  | { type: "click.variant"; variant: "double" | "right"; x?: number; y?: number }
   | { type: "scroll"; deltaY: number }
   | { type: "clipboard.read" }
   | { type: "clipboard.write"; text: string }
@@ -147,6 +147,24 @@ async function mouseClick(x: number, y: number): Promise<ActionVerification> {
     return ok(`Clicked at (${x}, ${y}).`, ["SetCursorPos + mouse_event executed"]);
   }
   return fail(`I couldn't perform the click.`, ["mouse_event failed"], "click-failed");
+}
+
+/** Current cursor position (System.Windows.Forms.Cursor). */
+async function cursorPosition(): Promise<{ x: number; y: number } | null> {
+  const res = await runCapture(
+    `powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; $p = [System.Windows.Forms.Cursor]::Position; Write-Output \"$($p.X),$($p.Y)\""`,
+    6000
+  );
+  const m = res?.stdout?.trim().match(/^(\d+)\s*,\s*(\d+)$/);
+  return m ? { x: parseInt(m[1], 10), y: parseInt(m[2], 10) } : null;
+}
+
+/** Resolve click coordinates — undefined coords mean "click where the cursor is". */
+async function resolveClickPoint(x?: number, y?: number): Promise<{ x: number; y: number } | null> {
+  if (typeof x === "number" && Number.isFinite(x) && typeof y === "number" && Number.isFinite(y)) {
+    return { x, y };
+  }
+  return cursorPosition();
 }
 
 async function mouseScroll(deltaY: number): Promise<ActionVerification> {
@@ -334,11 +352,21 @@ export async function executeDesktopAction(action: DesktopAction): Promise<Actio
       return fail("I couldn't send the key press.", ["SendKeys failed"], "key-failed");
     }
 
-    case "click":
-      return mouseClick(Math.round(action.x), Math.round(action.y));
+    case "click": {
+      const point = await resolveClickPoint(action.x, action.y);
+      if (!point) {
+        return fail("I couldn't get the current cursor position for the click.", ["cursor probe failed"], "cursor-failed");
+      }
+      return mouseClick(Math.round(point.x), Math.round(point.y));
+    }
 
-    case "click.variant":
-      return mouseClickVariant(action.variant, Math.round(action.x), Math.round(action.y));
+    case "click.variant": {
+      const vPoint = await resolveClickPoint(action.x, action.y);
+      if (!vPoint) {
+        return fail("I couldn't get the current cursor position for the click.", ["cursor probe failed"], "cursor-failed");
+      }
+      return mouseClickVariant(action.variant, Math.round(vPoint.x), Math.round(vPoint.y));
+    }
 
     case "scroll":
       return mouseScroll(action.deltaY);

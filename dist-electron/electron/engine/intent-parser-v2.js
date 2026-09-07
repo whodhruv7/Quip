@@ -150,6 +150,78 @@ function startsWithAny(text, words) {
     }
     return null;
 }
+// ─── Open-clause routing (shared by the single OPEN path + multi-step chains) ─
+/** Route one normalized clause that starts with an open verb → a TaskStep. */
+function routeOpenClause(clause) {
+    const verb = startsWithAny(clause, OPEN_WORDS);
+    if (!verb)
+        return null;
+    // Trim BEFORE stripping articles — the slice leaves a leading space.
+    const rest = clause.slice(verb.length).trim().replace(/^(the|my|a|an)\s+/, "").trim();
+    // Folder hints ("open downloads")
+    for (const word of rest.split(/\s+/)) {
+        const folder = FOLDER_HINTS[word];
+        if (folder) {
+            return {
+                action: "open_folder",
+                target: folder,
+                params: { location: folder },
+                description: `Open the ${folder} folder`,
+            };
+        }
+    }
+    // Installed app hint FIRST ("open vs code" → desktop app, never a website)
+    const appHint = matchHint(rest, APP_HINTS);
+    if (appHint) {
+        return {
+            action: "open_app",
+            target: appHint.value,
+            params: { appName: appHint.value, query: rest },
+            description: `Open ${appHint.value}`,
+        };
+    }
+    // Website hints ("open youtube", "open gmail")
+    const site = matchHint(rest, SITE_HINTS);
+    if (site) {
+        return {
+            action: "open_website",
+            target: site.key,
+            params: { url: site.value.url, label: site.value.label },
+            description: `Open ${site.value.label}`,
+        };
+    }
+    // Project / folder / file by name ("open my quip project", "open resume.docx")
+    const projectMatch = rest.match(/(.+?)\s+(?:project|folder|file|document|doc|pdf)$/);
+    const targetName = (projectMatch ? projectMatch[1] : rest).replace(/\b(project|folder|file)\b/g, "").trim();
+    if (targetName && targetName.length > 1) {
+        const isLikelyFile = /\.(docx?|pdf|txt|xlsx?|pptx?|png|jpe?g|mp3|mp4|md)$/i.test(targetName) || /\bfile\b/.test(rest);
+        return {
+            action: isLikelyFile ? "open_file" : "open_folder",
+            target: targetName,
+            params: { query: targetName, kind: isLikelyFile ? "file" : "folder" },
+            description: `Open ${isLikelyFile ? "the file" : "the folder / project"} "${targetName}"`,
+        };
+    }
+    // "open my project folder" with no concrete name → folder lookup via context
+    if (/\b(project|folder|directory)\b/.test(rest)) {
+        return {
+            action: "open_folder",
+            target: rest,
+            params: { query: rest, kind: "folder" },
+            description: `Open ${rest}`,
+        };
+    }
+    // Unknown app name — still a task; execution resolves via discovery or web
+    if (rest && rest.length > 1 && rest.split(" ").length <= 4) {
+        return {
+            action: "open_app",
+            target: rest,
+            params: { appName: rest, query: rest },
+            description: `Open ${rest}`,
+        };
+    }
+    return null;
+}
 // ─── MAIN PARSER ─────────────────────────────────────────────────────────────
 function parseIntentV2(raw, opts = {}) {
     const normalized = normalizeCommand(raw);
@@ -189,6 +261,127 @@ function parseIntentV2(raw, opts = {}) {
             summary: `Opened ${urlInRaw[0]}`,
             confidence: 0.98,
         };
+    }
+    // ─── MULTI-STEP CHAINS (open/search/play/close/… sequences) ─────────────
+    // "Open VS Code and open my Quip project." → 2 steps
+    // "Open Chrome, go to YouTube, search for Mitwa and play it." → 4 steps
+    // "Open Reddit and search for quip tips." → site-aware search step
+    const rawClauses = text.split(/\s+(?:and|then)\s+|,\s+/).map((s) => s.trim()).filter(Boolean);
+    if (rawClauses.length > 1) {
+        const chainSteps = [];
+        let chainOk = true;
+        let lastQuery = context.lastMediaQuery ?? "";
+        let lastSite = null;
+        for (const clause of rawClauses) {
+            let step = null;
+            if (startsWithAny(clause, OPEN_WORDS)) {
+                step = routeOpenClause(clause);
+                if (step?.action === "open_website")
+                    lastSite = step.target;
+            }
+            else if (/^(play|listen(?:\s+to)?|baja|bajao)\b/.test(clause)) {
+                let q = removeWords(clause, [...PLAY_WORDS, "song", "gaana", "music", "video", "on", "youtube", "spotify", "yt"]);
+                if (!q || q === "it" || q === "that" || q === "this")
+                    q = lastQuery;
+                if (q) {
+                    step = /\bspotify\b/.test(clause)
+                        ? { action: "play_media", target: "spotify", params: { url: `https://open.spotify.com/search/${encodeURIComponent(q)}`, query: q }, description: `Play "${q}" on Spotify` }
+                        : { action: "play_media", target: "youtube", params: { query: q, youtube: "true" }, description: `Play "${q}" on YouTube` };
+                    lastQuery = q;
+                }
+            }
+            else if (/^(search|find|look\s+up|google)\b/.test(clause)) {
+                const q = removeWords(clause, [...SEARCH_WORDS, "look", "up", "for", "web", "internet"]);
+                const vague = !q || q.replace(/\b(this|that|it|them|the|a|an|post|page|article)\b/g, "").trim().length < 3;
+                // Local-file-looking queries must NOT become web searches — bail the
+                // chain and let the dedicated local-first file-search block handle it.
+                const localish = /\.(pdf|docx?|txt|xlsx?|pptx?|png|jpe?g|gif|mp3|mp4|zip|csv|json|md)\b/i.test(q) ||
+                    /\b(file|files|folder|documents?|photos?|screenshots?|pdf|spreadsheet|presentation|invoice|resume)\b/i.test(q) ||
+                    /\b(on|in|under)\s+(?:my\s+|the\s+)?(desktop|downloads|documents|pictures|music|videos)\b/i.test(q);
+                if (localish) {
+                    chainOk = false;
+                    break;
+                }
+                if (!vague) {
+                    const siteForSearch = lastSite && ["reddit", "x", "twitter", "github", "youtube"].includes(lastSite)
+                        ? (lastSite === "twitter" ? "x" : lastSite)
+                        : null;
+                    if (siteForSearch) {
+                        step = {
+                            action: "site_search",
+                            target: siteForSearch,
+                            params: { site: siteForSearch, query: q },
+                            description: `Search ${siteForSearch === "x" ? "X" : siteForSearch[0].toUpperCase() + siteForSearch.slice(1)} for "${q}"`,
+                        };
+                    }
+                    else if (lastSite === "youtube") {
+                        step = {
+                            action: "search_youtube",
+                            target: "youtube",
+                            params: { url: `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`, query: q },
+                            description: `Search YouTube for "${q}"`,
+                        };
+                    }
+                    else {
+                        step = {
+                            action: "search_web",
+                            target: "google",
+                            params: { url: `https://www.google.com/search?q=${encodeURIComponent(q)}`, query: q },
+                            description: `Search for "${q}"`,
+                        };
+                    }
+                    lastQuery = q;
+                }
+            }
+            else if (/^close\b/.test(clause)) {
+                const rest = clause.replace(/^close\s*/, "").replace(/^(the|my)\s+/, "").trim();
+                const appHint = matchHint(rest, APP_HINTS);
+                const target = appHint ? appHint.value : rest;
+                if (target.length > 1) {
+                    step = { action: "close_app", target, params: { target }, description: `Close ${target}` };
+                }
+            }
+            else if (/^(focus|switch\s+to)\b/.test(clause)) {
+                const rest = clause.replace(/^(?:focus|switch\s+to)\s*/, "").replace(/^(the|my)\s+/, "").trim();
+                const appHint = matchHint(rest, APP_HINTS);
+                const target = appHint ? appHint.value : rest;
+                if (target.length > 1) {
+                    step = { action: "focus_app", target, params: { target }, description: `Focus ${target}` };
+                }
+            }
+            else if (/^type\b/.test(clause)) {
+                const content = clause.replace(/^type\s*/, "").trim();
+                if (content) {
+                    step = { action: "type_text", target: "", params: { text: content }, description: `Type "${content}"` };
+                }
+            }
+            else if (/^press\b/.test(clause)) {
+                const keys = clause.replace(/^press\s*/, "").split(/\s*(?:\+|\s)\s*/).filter(Boolean).slice(0, 4);
+                if (keys.length) {
+                    step = { action: "press_key", target: keys.join("+"), params: { keys: keys.join(",") }, description: `Press ${keys.join("+")}` };
+                }
+            }
+            if (!step) {
+                chainOk = false;
+                break;
+            }
+            chainSteps.push(step);
+        }
+        if (chainOk && chainSteps.length > 1) {
+            const lastStep = chainSteps[chainSteps.length - 1];
+            const isPlay = lastStep.action === "play_media";
+            return {
+                ...base,
+                action: isPlay ? "play" : "open",
+                target: isPlay ? lastStep.target || "youtube" : lastStep.target,
+                query: lastQuery,
+                isTask: true,
+                isMultiStep: true,
+                steps: chainSteps,
+                summary: chainSteps.map((s) => s.description).join(" → "),
+                confidence: 0.85,
+            };
+        }
     }
     // ─── PLAY MEDIA (handles "open youtube and play mitwa" correctly) ───────
     const hasPlay = PLAY_WORDS.some((w) => text.includes(w));
@@ -323,6 +516,44 @@ function parseIntentV2(raw, opts = {}) {
             confidence: 0.85,
         };
     }
+    // Natural paste: "paste this/that/it" → real ctrl+v into the focused window
+    if (/^paste\b/.test(text)) {
+        return {
+            ...base,
+            action: "key",
+            target: "ctrl+v",
+            query: "",
+            isTask: true,
+            isMultiStep: false,
+            steps: [{
+                    action: "press_key",
+                    target: "ctrl+v",
+                    params: { keys: "ctrl,v" },
+                    description: "Paste from the clipboard",
+                }],
+            summary: "Pasted from the clipboard",
+            confidence: 0.8,
+        };
+    }
+    // Natural copy selection: "copy this/that/it" → real ctrl+c on the focused window
+    if (/^copy\s+(this|that|it|the\s+selection|selection)\b/.test(text) && !/\b(file|folder|clipboard)\b/.test(text)) {
+        return {
+            ...base,
+            action: "key",
+            target: "ctrl+c",
+            query: "",
+            isTask: true,
+            isMultiStep: false,
+            steps: [{
+                    action: "press_key",
+                    target: "ctrl+c",
+                    params: { keys: "ctrl,c" },
+                    description: "Copy the current selection",
+                }],
+            summary: "Copied the selection",
+            confidence: 0.8,
+        };
+    }
     // ─── LIST WINDOWS ───────────────────────────────────────────────────────
     if (/\b(list|show|what|which)\b/.test(text) && /\bopen windows\b|\bwindows (?:are )?(?:open|running)\b|\blist windows\b/.test(text)) {
         return {
@@ -432,6 +663,25 @@ function parseIntentV2(raw, opts = {}) {
                 }],
             summary: "Clicked",
             confidence: 0.9,
+        };
+    }
+    // "click" / "click this" — click at the CURRENT cursor position (real, honest)
+    if (/^click(?:\s+(?:this|that|here|it))?$/.test(text)) {
+        return {
+            ...base,
+            action: "click",
+            target: "cursor",
+            query: "",
+            isTask: true,
+            isMultiStep: false,
+            steps: [{
+                    action: "click",
+                    target: "cursor",
+                    params: {},
+                    description: "Click at the current cursor position",
+                }],
+            summary: "Clicked",
+            confidence: 0.75,
         };
     }
     const scrollMatch = text.match(/^scroll\s*(up|down)?(?:\s+(\d+))?$/);
@@ -706,6 +956,51 @@ function parseIntentV2(raw, opts = {}) {
             confidence: 0.8,
         };
     }
+    // ─── BROAD LOCAL FILE SEARCH (local-first — never google a local file) ──
+    // "find the pdf on my desktop" / "find resume.pdf" /
+    // "Find the PDF on my Desktop and open it." (opens the first hit)
+    const broadFind = text.match(/^(?:find|locate)\s+(.+)$/);
+    if (broadFind && !/\b(?:app|website|site|windows?)\b/.test(text)) {
+        let fq = broadFind[1].replace(/[?.!]+$/, "").trim();
+        const openAfter = /\s+(?:and|then)\s+(?:open|show|display)\s+(?:it|that|this|them)$/.test(fq);
+        if (openAfter)
+            fq = fq.replace(/\s+(?:and|then)\s+(?:open|show|display)\s+(?:it|that|this|them)$/, "").trim();
+        let searchBase;
+        const baseMatch = fq.match(/\s+(?:on|in|under|from)\s+(?:my\s+|the\s+)?(desktop|downloads|documents|pictures|music|videos|photos)$/);
+        if (baseMatch) {
+            searchBase = baseMatch[1];
+            fq = fq.slice(0, baseMatch.index).trim();
+        }
+        fq = fq.replace(/^(?:the|my|a|an)\s+/, "").trim();
+        const looksLocal = !!searchBase ||
+            /\.(pdf|docx?|txt|xlsx?|pptx?|png|jpe?g|gif|mp3|mp4|zip|csv|json|md|ipynb|ps1|py|ts|tsx|js|jsx)\b/i.test(fq) ||
+            /\b(file|files|folder|documents?|photos?|screenshots?|pdf|spreadsheet|presentation|invoice|resume)\b/i.test(fq);
+        if (looksLocal && fq) {
+            return {
+                ...base,
+                action: "file_op",
+                target: fq,
+                query: "search",
+                isTask: true,
+                isMultiStep: false,
+                steps: [{
+                        action: "file_op",
+                        target: fq,
+                        params: {
+                            op: "search",
+                            query: fq,
+                            ...(searchBase ? { base: searchBase } : {}),
+                            ...(openAfter ? { openFirst: "true" } : {}),
+                        },
+                        description: searchBase
+                            ? `Search for "${fq}" in ${searchBase}${openAfter ? " and open the first result" : ""}`
+                            : `Search for files matching "${fq}"${openAfter ? " and open the first result" : ""}`,
+                    }],
+                summary: "Searching files",
+                confidence: 0.8,
+            };
+        }
+    }
     // ─── SITE SEARCH (reddit / x / github / youtube) ─────────────────────────
     const siteSearch = text.match(/\bsearch\s+(reddit|x|twitter|github|youtube)\s+for\s+(.+)$/);
     if (siteSearch) {
@@ -842,108 +1137,23 @@ function parseIntentV2(raw, opts = {}) {
     // ─── OPEN: apps (installed first) / sites / folders / projects ───────────
     const openVerb = startsWithAny(text, OPEN_WORDS);
     if (openVerb) {
-        const rest = text.slice(openVerb.length).replace(/^(the|my|a|an)\s+/, "").trim();
-        // Folder hints ("open downloads")
-        for (const word of rest.split(/\s+/)) {
-            const folder = FOLDER_HINTS[word];
-            if (folder) {
-                return {
-                    ...base,
-                    action: "open",
-                    target: folder,
-                    query: "",
-                    isTask: true,
-                    isMultiStep: false,
-                    steps: [{
-                            action: "open_folder",
-                            target: folder,
-                            params: { location: folder },
-                            description: `Open the ${folder} folder`,
-                        }],
-                    summary: `Opened ${folder}`,
-                    confidence: 0.9,
-                };
-            }
-        }
-        // Installed app hint FIRST ("open vs code" → desktop app, never a website)
-        const appHint = matchHint(rest, APP_HINTS);
-        if (appHint) {
+        const step = routeOpenClause(text);
+        if (step) {
+            const confidence = step.action === "open_app" && step.params.appName === step.params.query
+                ? 0.6 // unknown app name — resolved at execution time via discovery
+                : step.action === "open_app" || step.action === "open_website" || step.action === "open_folder"
+                    ? 0.9
+                    : 0.8;
             return {
                 ...base,
                 action: "open",
-                target: appHint.value,
-                query: rest,
+                target: step.target,
+                query: step.action === "open_app" ? step.params.query ?? "" : "",
                 isTask: true,
                 isMultiStep: false,
-                steps: [{
-                        action: "open_app",
-                        target: appHint.value,
-                        params: { appName: appHint.value, query: rest },
-                        description: `Open ${appHint.value}`,
-                    }],
-                summary: `Opened ${appHint.value}`,
-                confidence: 0.9,
-            };
-        }
-        // Website hints ("open youtube", "open gmail")
-        const site = matchHint(rest, SITE_HINTS);
-        if (site) {
-            return {
-                ...base,
-                action: "open",
-                target: site.key,
-                query: "",
-                isTask: true,
-                isMultiStep: false,
-                steps: [{
-                        action: "open_website",
-                        target: site.key,
-                        params: { url: site.value.url, label: site.value.label },
-                        description: `Open ${site.value.label}`,
-                    }],
-                summary: `Opened ${site.value.label}`,
-                confidence: 0.9,
-            };
-        }
-        // Project / folder / file by name ("open my quip project", "open resume.docx")
-        const projectMatch = rest.match(/(.+?)\s+(?:project|folder|file|document|doc|pdf)$/);
-        const targetName = (projectMatch ? projectMatch[1] : rest).replace(/\b(project|folder|file)\b/g, "").trim();
-        if (targetName && targetName.length > 1) {
-            const isLikelyFile = /\.(docx?|pdf|txt|xlsx?|pptx?|png|jpe?g|mp3|mp4|md)$/i.test(targetName) || /\bfile\b/.test(rest);
-            return {
-                ...base,
-                action: "open",
-                target: targetName,
-                query: "",
-                isTask: true,
-                isMultiStep: false,
-                steps: [{
-                        action: isLikelyFile ? "open_file" : "open_folder",
-                        target: targetName,
-                        params: { query: targetName, kind: isLikelyFile ? "file" : "folder" },
-                        description: `Open ${isLikelyFile ? "the file" : "the folder / project"} "${targetName}"`,
-                    }],
-                summary: `Opened ${targetName}`,
-                confidence: 0.8,
-            };
-        }
-        // Unknown app name — still a task; execution resolves via discovery or web
-        if (rest && rest.length > 1 && rest.split(" ").length <= 4) {
-            return {
-                ...base,
-                action: "open",
-                target: rest,
-                query: rest,
-                isTask: true,
-                isMultiStep: false,
-                steps: [{
-                        action: "open_app",
-                        target: rest,
-                        params: { appName: rest, query: rest },
-                        description: `Open ${rest}`,
-                    }],
-                summary: `Opened ${rest}`,
-                confidence: 0.6,
+                steps: [step],
+                summary: step.description.replace(/^Open /, "Opened "),
+                confidence,
                 needsModelAssist: false,
             };
         }

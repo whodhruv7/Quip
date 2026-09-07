@@ -49,7 +49,7 @@ identity; Skales contributes UX behavior patterns only.
 - Companion motion: Quip's existing framer-motion idle/hover/thinking loop
   retained (calmer than Skales; matches Quip identity).
 - Chat affordance: compact inline approval panel + smart placeholder +
-  suggestion chips incl. new capabilities (open app, open project, quiz).
+  suggestion chips incl. new capabilities (open app, open project).
 
 ## Do Not Port
 
