@@ -58,6 +58,14 @@ export const IPC = {
 
   // Model router
   GET_MODEL_STATUS: "quip:get-model-status",
+  SAVE_MODEL_KEYS: "quip:save-model-keys",
+  TEST_MODEL_CONNECTION: "quip:test-model-connection",
+
+  // Companion visibility + app lifecycle (settings-controlled)
+  SET_COMPANION_VISIBLE: "quip:set-companion-visible",
+  GET_COMPANION_VISIBLE: "quip:get-companion-visible",
+  COMPANION_VISIBLE_CHANGED: "quip:companion-visible-changed",
+  QUIT_APP: "quip:quit-app",
 
   // Permission system
   GET_PERMISSIONS: "quip:get-permissions",
@@ -142,6 +150,35 @@ export interface TaskResultPayload {
     subtasks: { id: string; description: string; status: string; output?: string }[];
     isChat: boolean;
   };
+}
+
+// ─── Model key setup payloads ──────────────────────────────────────────────
+
+export type ModelProviderId = "openrouter" | "groq";
+
+export interface ModelKeySavePayload {
+  provider: ModelProviderId;
+  apiKey: string;
+  model?: string;
+}
+
+export interface ModelKeySaveResult {
+  ok: boolean;
+  masked: string;
+  message: string;
+}
+
+export interface ModelTestPayload {
+  provider: ModelProviderId;
+  apiKey?: string; // optional override — otherwise uses the stored key
+  model?: string;
+}
+
+export interface ModelTestResult {
+  ok: boolean;
+  latencyMs: number;
+  message: string;
+  kind: "auth" | "http" | "network" | "timeout" | "no-key" | "none";
 }
 
 // ─── Phase 2 payloads ──────────────────────────────────────────────────────

@@ -40,6 +40,11 @@ export type ActionType =
   | "file_op"
   | "site_search"
   | "system_action"
+  | "process_list"
+  | "process_kill"
+  | "volume"
+  | "media_key"
+  | "browser_tab"
   | "drag"
   | "mouse_move"
   | "chat";
@@ -524,6 +529,114 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
     }
   }
 
+  // ─── VOLUME / MEDIA / PROCESS / TAB — fast device clauses ───────────────
+  // These MUST run before play routing ("play the next song" is a media key,
+  // not a search) and before the close/focus loop ("close this tab" is a tab
+  // action, not close_app; "kill the chrome process" is process_kill).
+  /** One-step task builder — keeps the new device clauses compact. */
+  const single = (
+    action: ActionType,
+    target: string,
+    params: Record<string, string>,
+    description: string,
+    summary: string,
+    confidence: number
+  ): ParsedIntent => ({
+    ...base,
+    action,
+    target,
+    query: "",
+    isTask: true,
+    isMultiStep: false,
+    steps: [{ action, target, params, description }],
+    summary,
+    confidence,
+  });
+
+  // Volume: "set volume to 50", "volume up/down", "mute", Hinglish awaaz.
+  const volSet = text.match(/^(?:set\s+)?volume\s+(?:to\s+)?(\d{1,3})\s*(?:%|percent)?$/);
+  if (volSet) {
+    const level = Math.max(0, Math.min(100, parseInt(volSet[1], 10)));
+    return single("volume", "volume", { action: "set", level: String(level) },
+      `Set the volume to ${level}%`, "Setting volume", 0.9);
+  }
+  const volVerb = text.match(/^(?:turn\s+)?(?:the\s+)?volume\s+(up|down)$/);
+  if (volVerb) {
+    const a = volVerb[1];
+    return single("volume", a, { action: a }, `Turn the volume ${a}`, `Volume ${a}`, 0.9);
+  }
+  if (/^(mute|unmute)(\s+(?:the\s+)?(?:sound|audio|volume))?$/.test(text)) {
+    const a = text.startsWith("un") ? "unmute" : "mute";
+    return single("volume", a, { action: a }, a === "mute" ? "Mute the sound" : "Unmute the sound", a === "mute" ? "Muting" : "Unmuting", 0.9);
+  }
+  if (/^(awaaz|aawaz|awaz)\s+(band|chalu|bada|kam|tez|dheema)\s*(karo|kar)?$/.test(text)) {
+    const w = text.split(/\s+/)[1];
+    const a = w === "band" ? "mute" : w === "chalu" ? "unmute" : (w === "kam" || w === "dheema") ? "down" : "up";
+    return single("volume", a, { action: a }, `Volume ${a}`, `Volume ${a}`, 0.85);
+  }
+  if (/^(awaaz|aawaz|awaz)\s+(\d{1,3})\s*(?:%|percent)?\s*(karo|kar)?$/.test(text)) {
+    const m = text.match(/^(?:awaaz|aawaz|awaz)\s+(\d{1,3})/);
+    const level = Math.max(0, Math.min(100, parseInt(m![1], 10)));
+    return single("volume", "volume", { action: "set", level: String(level) },
+      `Set the volume to ${level}%`, "Setting volume", 0.85);
+  }
+
+  // Media keys: next/previous/pause — no YouTube lookup.
+  const mediaNext = text.match(/^(?:play\s+)?(?:the\s+)?(next|agla)\s+(?:song|track|gana|gaana|video)$/);
+  const mediaPrev = text.match(/^(?:play\s+)?(?:the\s+)?(previous|pichla|pichhla|last)\s+(?:song|track|gana|gaana|video)$/);
+  if (mediaNext || mediaPrev) {
+    const action = mediaNext ? "next" : "previous";
+    return single("media_key", action, { action },
+      action === "next" ? "Skip to the next track" : "Go back to the previous track",
+      action === "next" ? "Skipping to the next track" : "Going to the previous track", 0.9);
+  }
+  if (/^(pause|resume)(\s+(?:the\s+)?(?:music|song|video|gaana|gana))?$/.test(text) ||
+      /^(gaana|gana|music|video)\s+(pause|rok|chalu)\s*(karo|kar)?$/.test(text)) {
+    return single("media_key", "playpause", { action: "playpause" },
+      "Toggle play/pause", "Toggling playback", 0.85);
+  }
+
+  // Processes: list / force-close (kill). Plain "close X" stays graceful.
+  if (/\b(what|which)\s+processes\s+(are\s+)?(running|open)\b/.test(text) ||
+      /^list\s+(all\s+)?(running\s+)?processes$/.test(text) ||
+      /^show\s+(all\s+)?(running\s+)?processes$/.test(text) ||
+      /^kaunse\s+process\s+(chal\s+)?(rahe|chale)\s*(hai|rahe hain|hain)?$/.test(text)) {
+    return single("process_list", "processes", {},
+      "List the running processes", "Listing processes", 0.9);
+  }
+  const killPid = text.match(/^(?:kill|close|end|terminate)\s+(?:the\s+)?(?:process|pid)\s+(\d+)$/);
+  if (killPid) {
+    return single("process_kill", killPid[1], { target: killPid[1] },
+      `Close the process with pid ${killPid[1]}`, `Closing process ${killPid[1]}`, 0.9);
+  }
+  const killName = text.match(
+    /^(?:kill|end task on|end the task|force close|force kill|terminate)\s+(?:the\s+)?(.+?)\s+(?:process|task)$/);
+  if (killName) {
+    const target = killName[1].replace(/^(the|my)\s+/, "").trim();
+    return single("process_kill", target, { target },
+      `Force-close the "${target}" process`, `Force-closing "${target}"`, 0.9);
+  }
+
+  // Browser tab control (uses the browser's own shortcuts).
+  const tabOps: Array<[RegExp, string, string]> = [
+    [/^(?:open\s+)?(?:a\s+)?new\s+tab$/, "new", "Open a new tab"],
+    [/^naya\s+tab\s*(kholo|khol|open)?$/, "new", "Open a new tab"],
+    [/^(?:close|band)\s+(?:this\s+|the\s+|current\s+)?tab$/, "close", "Close the current tab"],
+    [/^tab\s+band\s*(karo|kar)?$/, "close", "Close the current tab"],
+    [/^(?:switch\s+to\s+)?(?:the\s+)?next\s+tab$/, "next", "Switch to the next tab"],
+    [/^(?:switch\s+to\s+)?(?:the\s+)?previous\s+tab$/, "previous", "Switch to the previous tab"],
+    [/^(?:reopen|restore)\s+(?:the\s+)?(?:last\s+)?(?:closed\s+)?tab$/, "reopen", "Reopen the last closed tab"],
+    [/^go\s+back$/, "back", "Go back a page"],
+    [/^peeche\s+ja[o]?$/, "back", "Go back a page"],
+    [/^go\s+forward$/, "forward", "Go forward a page"],
+    [/^(?:refresh|reload)(?:\s+(?:the|this)\s+page)?$/, "reload", "Reload the page"],
+  ];
+  for (const [re, op, desc] of tabOps) {
+    if (re.test(text)) {
+      return single("browser_tab", op, { op }, desc, desc, 0.85);
+    }
+  }
+
   // ─── PLAY MEDIA (handles "open youtube and play mitwa" correctly) ───────
   // Word-boundary + POSITION check: the play verb must LEAD the request
   // (possibly after "go and / and / then"). Mid-sentence "play" — "the play
@@ -974,6 +1087,7 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
       confidence: 0.9,
     };
   }
+
 
   // ─── WINDOW CONTROLS (minimize / maximize / restore / move / resize) ────
   // MOUSE MOVE — BEFORE window controls: "move mouse to 500,300" must move

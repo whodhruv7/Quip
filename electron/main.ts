@@ -42,6 +42,17 @@ import type {
 import { bootstrap, BootstrapResult } from "./system/bootstrap";
 import { modelRouter, describeError } from "./system/model-router";
 import { permissionSystem } from "./system/permission-system";
+import {
+  PROVIDER_KEY_VAR,
+  PROVIDER_MODEL_VAR,
+  DEFAULT_MODELS,
+  validateApiKey,
+  upsertEnvFile,
+  maskKey,
+  type ProviderId,
+} from "./system/env-store";
+import { probeProvider } from "./system/provider-probe";
+import { clampRect } from "./window-geometry";
 
 import { ensureProfile, loadProfile } from "./brains/device-brain";
 import { ensureWorldModel } from "./brains/world-model";
@@ -101,6 +112,16 @@ const windows = new Map<number, BrowserWindow>();
 const windowCompanionMap = new Map<number, "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy">();
 let tray: Tray | null = null;
 
+// True only while app.quit() is running — window close events are intercepted
+// until then so Alt+F4 hides the companion instead of killing Quip.
+let isQuitting = false;
+
+// The desktop companion stays on screen until the user turns it off in
+// Settings. Persisted so restarts honor the choice (spec: the setting must
+// actually persist and work).
+let companionVisible = true;
+const COMPANION_VISIBLE_FILE = "quip-companion-visible.json";
+
 let deviceProfile: DeviceProfile | null = null;
 let worldModel: WorldModel | null = null;
 let spatialConfig: SpatialConfig | null = null;
@@ -136,10 +157,66 @@ function writePosition(x: number, y: number) {
 
 function clampPosition(x: number, y: number, w: number, h: number) {
   const area = screen.getPrimaryDisplay().workArea;
-  return {
-    x: Math.max(area.x, Math.min(x, area.x + area.width - w)),
-    y: Math.max(area.y, Math.min(y, area.y + area.height - h)),
-  };
+  return clampRect({ x, y, width: w, height: h }, area);
+}
+
+/** Force a window back into the visible work area (self-heal after display changes). */
+function clampWindowIntoView(win: BrowserWindow) {
+  if (win.isDestroyed() || win.isMinimized()) return;
+  const [x, y] = win.getPosition();
+  const [w, h] = win.getSize();
+  const area = screen.getPrimaryDisplay().workArea;
+  const c = clampRect({ x, y, width: w, height: h }, area);
+  if (c.x !== x || c.y !== y) {
+    win.setPosition(c.x, c.y, false);
+    if (windowModes.get(win.id) !== "full") writePosition(c.x, c.y);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Companion visibility — the companion stays on screen until the user turns
+// it off in Settings. Off = NO floating anything; Quip lives in the tray.
+// ---------------------------------------------------------------------------
+function readCompanionVisible(): boolean {
+  try {
+    const p = path.join(app.getPath("userData"), COMPANION_VISIBLE_FILE);
+    if (!fs.existsSync(p)) return true;
+    const data = JSON.parse(fs.readFileSync(p, "utf8"));
+    return data.visible !== false; // default ON
+  } catch {
+    return true;
+  }
+}
+
+function writeCompanionVisible(visible: boolean) {
+  try {
+    const p = path.join(app.getPath("userData"), COMPANION_VISIBLE_FILE);
+    fs.writeFileSync(p, JSON.stringify({ visible }));
+  } catch {
+    /* best effort */
+  }
+}
+
+function applyCompanionVisible(visible: boolean, opts: { persist?: boolean; announce?: boolean } = {}) {
+  companionVisible = visible;
+  if (opts.persist !== false) writeCompanionVisible(visible);
+
+  for (const win of windows.values()) {
+    if (win.isDestroyed()) continue;
+    if (visible) {
+      const mode = windowModes.get(win.id) ?? "companion";
+      win.showInactive();
+      win.moveTop();
+      win.setAlwaysOnTop(mode !== "full", "screen-saver");
+      clampWindowIntoView(win);
+    } else {
+      win.hide();
+    }
+  }
+  if (tray) tray.setToolTip(visible ? "Quip — AI Companion" : "Quip — running in the tray");
+  if (opts.announce !== false) {
+    broadcastToRenderers(IPC.COMPANION_VISIBLE_CHANGED, companionVisible);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -371,7 +448,10 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
     "You CAN actually control this laptop: open/close/focus/switch apps and windows, " +
       "minimize/maximize/move/resize windows, open files/folders/URLs, find/create/read/" +
       "copy/move/delete files, type, press shortcuts, click/double-click/right-click, " +
-      "scroll, drag, clipboard, screenshots, and search/read YouTube, Reddit, X and GitHub. " +
+      "scroll, drag, clipboard, screenshots, search/read YouTube, Reddit, X and GitHub, " +
+      "list and force-close processes (never system ones), control volume (up/down/mute/" +
+      "set 0-100), send media keys (play/pause/next/previous), and control browser tabs " +
+      "(new/close/switch/back/forward/reload — browser must be focused). " +
       "Never say you cannot access the device — you can. Never claim an action succeeded " +
       "unless the execution layer reports it did."
   );
@@ -459,7 +539,58 @@ function createWindow(companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | 
       writePosition(px, py);
     }
   });
-  
+
+  // ── Renderer crash recovery ──────────────────────────────────────────
+  // The window is transparent, so a dead renderer looks like the companion
+  // "disappeared". Never leave the user with an invisible zombie window:
+  // reload (bounded), and make sure the window is still visible afterwards.
+  let reloadAttempts = 0;
+  win.webContents.on("render-process-gone", (_e, details) => {
+    if (details.reason === "clean-exit") return;
+    if (reloadAttempts < 3) {
+      reloadAttempts += 1;
+      try {
+        win.webContents.reload();
+        if (!win.isVisible()) win.showInactive();
+      } catch {
+        /* window already gone */
+      }
+    } else {
+      // Recreate the window once — a fresh renderer beats a dead sprite.
+      try {
+        const companion = windowCompanionMap.get(win.id) ?? defaultCompanionId;
+        const mode = windowModes.get(win.id) ?? "companion";
+        win.destroy();
+        const fresh = createWindow(companion);
+        if (mode !== "companion") setWindowMode(fresh, mode);
+      } catch {
+        /* best effort */
+      }
+    }
+  });
+  win.webContents.on("unresponsive", () => {
+    try {
+      win.webContents.forcefullyCrashRenderer(); // recovery flows through render-process-gone
+    } catch {
+      /* best effort */
+    }
+  });
+
+  // ── Close interception — only Settings → Quit actually exits Quip ───
+  // Alt+F4 / window close hides the companion (app stays in the tray).
+  // When visibility is disabled in Settings the window is already hidden;
+  // closing it must still not kill the app silently.
+  win.on("close", (e) => {
+    if (!isQuitting) {
+      e.preventDefault();
+      try {
+        win.hide();
+      } catch {
+        /* best effort */
+      }
+    }
+  });
+
   win.on("closed", () => {
     windows.delete(win.id);
     windowCompanionMap.delete(win.id);
@@ -470,6 +601,9 @@ function createWindow(companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | 
       win.webContents.openDevTools({ mode: "detach" });
     });
   }
+
+  // Honor the persisted visibility choice (Settings toggle).
+  if (!companionVisible) win.hide();
   return win;
 }
 
@@ -490,6 +624,22 @@ function sendToWindow(win: BrowserWindow | null, channel: string, data: unknown)
 // ---------------------------------------------------------------------------
 // Tray
 // ---------------------------------------------------------------------------
+function showFromTray() {
+  // Tray = the user explicitly wants to see Quip → re-enable visibility.
+  if (!companionVisible) applyCompanionVisible(true);
+  if (windows.size === 0) {
+    const win = createWindow(defaultCompanionId);
+    setWindowMode(win, "panel");
+    return;
+  }
+  for (const win of windows.values()) {
+    if (win.isDestroyed()) continue;
+    win.showInactive();
+    win.moveTop();
+    clampWindowIntoView(win);
+  }
+}
+
 function createTray() {
   const icon = nativeImage.createFromBuffer(
     Buffer.from(
@@ -499,16 +649,10 @@ function createTray() {
   );
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
   tray.setToolTip("Quip — AI Companion");
-  tray.on("click", () => {
-    if (windows.size === 0) createWindow(defaultCompanionId);
-    else windows.forEach(w => w.show());
-  });
+  tray.on("click", () => showFromTray());
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: "Show Quip", click: () => {
-          if (windows.size === 0) createWindow(defaultCompanionId);
-          else windows.forEach(w => w.show());
-      } },
+      { label: "Show Quip", click: () => showFromTray() },
       { type: "separator" },
       { label: "Quit Quip", click: () => app.quit() },
     ])
@@ -947,6 +1091,74 @@ ipcMain.handle(IPC.GET_MODEL_STATUS, () => {
 });
 
 // ---------------------------------------------------------------------------
+// IPC — in-app API key setup (Settings → AI Brain)
+// ---------------------------------------------------------------------------
+ipcMain.handle(
+  IPC.SAVE_MODEL_KEYS,
+  (_e, payload: { provider?: string; apiKey?: string; model?: string }) => {
+    const provider = (payload?.provider ?? "") as ProviderId;
+    if (provider !== "openrouter" && provider !== "groq") {
+      return { ok: false, masked: "", message: "Unknown provider." };
+    }
+    const apiKey = (payload?.apiKey ?? "").trim();
+    const check = validateApiKey(provider, apiKey);
+    if (!check.ok) {
+      return { ok: false, masked: "", message: check.message };
+    }
+
+    const entries: Record<string, string> = { [PROVIDER_KEY_VAR[provider]]: apiKey };
+    const model = (payload?.model ?? "").trim();
+    if (model) entries[PROVIDER_MODEL_VAR[provider]] = model;
+
+    // Persist to userData/.env — the file main.ts already loads at boot.
+    const res = upsertEnvFile(path.join(app.getPath("userData"), ".env"), entries);
+    if (!res.ok) {
+      return { ok: false, masked: "", message: `I couldn't save the key: ${res.error}` };
+    }
+
+    // Live-apply so no restart is needed.
+    process.env[PROVIDER_KEY_VAR[provider]] = apiKey;
+    if (model) process.env[PROVIDER_MODEL_VAR[provider]] = model;
+
+    return {
+      ok: true,
+      masked: maskKey(apiKey),
+      message: `Key saved and active (${provider}). ${maskKey(apiKey)}`,
+    };
+  }
+);
+
+ipcMain.handle(
+  IPC.TEST_MODEL_CONNECTION,
+  async (_e, payload: { provider?: string; apiKey?: string; model?: string }) => {
+    const provider = (payload?.provider ?? "") as ProviderId;
+    if (provider !== "openrouter" && provider !== "groq") {
+      return { ok: false, latencyMs: 0, message: "Unknown provider.", kind: "no-key" as const };
+    }
+    const keyVar = PROVIDER_KEY_VAR[provider];
+    const modelVar = PROVIDER_MODEL_VAR[provider];
+    const apiKey = (payload?.apiKey ?? "").trim() || process.env[keyVar] || "";
+    const model = (payload?.model ?? "").trim() || process.env[modelVar] || DEFAULT_MODELS[provider];
+    const result = await probeProvider(provider, apiKey, model);
+    return result;
+  }
+);
+
+// ---------------------------------------------------------------------------
+// IPC — companion visibility + real quit (Settings → Desktop)
+// ---------------------------------------------------------------------------
+ipcMain.handle(IPC.GET_COMPANION_VISIBLE, () => companionVisible);
+
+ipcMain.handle(IPC.SET_COMPANION_VISIBLE, (_e, visible: boolean) => {
+  applyCompanionVisible(visible === true);
+  return companionVisible;
+});
+
+ipcMain.on(IPC.QUIT_APP, () => {
+  app.quit();
+});
+
+// ---------------------------------------------------------------------------
 // IPC — permission system
 // ---------------------------------------------------------------------------
 ipcMain.handle(IPC.GET_PERMISSIONS, () => {
@@ -1059,8 +1271,34 @@ if (!app.requestSingleInstanceLock()) {
     });
 
     // Phase 3: Create the initial window via SwarmManager
+    companionVisible = readCompanionVisible();
     swarmManager.spawn(defaultCompanionId);
     createTray();
+
+    // ── Self-heal: the companion must never silently vanish ──────────
+    // If the window exists but is hidden while the user still wants the
+    // companion on screen, bring it back (crash leftovers, OS quirks).
+    // Full-mode windows can be minimized intentionally — leave those alone.
+    setInterval(() => {
+      for (const win of windows.values()) {
+        if (win.isDestroyed() || win.isMinimized()) continue;
+        const mode = windowModes.get(win.id) ?? "companion";
+        if (companionVisible && mode !== "full" && !win.isVisible()) {
+          win.showInactive();
+          win.moveTop();
+          clampWindowIntoView(win);
+        }
+      }
+    }, 15_000);
+
+    // Display changes (resolution, DPI, monitor unplugged) can leave the
+    // companion stranded off-screen — pull every window back into view.
+    screen.on("display-metrics-changed", () => {
+      for (const win of windows.values()) clampWindowIntoView(win);
+    });
+
+    // Second launch = focus the running instance instead of a second sprite.
+    app.on("second-instance", () => showFromTray());
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -1073,8 +1311,9 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform !== "darwin") app.quit();
   });
 
-  // Flush debounced saves on quit
+  // Flush debounced saves on quit; allow window close handlers to pass.
   app.on("before-quit", () => {
+    isQuitting = true;
     try {
       memoryBrain.flush();
     } catch {

@@ -25,9 +25,13 @@
     "../electron/engine/orchestrator.ts",
     "../electron/engine/file-ops.ts",
     "../electron/engine/app-discovery.ts",
+    "../electron/engine/system-control.ts",
     "../electron/engine/tool-registry.ts",
     "../electron/system/model-config.ts",
     "../electron/system/model-router.ts",
+    "../electron/system/env-store.ts",
+    "../electron/system/provider-probe.ts",
+    "../electron/window-geometry.ts",
     "../src/lib/companion-config.ts",
     "../src/lib/storage.ts",
     "../src/types/**/*.ts"

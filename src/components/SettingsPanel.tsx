@@ -1,6 +1,10 @@
 // Quip V2 — Settings panel.
 //
-// Full overlay with tabs: General, Device, Memory, DNA, Progression.
+// Full overlay with tabs: AI Brain, General, Device, Memory, DNA, Progression.
+// AI Brain tab: paste an API key in-app, test the connection for real,
+//   see the live provider status — no more hand-editing .env files.
+// Desktop tab: companion visibility (stays on screen until YOU turn it off)
+//   and the ONLY real Quit button.
 // Memory tab: view all memories, pin/unpin, forget, prune.
 // DNA tab: view communication style profile from relationship engine.
 // Progression tab: view companion depth + unlocked cosmetics.
@@ -8,8 +12,8 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { CompanionId, DeviceProfile, UserKnowledge } from "@/types";
+import type { ModelRouterStatus } from "@/types/models";
 import { CompanionSwitch } from "./CompanionSwitch";
-import { ModelSwitch } from "./ModelSwitch";
 import { ConfirmModal } from "./ConfirmModal";
 
 interface SettingsPanelProps {
@@ -17,17 +21,38 @@ interface SettingsPanelProps {
   companionId: CompanionId;
   onCompanionChange: (id: CompanionId) => void;
   onClose: () => void;
+  initialTab?: Tab;
 }
 
-type Tab = "general" | "device" | "memory" | "dna" | "progression";
+type Tab = "ai" | "general" | "desktop" | "device" | "memory" | "dna" | "progression";
+
+const AI_PROVIDERS = [
+  {
+    id: "openrouter" as const,
+    name: "OpenRouter",
+    hint: "Free key · minimax-m3",
+    keyUrl: "https://openrouter.ai/keys",
+    keyPrefix: "sk-or-",
+    modelPlaceholder: "minimax/minimax-m3:free",
+  },
+  {
+    id: "groq" as const,
+    name: "Groq",
+    hint: "Free key · very fast",
+    keyUrl: "https://console.groq.com/keys",
+    keyPrefix: "gsk_",
+    modelPlaceholder: "llama-3.3-70b-versatile",
+  },
+];
 
 export function SettingsPanel({
   open,
   companionId,
   onCompanionChange,
   onClose,
+  initialTab = "general",
 }: SettingsPanelProps) {
-  const [tab, setTab] = useState<Tab>("general");
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [device, setDevice] = useState<DeviceProfile | null>(null);
   const [memory, setMemory] = useState<UserKnowledge | null>(null);
   const [rescanning, setRescanning] = useState(false);
@@ -36,6 +61,24 @@ export function SettingsPanel({
   const [pruning, setPruning] = useState(false);
   const [confirmResetDNA, setConfirmResetDNA] = useState(false);
   const [confirmPrune, setConfirmPrune] = useState(false);
+  const [confirmQuit, setConfirmQuit] = useState(false);
+
+  // AI Brain tab state
+  const [modelStatus, setModelStatus] = useState<ModelRouterStatus | null>(null);
+  const [provider, setProvider] = useState<"openrouter" | "groq">("openrouter");
+  const [apiKey, setApiKey] = useState("");
+  const [model, setModel] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [saveResult, setSaveResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  // Desktop tab state
+  const [companionVisible, setCompanionVisible] = useState(true);
+
+  useEffect(() => {
+    setTab(initialTab);
+  }, [initialTab, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -43,7 +86,64 @@ export function SettingsPanel({
     window.quip.getMemories().then(setMemory).catch(() => {});
     window.quip.getUserProfile().then(setProfile).catch(() => {});
     window.quip.getCompanionProgression().then(setProgression).catch(() => {});
+    window.quip.getModelStatus().then(setModelStatus).catch(() => {});
+    window.quip
+      .getCompanionVisible()
+      .then(setCompanionVisible)
+      .catch(() => {});
   }, [open]);
+
+  const handleTestConnection = async () => {
+    setTesting(true);
+    setTestResult(null);
+    setSaveResult(null);
+    try {
+      const r = await window.quip.testModelConnection({ provider, apiKey: apiKey || undefined, model: model || undefined });
+      setTestResult({ ok: r.ok, message: r.message });
+    } catch {
+      setTestResult({ ok: false, message: "The test couldn't run — try again." });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const handleSaveKey = async () => {
+    setSaving(true);
+    setSaveResult(null);
+    setTestResult(null);
+    try {
+      const r = await window.quip.saveModelKeys({ provider, apiKey, model: model || undefined });
+      setSaveResult({ ok: r.ok, message: r.message });
+      if (r.ok) {
+        setApiKey("");
+        const fresh = await window.quip.getModelStatus();
+        setModelStatus(fresh);
+      }
+    } catch {
+      setSaveResult({ ok: false, message: "Saving failed — try again." });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleToggleVisible = async (visible: boolean) => {
+    setCompanionVisible(visible);
+    try {
+      const actual = await window.quip.setCompanionVisible(visible);
+      setCompanionVisible(actual);
+    } catch {
+      /* keep optimistic state */
+    }
+  };
+
+  const handleQuit = () => {
+    setConfirmQuit(false);
+    try {
+      window.quip.quitApp();
+    } catch {
+      /* non-fatal */
+    }
+  };
 
   const handleRescan = async () => {
     setRescanning(true);
@@ -102,8 +202,8 @@ export function SettingsPanel({
       className="absolute inset-0 z-40 flex flex-col"
       style={{
         background: "rgba(255,255,255,0.92)",
-        backdropFilter: "blur(30px)",
-        WebkitBackdropFilter: "blur(30px)",
+        backdropFilter: "blur(24px)",
+        WebkitBackdropFilter: "blur(24px)",
       }}
     >
       {/* Header */}
@@ -124,7 +224,7 @@ export function SettingsPanel({
 
       {/* Tabs */}
       <div className="flex gap-1 px-4 py-2 overflow-x-auto">
-        {(["general", "device", "memory", "dna", "progression"] as Tab[]).map((t) => (
+        {(["ai", "general", "desktop", "device", "memory", "dna", "progression"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -135,7 +235,7 @@ export function SettingsPanel({
                 : { color: "#9ca3af" }
             }
           >
-            {t === "dna" ? "Communication DNA" : t}
+            {t === "dna" ? "Communication DNA" : t === "ai" ? "AI Brain" : t}
           </button>
         ))}
       </div>
@@ -150,6 +250,176 @@ export function SettingsPanel({
             exit={{ opacity: 0, x: -10 }}
             transition={{ duration: 0.15 }}
           >
+        {tab === "ai" && (
+          <div className="flex flex-col gap-4">
+            {/* Live status */}
+            {modelStatus && (
+              <div
+                className="flex items-center justify-between rounded-xl px-3 py-2.5"
+                style={{
+                  background: modelStatus.healthy ? "rgba(34,197,94,0.06)" : "rgba(239,68,68,0.05)",
+                  border: `1px solid ${modelStatus.healthy ? "rgba(34,197,94,0.18)" : "rgba(239,68,68,0.18)"}`,
+                }}
+              >
+                <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
+                  <span
+                    className="h-2 w-2 rounded-full shrink-0"
+                    style={{ background: modelStatus.healthy ? "#22c55e" : "#ef4444" }}
+                  />
+                  <div className="flex flex-col" style={{ minWidth: 0 }}>
+                    <span style={{ fontSize: 11.5, fontWeight: 600, color: "#111" }}>
+                      {modelStatus.active?.label ?? "No provider"}
+                    </span>
+                    <span style={{ fontSize: 9.5, color: "#6b7280" }}>
+                      {modelStatus.healthy ? "Connected and ready" : "No working key yet"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div style={{ fontSize: 11, color: "#6b7280" }}>
+              Paste a free API key below — Quip saves it for you. No file editing needed.
+            </div>
+
+            {/* Provider picker */}
+            <div>
+              <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-quip-gray">
+                Provider
+              </label>
+              <div className="flex gap-2">
+                {AI_PROVIDERS.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => {
+                      setProvider(p.id);
+                      setTestResult(null);
+                      setSaveResult(null);
+                    }}
+                    className="flex-1 rounded-xl px-3 py-2.5 text-left transition-all"
+                    style={{
+                      border: `1.5px solid ${provider === p.id ? "rgba(111,214,255,0.65)" : "rgba(0,0,0,0.07)"}`,
+                      background: provider === p.id ? "rgba(111,214,255,0.08)" : "rgba(0,0,0,0.015)",
+                    }}
+                  >
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "#111" }}>{p.name}</div>
+                    <div style={{ fontSize: 9.5, color: "#6b7280", marginTop: 1 }}>{p.hint}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Key input */}
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <label className="text-[11px] font-semibold uppercase tracking-wide text-quip-gray">
+                  API key
+                </label>
+                <a
+                  href={AI_PROVIDERS.find((p) => p.id === provider)!.keyUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ fontSize: 10.5, color: "#0c6b8f", textDecoration: "underline" }}
+                >
+                  Get a free key ↗
+                </a>
+              </div>
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => {
+                  setApiKey(e.target.value);
+                  setSaveResult(null);
+                  setTestResult(null);
+                }}
+                placeholder={`${AI_PROVIDERS.find((p) => p.id === provider)!.keyPrefix}…`}
+                spellCheck={false}
+                autoComplete="off"
+                className="w-full rounded-xl px-3 py-2.5 outline-none transition-all focus:ring-2"
+                style={{
+                  fontSize: 12,
+                  border: "1.5px solid rgba(0,0,0,0.08)",
+                  background: "rgba(255,255,255,0.85)",
+                  color: "#111",
+                  // @ts-expect-error CSS var
+                  "--tw-ring-color": "rgba(111,214,255,0.4)",
+                }}
+              />
+            </div>
+
+            {/* Model input (optional) */}
+            <div>
+              <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-quip-gray">
+                Model <span style={{ textTransform: "none", fontWeight: 500 }}>(optional — default is fine)</span>
+              </label>
+              <input
+                type="text"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder={AI_PROVIDERS.find((p) => p.id === provider)!.modelPlaceholder}
+                spellCheck={false}
+                className="w-full rounded-xl px-3 py-2.5 outline-none transition-all focus:ring-2"
+                style={{
+                  fontSize: 12,
+                  border: "1.5px solid rgba(0,0,0,0.08)",
+                  background: "rgba(255,255,255,0.85)",
+                  color: "#111",
+                  // @ts-expect-error CSS var
+                  "--tw-ring-color": "rgba(111,214,255,0.4)",
+                }}
+              />
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-2">
+              <button
+                onClick={handleTestConnection}
+                disabled={testing}
+                className="flex-1 rounded-xl px-4 py-2.5 text-[12px] font-medium transition-all disabled:opacity-50"
+                style={{ background: "rgba(0,0,0,0.05)", color: "#111" }}
+              >
+                {testing ? "Testing…" : "Test connection"}
+              </button>
+              <button
+                onClick={handleSaveKey}
+                disabled={saving || !apiKey.trim()}
+                className="flex-1 rounded-xl px-4 py-2.5 text-[12px] font-semibold text-white transition-all disabled:opacity-50"
+                style={{ background: saving || !apiKey.trim() ? "#9ca3af" : "linear-gradient(135deg, #6FD6FF, #FF9FEF)" }}
+              >
+                {saving ? "Saving…" : "Save key"}
+              </button>
+            </div>
+
+            {/* Honest results */}
+            {testResult && (
+              <div
+                className="rounded-xl px-3 py-2.5"
+                style={{
+                  fontSize: 11,
+                  background: testResult.ok ? "rgba(34,197,94,0.07)" : "rgba(239,68,68,0.06)",
+                  border: `1px solid ${testResult.ok ? "rgba(34,197,94,0.2)" : "rgba(239,68,68,0.2)"}`,
+                  color: testResult.ok ? "#15803d" : "#dc2626",
+                }}
+              >
+                {testResult.ok ? "✓ " : "✗ "}{testResult.message}
+              </div>
+            )}
+            {saveResult && (
+              <div
+                className="rounded-xl px-3 py-2.5"
+                style={{
+                  fontSize: 11,
+                  background: saveResult.ok ? "rgba(34,197,94,0.07)" : "rgba(239,68,68,0.06)",
+                  border: `1px solid ${saveResult.ok ? "rgba(34,197,94,0.2)" : "rgba(239,68,68,0.2)"}`,
+                  color: saveResult.ok ? "#15803d" : "#dc2626",
+                }}
+              >
+                {saveResult.ok ? "✓ " : "✗ "}{saveResult.message}
+              </div>
+            )}
+          </div>
+        )}
+
         {tab === "general" && (
           <div className="flex flex-col gap-5">
             <div>
@@ -158,12 +428,66 @@ export function SettingsPanel({
               </label>
               <CompanionSwitch activeId={companionId} onSelect={onCompanionChange} />
             </div>
-            <div>
-              <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-quip-gray">
-                AI Model
-              </label>
-              <ModelSwitch />
+          </div>
+        )}
+
+        {tab === "desktop" && (
+          <div className="flex flex-col gap-4">
+            {/* Companion visibility — the setting the user asked for */}
+            <div
+              className="flex items-center justify-between gap-3 rounded-xl px-3 py-3"
+              style={{ border: "1px solid rgba(0,0,0,0.06)", background: "rgba(0,0,0,0.015)" }}
+            >
+              <div className="flex flex-col" style={{ minWidth: 0 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "#111" }}>
+                  Keep companion on my screen
+                </span>
+                <span style={{ fontSize: 10.5, color: "#6b7280", marginTop: 2 }}>
+                  Always visible until you turn it off here. Nothing floating when off.
+                </span>
+              </div>
+              <button
+                role="switch"
+                aria-checked={companionVisible}
+                aria-label="Keep companion on my screen"
+                onClick={() => handleToggleVisible(!companionVisible)}
+                className="relative shrink-0 rounded-full transition-colors"
+                style={{
+                  width: 44,
+                  height: 25,
+                  background: companionVisible ? "linear-gradient(135deg, #6FD6FF, #8AB4FF)" : "rgba(0,0,0,0.14)",
+                }}
+              >
+                <motion.span
+                  layout
+                  transition={{ type: "spring", stiffness: 500, damping: 32 }}
+                  style={{
+                    position: "absolute",
+                    top: 3,
+                    left: companionVisible ? 22 : 3,
+                    width: 19,
+                    height: 19,
+                    borderRadius: "50%",
+                    background: "#fff",
+                    boxShadow: "0 1px 4px rgba(0,0,0,0.2)",
+                  }}
+                />
+              </button>
             </div>
+
+            <div style={{ fontSize: 10.5, color: "#9ca3af" }}>
+              Closing the window (Alt+F4) only hides Quip — it keeps running in the
+              system tray. Quitting fully is right here.
+            </div>
+
+            {/* The ONLY real quit */}
+            <button
+              onClick={() => setConfirmQuit(true)}
+              className="w-full rounded-xl px-4 py-2.5 text-[12px] font-semibold text-white transition-all"
+              style={{ background: "rgba(239,68,68,0.85)" }}
+            >
+              Quit Quip completely
+            </button>
           </div>
         )}
 
@@ -449,6 +773,14 @@ export function SettingsPanel({
         confirmLabel="Prune"
         onConfirm={handlePrune}
         onCancel={() => setConfirmPrune(false)}
+      />
+      <ConfirmModal
+        open={confirmQuit}
+        title="Quit Quip?"
+        message="This closes Quip completely — the companion and the app disappear until you open Quip again. Your memories and settings are kept."
+        confirmLabel="Quit"
+        onConfirm={handleQuit}
+        onCancel={() => setConfirmQuit(false)}
       />
     </motion.div>
   );

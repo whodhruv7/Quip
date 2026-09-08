@@ -80,6 +80,14 @@ export function riskForStep(
   if (action === "window_control") return "medium";
   if (action === "screen" || action === "windows_list") return "safe";
   if (action === "site_search") return "safe";
+  // Deep system control — killing a process is destructive, tab shortcuts
+  // touch user content, volume/media are harmless.
+  if (action === "process_kill") return "dangerous";
+  if (action === "process_list") return "safe";
+  if (action === "volume" || action === "media_key") return "safe";
+  if (action === "browser_tab") {
+    return params?.op === "close" ? "medium" : "safe";
+  }
   return getRiskLevel(action);
 }
 

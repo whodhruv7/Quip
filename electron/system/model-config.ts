@@ -24,12 +24,12 @@ export function describeError(err: unknown): { message: string; kind: ChatErrorK
     case "no-key":
       return {
         kind,
-        message: "I can't reach my brain yet — no AI key is configured. Add GROQ_API_KEY or OPENROUTER_API_KEY to your .env file.",
+        message: "I can't reach my brain yet — no AI key is configured. Open Settings → AI Brain to paste a free key (takes 30 seconds).",
       };
     case "auth":
       return {
         kind,
-        message: "The AI provider rejected the API key. Check the key in your .env file.",
+        message: "The AI provider rejected the API key. Open Settings → AI Brain, re-paste the key and use Test connection.",
       };
     case "rate-limit":
       return {

@@ -156,6 +156,31 @@ const api = {
   // ─── Model router ────────────────────────────────────────────────────
   getModelStatus: () =>
     ipcRenderer.invoke(IPC.GET_MODEL_STATUS),
+  saveModelKeys: (payload: { provider: "openrouter" | "groq"; apiKey: string; model?: string }) =>
+    ipcRenderer.invoke(IPC.SAVE_MODEL_KEYS, payload) as Promise<{
+      ok: boolean;
+      masked: string;
+      message: string;
+    }>,
+  testModelConnection: (payload: { provider: "openrouter" | "groq"; apiKey?: string; model?: string }) =>
+    ipcRenderer.invoke(IPC.TEST_MODEL_CONNECTION, payload) as Promise<{
+      ok: boolean;
+      latencyMs: number;
+      message: string;
+      kind: string;
+    }>,
+
+  // ─── Companion visibility + real quit ────────────────────────────────
+  getCompanionVisible: () =>
+    ipcRenderer.invoke(IPC.GET_COMPANION_VISIBLE) as Promise<boolean>,
+  setCompanionVisible: (visible: boolean) =>
+    ipcRenderer.invoke(IPC.SET_COMPANION_VISIBLE, visible) as Promise<boolean>,
+  onCompanionVisibleChanged: (cb: (visible: boolean) => void) => {
+    const handler = (_e: unknown, visible: boolean) => cb(visible);
+    ipcRenderer.on(IPC.COMPANION_VISIBLE_CHANGED, handler as any);
+    return () => ipcRenderer.removeListener(IPC.COMPANION_VISIBLE_CHANGED, handler as any);
+  },
+  quitApp: () => ipcRenderer.send(IPC.QUIT_APP),
 
   // ─── Permission system ──────────────────────────────────────────────
   getPermissions: () =>

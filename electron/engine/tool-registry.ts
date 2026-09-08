@@ -35,6 +35,20 @@ import {
 } from "./browser-automation";
 import { contextStore } from "./context-store";
 import type { ActionVerification } from "./action-verifier";
+import {
+  listProcesses,
+  killProcess,
+  controlVolume,
+  mediaKey,
+  browserTabAction,
+  type VolumeAction,
+  type MediaAction,
+  type TabAction,
+} from "./system-control";
+
+const TAB_ACTIONS: TabAction[] = [
+  "new", "close", "next", "previous", "reopen", "back", "forward", "reload",
+];
 
 export interface ToolResult {
   success: boolean;
@@ -432,6 +446,32 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
       return fromVerification(verification);
     }
     return { success: false, output: `Unsupported system action: ${step.target}`, note: "unsupported" };
+  },
+  async process_list(_step, _ctx) {
+    return fromVerification(await listProcesses());
+  },
+
+  async process_kill(step, _ctx) {
+    return fromVerification(await killProcess(step.params.target ?? step.target ?? ""));
+  },
+
+  async volume(step, _ctx) {
+    const action = (step.params.action ?? "set") as VolumeAction;
+    const level = action === "set" ? parseFloat(step.params.level ?? "") : undefined;
+    return fromVerification(await controlVolume(action, level));
+  },
+
+  async media_key(step, _ctx) {
+    const action = (step.params.action ?? "playpause") as MediaAction;
+    return fromVerification(await mediaKey(action));
+  },
+
+  async browser_tab(step, _ctx) {
+    const op = (step.params.op ?? "new") as TabAction;
+    if (!TAB_ACTIONS.includes(op)) {
+      return { success: false, output: `Unknown tab action: ${op}`, note: "unsupported-tab-action" };
+    }
+    return fromVerification(await browserTabAction(op));
   },
 };
 

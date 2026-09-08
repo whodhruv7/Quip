@@ -39,6 +39,7 @@ export function useChat(
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorKind, setErrorKind] = useState<string | null>(null);
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequestUI | null>(null);
   const [taskProgress, setTaskProgress] = useState<TaskProgress | null>(null);
   const activeRequestId = useRef<string | null>(null);
@@ -56,6 +57,7 @@ export function useChat(
     setMessages(loaded);
     setSessions(loadSessions().filter((s) => s.companionId === companionId));
     setError(null);
+    setErrorKind(null);
     setBusy(false);
     setApprovalRequest(null);
     setTaskProgress(null);
@@ -99,6 +101,7 @@ export function useChat(
       );
       activeRequestId.current = null;
       setError(err.message);
+      setErrorKind(err.kind ?? null);
       setBusy(false);
     });
 
@@ -125,6 +128,7 @@ export function useChat(
       const trimmed = text.trim();
       if (!trimmed || busy) return;
       setError(null);
+      setErrorKind(null);
       const userMsg: ChatMessage = {
         id: uid(),
         role: "user",
@@ -224,6 +228,7 @@ export function useChat(
     setMessages([]);
     setSessions(loadSessions().filter((s) => s.companionId === companionId));
     setError(null);
+    setErrorKind(null);
   }, [companionId, messages]);
 
   const newChat = useCallback(() => {
@@ -235,6 +240,7 @@ export function useChat(
     clearCurrentMessages(companionId);
     setMessages([]);
     setError(null);
+    setErrorKind(null);
     activeRequestId.current = null;
     setBusy(false);
   }, [companionId, messages]);
@@ -246,6 +252,7 @@ export function useChat(
       saveCurrentMessages(companionId, session.messages);
       setMessages(session.messages);
       setError(null);
+      setErrorKind(null);
       setBusy(false);
       activeRequestId.current = null;
     },
@@ -269,7 +276,10 @@ export function useChat(
     [companionId]
   );
 
-  const clearError = useCallback(() => setError(null), []);
+  const clearError = useCallback(() => {
+    setError(null);
+    setErrorKind(null);
+  }, []);
 
   const resolveApproval = useCallback((id: string, approved: boolean) => {
     quipApiRef.current.resolveApproval(id, approved);
@@ -277,5 +287,5 @@ export function useChat(
   }, []);
   useProactiveCheckIn(messages, setMessages, busy, companionId);
 
-  return { messages, busy, error, send, clear, addNotice, sessions, newChat, openSession, clearError, approvalRequest, resolveApproval, taskProgress };
+  return { messages, busy, error, errorKind, send, clear, addNotice, sessions, newChat, openSession, clearError, approvalRequest, resolveApproval, taskProgress };
 }

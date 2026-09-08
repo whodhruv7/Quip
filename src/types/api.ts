@@ -75,7 +75,27 @@ export interface SystemAPI {
   onBootstrapProgress: (cb: (p: BootstrapProgress) => void) => () => void;
 }
 
-export type QuipAPI = WindowAPI & ChatAPI & TaskAPI & PermissionAPI & DeviceAPI & SystemAPI;
+export interface ModelSetupAPI {
+  saveModelKeys: (payload: {
+    provider: "openrouter" | "groq";
+    apiKey: string;
+    model?: string;
+  }) => Promise<{ ok: boolean; masked: string; message: string }>;
+  testModelConnection: (payload: {
+    provider: "openrouter" | "groq";
+    apiKey?: string;
+    model?: string;
+  }) => Promise<{ ok: boolean; latencyMs: number; message: string; kind: string }>;
+}
+
+export interface LifecycleAPI {
+  getCompanionVisible: () => Promise<boolean>;
+  setCompanionVisible: (visible: boolean) => Promise<boolean>;
+  onCompanionVisibleChanged: (cb: (visible: boolean) => void) => () => void;
+  quitApp: () => void;
+}
+
+export type QuipAPI = WindowAPI & ChatAPI & TaskAPI & PermissionAPI & DeviceAPI & SystemAPI & ModelSetupAPI & LifecycleAPI;
 
 declare global {
   interface Window {

@@ -61,8 +61,15 @@ export default function App() {
   );
   const [quipSay, setQuipSay] = useState<string | null>(null);
 
-  const { messages, busy: chatBusy, error, send, newChat, clearError, approvalRequest, resolveApproval, taskProgress } =
+  const { messages, busy: chatBusy, error, errorKind, send, newChat, clearError, approvalRequest, resolveApproval, taskProgress } =
     useChat(companionId, restoredMessages);
+
+  // Settings can open straight to a tab (e.g. "ai" from the no-key banner).
+  const [settingsTab, setSettingsTab] = useState<"ai" | "general">("general");
+  const openSettings = useCallback((tab: "ai" | "general" = "general") => {
+    setSettingsTab(tab);
+    setSettingsOpen(true);
+  }, []);
 
   // ─── Window mode sync (renderer state ↔ Electron window) ────────────────
   useEffect(() => {
@@ -263,21 +270,40 @@ export default function App() {
           }}
         >
           <span style={{ flex: 1 }}>{error}</span>
-          <button
-            onClick={clearError}
-            style={{
-              fontSize: 10,
-              color: "#dc2626",
-              padding: "2px 6px",
-              borderRadius: 4,
-              background: "rgba(239,68,68,0.1)",
-              border: "none",
-              cursor: "pointer",
-            }}
-            aria-label="Dismiss error"
-          >
-            ✕
-          </button>
+          {errorKind === "no-key" ? (
+            <button
+              onClick={() => openSettings("ai")}
+              style={{
+                fontSize: 10.5,
+                fontWeight: 600,
+                color: "#fff",
+                padding: "4px 10px",
+                borderRadius: 7,
+                background: "linear-gradient(135deg, #6FD6FF, #FF9FEF)",
+                border: "none",
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Add AI key →
+            </button>
+          ) : (
+            <button
+              onClick={clearError}
+              style={{
+                fontSize: 10,
+                color: "#dc2626",
+                padding: "2px 6px",
+                borderRadius: 4,
+                background: "rgba(239,68,68,0.1)",
+                border: "none",
+                cursor: "pointer",
+              }}
+              aria-label="Dismiss error"
+            >
+              ✕
+            </button>
+          )}
         </div>
       )}
 
@@ -353,7 +379,7 @@ export default function App() {
     <TopBar
       companionId={companionId}
       onCompanionChange={switchCompanion}
-      onSettingsToggle={() => setSettingsOpen(true)}
+      onSettingsToggle={() => openSettings("general")}
       onReflectionToggle={() => setReflectionOpen(true)}
       onNewChat={handleNewChat}
       onClose={handleClose}
@@ -368,6 +394,7 @@ export default function App() {
         open={settingsOpen}
         companionId={companionId}
         onCompanionChange={switchCompanion}
+        initialTab={settingsTab}
         onClose={() => setSettingsOpen(false)}
       />
       <AnimatePresence>
@@ -514,8 +541,8 @@ export default function App() {
               display: "flex",
               flexDirection: "column",
               background: "rgba(255,255,255,0.72)",
-              backdropFilter: "blur(30px) saturate(180%)",
-              WebkitBackdropFilter: "blur(30px) saturate(180%)",
+              backdropFilter: "blur(24px) saturate(165%)",
+              WebkitBackdropFilter: "blur(24px) saturate(165%)",
               border: "1px solid rgba(255,255,255,0.6)",
               boxShadow: "0 20px 60px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.03)",
             }}
@@ -600,8 +627,8 @@ export default function App() {
               display: "flex",
               flexDirection: "column",
               background: "rgba(252,252,253,0.88)",
-              backdropFilter: "blur(30px) saturate(180%)",
-              WebkitBackdropFilter: "blur(30px) saturate(180%)",
+              backdropFilter: "blur(24px) saturate(165%)",
+              WebkitBackdropFilter: "blur(24px) saturate(165%)",
               border: "1px solid rgba(255,255,255,0.65)",
               boxShadow: "0 30px 80px rgba(0,0,0,0.14), 0 0 0 1px rgba(0,0,0,0.03)",
             }}

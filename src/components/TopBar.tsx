@@ -132,12 +132,12 @@ export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onRef
         </svg>
       </button>
 
-      {/* Close */}
+      {/* Close — hides the panel; the companion itself stays on the desktop */}
       <button
         onClick={handleClose}
         className="flex h-6 w-6 items-center justify-center rounded-md text-quip-gray transition-colors hover:bg-red-50 hover:text-red-500"
-        title="Close"
-        aria-label="Close chat"
+        title="Close panel — companion stays"
+        aria-label="Close panel"
       >
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
           <path d="M18 6L6 18M6 6l12 12" />
