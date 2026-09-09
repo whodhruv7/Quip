@@ -45,6 +45,7 @@ import {
   type MediaAction,
   type TabAction,
 } from "./system-control";
+import { deviceSelfCheck } from "./device-selfcheck";
 
 const TAB_ACTIONS: TabAction[] = [
   "new", "close", "next", "previous", "reopen", "back", "forward", "reload",
@@ -472,6 +473,10 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
       return { success: false, output: `Unknown tab action: ${op}`, note: "unsupported-tab-action" };
     }
     return fromVerification(await browserTabAction(op));
+  },
+
+  async self_check(_step, _ctx) {
+    return fromVerification(await deviceSelfCheck());
   },
 };
 

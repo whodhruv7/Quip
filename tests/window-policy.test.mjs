@@ -1,9 +1,11 @@
-// Tests: window layering policy (pure geometry)
+// Tests: window policy (pure geometry)
+// The embedded-browser bounds helpers were removed with the Phase 26 change
+// (Quip opens the user's REAL browser via the OS shell — no Electron browser
+// window exists to place anymore), so only the overlay geometry is tested.
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
   computeOverlayRect,
-  computeBrowserBoundsForWorkArea,
   rectsIntersect,
 } from "../dist-test/electron/engine/window-policy.js";
 
@@ -15,17 +17,14 @@ test("overlay sits on the right edge", () => {
   assert.equal(overlay.height, WORKAREA.height);
 });
 
-test("browser avoids the chat overlay region on wide screens", () => {
+test("overlay width is capped at 35% of the work area", () => {
   const overlay = computeOverlayRect(WORKAREA, 440);
-  const browser = computeBrowserBoundsForWorkArea(WORKAREA, overlay);
-  assert.equal(rectsIntersect(browser, overlay), false, "browser must not cover the chat overlay");
-  assert.ok(browser.width >= 600);
+  assert.ok(overlay.width <= Math.round(WORKAREA.width * 0.35));
 });
 
-test("browser uses full area when the screen is too narrow", () => {
-  const narrow = { x: 0, y: 0, width: 800, height: 600 };
-  const browser = computeBrowserBoundsForWorkArea(narrow);
-  assert.equal(browser.width, 800);
+test("overlay respects a custom panel width", () => {
+  const overlay = computeOverlayRect(WORKAREA, 320);
+  assert.equal(overlay.width, 320);
 });
 
 test("rectsIntersect detects overlap and separation", () => {

@@ -40,6 +40,9 @@ export function useChat(
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorKind, setErrorKind] = useState<string | null>(null);
+  /** Drives the companion's success/error animation — timestamped so the UI
+   *  can flash it briefly and fall back to idle. */
+  const [taskOutcome, setTaskOutcome] = useState<{ success: boolean; at: number } | null>(null);
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequestUI | null>(null);
   const [taskProgress, setTaskProgress] = useState<TaskProgress | null>(null);
   const activeRequestId = useRef<string | null>(null);
@@ -171,6 +174,7 @@ export function useChat(
         };
         setMessages((prev) => [...prev, assistantMsg]);
         setTaskProgress(null);
+        setTaskOutcome({ success: taskResult.success, at: Date.now() });
         setBusy(false);
         return;
       }
@@ -287,5 +291,5 @@ export function useChat(
   }, []);
   useProactiveCheckIn(messages, setMessages, busy, companionId);
 
-  return { messages, busy, error, errorKind, send, clear, addNotice, sessions, newChat, openSession, clearError, approvalRequest, resolveApproval, taskProgress };
+  return { messages, busy, error, errorKind, taskOutcome, send, clear, addNotice, sessions, newChat, openSession, clearError, approvalRequest, resolveApproval, taskProgress };
 }

@@ -9,6 +9,8 @@
 //   - Battery critical (< 15%, not charging)
 //   - Long session (working 3+ hours without a break)
 //   - Weekly reflection trigger (7+ days since last sync)
+//   - Cute check-ins (greetings, hydration, encouragement — quiet-hours aware,
+//     shuffle-bag rotation so messages never repeat back-to-back)
 //
 // Architecture:
 //   - Debounced per-trigger to avoid spam (each trigger has a cooldown)
@@ -21,7 +23,8 @@ export type ProactiveTrigger =
   | "late_night"
   | "battery_critical"
   | "long_session"
-  | "weekly_reflection";
+  | "weekly_reflection"
+  | "cute_checkin";
 
 export interface ProactiveSuggestion {
   trigger: ProactiveTrigger;
@@ -40,6 +43,7 @@ const TRIGGER_COOLDOWNS_MS: Record<ProactiveTrigger, number> = {
   battery_critical:   15 * 60 * 1000, // 15 min
   long_session:       60 * 60 * 1000, // 1 hour
   weekly_reflection:   7 * 24 * 60 * 60 * 1000, // 7 days
+  cute_checkin:       45 * 60 * 1000, // 45 min
 };
 
 const RAM_PRESSURE_THRESHOLD_MB = 400; // Warn if heap > 400MB
@@ -47,6 +51,23 @@ const BATTERY_CRITICAL_THRESHOLD = 0.15;
 const LATE_NIGHT_HOUR_START = 23;
 const LATE_NIGHT_HOUR_END = 5;
 const LONG_SESSION_MS = 3 * 60 * 60 * 1000; // 3 hours
+
+// Cute check-ins fire at most every 45 minutes and NEVER during quiet hours.
+// The pool rotates with a shuffle bag — no message repeats until the whole
+// pool has been seen.
+const CUTE_CHECKIN_COOLDOWN_MS = 45 * 60 * 1000;
+const CUTE_CHECKINS: string[] = [
+  "Heyy 👋 Ready when you are.",
+  "Need any help? I'm right here.",
+  "Don't forget to drink some water 💧",
+  "You've been working for a while 😭 Stretch your back a little?",
+  "Psst — small breaks make big ideas ✨",
+  "Just checking in — everything okay? 🌷",
+  "I believe in you. What are we building next? 💪",
+  "Eyes off the screen for 20 seconds — look at something far away 👀",
+  "If you need anything opened, found or fixed — just say the word 😌",
+  "That project of yours is going to be great. Keep going 🚀",
+];
 
 class ProactiveEngine {
   private listeners = new Set<SuggestionListener>();
@@ -93,6 +114,7 @@ class ProactiveEngine {
     this.checkRamPressure();
     this.checkLateNight();
     this.checkLongSession();
+    this.checkCuteCheckIn();
     // Battery check is done from environment brain subscription (see main.ts)
   }
 
@@ -143,6 +165,30 @@ class ProactiveEngine {
         timestamp: Date.now(),
       });
     }
+  }
+
+  // ─── Cute check-ins (the companion being a companion) ────────────────────
+  private cuteBag: string[] = [];
+
+  private checkCuteCheckIn(): void {
+    const hour = new Date().getHours();
+    const quietHours = hour >= LATE_NIGHT_HOUR_START || hour < LATE_NIGHT_HOUR_END;
+    if (quietHours) return; // never nudge someone sleeping
+
+    const last = this.lastFired.get("cute_checkin") ?? 0;
+    if (Date.now() - last < CUTE_CHECKIN_COOLDOWN_MS) return;
+    // Give the session a calm start — no check-ins in the first 5 minutes.
+    if (Date.now() - this.sessionStartMs < 5 * 60 * 1000) return;
+
+    if (this.cuteBag.length === 0) {
+      this.cuteBag = [...CUTE_CHECKINS].sort(() => Math.random() - 0.5);
+    }
+    const message = this.cuteBag.pop()!;
+    this.fire({
+      trigger: "cute_checkin",
+      message,
+      timestamp: Date.now(),
+    });
   }
 
   private fire(suggestion: ProactiveSuggestion): void {

@@ -49,6 +49,31 @@ const pixFloat: Record<PixState, any> = {
     opacity: 0.6,
     transition: { duration: 5, repeat: Infinity, ease: "easeInOut" },
   },
+  // Engaged + determined — a focused little bounce while a task runs.
+  working: {
+    y: [0, -4.5, 0],
+    scale: [1.02, 1.05, 1.02],
+    rotate: [0, -1.5, 0, 1.5, 0],
+    transition: { duration: 0.9, repeat: Infinity, ease: "easeInOut" },
+  },
+  // Gentle patient sway while waiting for approval.
+  waiting: {
+    y: [0, -1.5, 0],
+    rotate: [-2.5, 2.5, -2.5],
+    transition: { duration: 2.6, repeat: Infinity, ease: "easeInOut" },
+  },
+  // Happy jump — plays twice, then the caller returns to idle.
+  success: {
+    y: [0, -9, 0, -5, 0],
+    scale: [1, 1.08, 1, 1.05, 1],
+    transition: { duration: 0.7, repeat: 1, ease: "easeOut" },
+  },
+  // Concerned little shake — short, never dramatic.
+  error: {
+    x: [0, -1.8, 1.8, -1.2, 0],
+    y: [0, -1, 0],
+    transition: { duration: 0.5, repeat: 1, ease: "easeInOut" },
+  },
 };
 
 const blinkVar = {
@@ -357,10 +382,72 @@ export function Companion({ id, state, size = 80, unlockedCosmetics = [], moodSp
   const [blink, setBlink] = useState(false);
   const [eyeOffset, setEyeOffset] = useState({ x: 0, y: 0 });
   const [wakingUp, setWakingUp] = useState(false);
+  const [gesture, setGesture] = useState<"none" | "lookAround" | "doubleBlink" | "wiggle">("none");
+  const [showSparkle, setShowSparkle] = useState(false);
+  const [showConcern, setShowConcern] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const theme = COMPANIONS.find((c) => c.id === id) ?? COMPANIONS[0];
   const asleep = state === "sleeping";
   const prevState = useRef(state);
+
+  // Success/error accent overlays fire when those states begin.
+  useEffect(() => {
+    if (state === "success") {
+      setShowSparkle(true);
+      const t = setTimeout(() => setShowSparkle(false), 1400);
+      return () => clearTimeout(t);
+    }
+    if (state === "error") {
+      setShowConcern(true);
+      const t = setTimeout(() => setShowConcern(false), 1000);
+      return () => clearTimeout(t);
+    }
+  }, [state]);
+
+  // Idle micro-gestures — a tiny shuffle bag (no repeats until exhausted),
+  // played every 30–60s ONLY while idle. Skales-style lifelikeness, zero spam:
+  // a quick look around, a double blink, or a small wiggle.
+  const gestureBag = useRef<string[]>([]);
+  useEffect(() => {
+    if (state !== "idle") return;
+    let timer: ReturnType<typeof setTimeout>;
+    const GESTURES = ["lookAround", "doubleBlink", "wiggle"] as const;
+    const play = (g: (typeof GESTURES)[number]) => {
+      setGesture(g);
+      const dur = g === "lookAround" ? 1600 : g === "wiggle" ? 900 : 500;
+      setTimeout(() => setGesture("none"), dur);
+    };
+    const schedule = () => {
+      timer = setTimeout(() => {
+        if (gestureBag.current.length === 0) {
+          gestureBag.current = [...GESTURES].sort(() => Math.random() - 0.5);
+        }
+        play(gestureBag.current.pop() as (typeof GESTURES)[number]);
+        schedule();
+      }, (30_000 + Math.random() * 30_000) / moodSpeed);
+    };
+    schedule();
+    return () => clearTimeout(timer);
+  }, [state, moodSpeed]);
+
+  // lookAround: eyes drift side to side once.
+  useEffect(() => {
+    if (gesture !== "lookAround") return;
+    setEyeOffset({ x: 1.6, y: 0 });
+    const t1 = setTimeout(() => setEyeOffset({ x: -1.6, y: 0 }), 500);
+    const t2 = setTimeout(() => setEyeOffset({ x: 0, y: 0 }), 1100);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [gesture]);
+
+  // doubleBlink: two quick blinks.
+  useEffect(() => {
+    if (gesture !== "doubleBlink") return;
+    setBlink(true);
+    const t1 = setTimeout(() => setBlink(false), 120);
+    const t2 = setTimeout(() => setBlink(true), 300);
+    const t3 = setTimeout(() => setBlink(false), 420);
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
+  }, [gesture]);
 
   // Eye tracking: eyes follow cursor when nearby
   useEffect(() => {
@@ -463,6 +550,55 @@ export function Companion({ id, state, size = 80, unlockedCosmetics = [], moodSp
               pointerEvents: "none",
             }}
           />
+        )}
+      </AnimatePresence>
+      {/* Success sparkles — tiny twinkles around the sprite */}
+      <AnimatePresence>
+        {showSparkle && (
+          <>
+            {[
+              { top: "-12%", left: "-8%", delay: 0 },
+              { top: "-18%", left: "62%", delay: 0.18 },
+              { top: "38%", left: "-20%", delay: 0.32 },
+            ].map((pos, i) => (
+              <motion.span
+                key={i}
+                initial={{ opacity: 0, scale: 0.4, rotate: -20 }}
+                animate={{ opacity: [0, 1, 0], scale: [0.4, 1.15, 0.6], rotate: 20 }}
+                transition={{ duration: 1.1, delay: pos.delay, ease: "easeOut" }}
+                style={{
+                  position: "absolute",
+                  top: pos.top,
+                  left: pos.left,
+                  fontSize: Math.max(10, size * 0.16),
+                  lineHeight: 1,
+                  pointerEvents: "none",
+                }}
+              >
+                ✨
+              </motion.span>
+            ))}
+          </>
+        )}
+      </AnimatePresence>
+      {/* Concern accent — one small blue drop when something failed */}
+      <AnimatePresence>
+        {showConcern && (
+          <motion.span
+            initial={{ opacity: 0, y: -6, scale: 0.6 }}
+            animate={{ opacity: [0, 1, 1, 0], y: 10, scale: 1 }}
+            transition={{ duration: 1.0, ease: "easeIn" }}
+            style={{
+              position: "absolute",
+              top: "-6%",
+              left: "66%",
+              fontSize: Math.max(9, size * 0.14),
+              lineHeight: 1,
+              pointerEvents: "none",
+            }}
+          >
+            💧
+          </motion.span>
         )}
       </AnimatePresence>
       {/* Soft aura */}

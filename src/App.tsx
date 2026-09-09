@@ -61,7 +61,7 @@ export default function App() {
   );
   const [quipSay, setQuipSay] = useState<string | null>(null);
 
-  const { messages, busy: chatBusy, error, errorKind, send, newChat, clearError, approvalRequest, resolveApproval, taskProgress } =
+  const { messages, busy: chatBusy, error, errorKind, taskOutcome, send, newChat, clearError, approvalRequest, resolveApproval, taskProgress } =
     useChat(companionId, restoredMessages);
 
   // Settings can open straight to a tab (e.g. "ai" from the no-key banner).
@@ -228,13 +228,27 @@ export default function App() {
   const isResponding =
     chatBusy &&
     messages.some((m) => m.role === "assistant" && m.streaming && m.content.length > 0);
-  const pixState: PixState = chatBusy
-    ? isResponding
-      ? "responding"
-      : "thinking"
-    : hovering
-      ? "hover"
-      : "idle";
+  // Fresh task outcome (≤2s old) wins: success jump or concerned shake.
+  // Then approval → waiting sway, running task → working bounce.
+  const outcomeFlash: "success" | "error" | null =
+    taskOutcome && Date.now() - taskOutcome.at < 2000
+      ? taskOutcome.success
+        ? "success"
+        : "error"
+      : null;
+  const pixState: PixState = outcomeFlash
+    ? outcomeFlash
+    : approvalRequest
+      ? "waiting"
+      : taskProgress
+        ? "working"
+        : chatBusy
+          ? isResponding
+            ? "responding"
+            : "thinking"
+          : hovering
+            ? "hover"
+            : "idle";
 
   const theme = getCompanion(companionId);
 
@@ -251,6 +265,16 @@ export default function App() {
   useEffect(() => {
     if (latestProactive) setQuipSay(latestProactive);
   }, [latestProactive]);
+
+  // Cute reactions — after a verified success or a failure, the companion
+  // says something tiny. Real events only (driven by taskOutcome).
+  useEffect(() => {
+    if (!taskOutcome) return;
+    const lines = taskOutcome.success
+      ? ["That worked! ✨", "Done — and verified 😌", "Another one handled 🙌"]
+      : ["Hmm, that didn't work 😅", "I couldn't finish that one — ask me what happened."];
+    setQuipSay(lines[Math.floor(Math.random() * lines.length)]);
+  }, [taskOutcome?.at]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Shared chat body (used by both panel and full layouts) ──────────────
   const chatBody = (
@@ -309,7 +333,11 @@ export default function App() {
 
       <div className="relative flex flex-1 flex-col overflow-hidden">
         {messages.length === 0 ? (
-          <ChatWelcome companionId={companionId} onSuggestionClick={send} />
+          <ChatWelcome
+            companionId={companionId}
+            onSuggestionClick={send}
+            onOpenKeySetup={() => openSettings("ai")}
+          />
         ) : (
           <ChatLayout messages={messages} busy={chatBusy} />
         )}

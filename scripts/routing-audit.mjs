@@ -125,5 +125,25 @@ expect("the play was amazing", { expectTask: false });
 expect("I listen to music while working", { expectTask: false });
 expect("who is the best player", { expectTask: false });
 
+// ── Real browser (Phase 26): YouTube still verified, no Electron surface ────
+expect("open youtube and play mitwa", { expectTask: true, contains: "open_website" });
+expect("open google", { expectTask: true, firstStep: "open_website" });
+
+// ── Deep system control (self check / volume / media / processes / tabs) ────
+expect("run a self check", { expectTask: true, firstStep: "self_check" });
+expect("run diagnostics", { expectTask: true, firstStep: "self_check" });
+expect("set volume to 40", { expectTask: true, firstStep: "volume" });
+expect("volume up", { expectTask: true, firstStep: "volume" });
+expect("mute", { expectTask: true, firstStep: "volume" });
+expect("awaaz band karo", { expectTask: true, firstStep: "volume" });
+expect("play the next song", { expectTask: true, firstStep: "media_key" });
+expect("pause the music", { expectTask: true, firstStep: "media_key" });
+expect("what processes are running", { expectTask: true, firstStep: "process_list" });
+expect("kill the notepad process", { expectTask: true, firstStep: "process_kill" });
+expect("open a new tab", { expectTask: true, firstStep: "browser_tab" });
+expect("close this tab", { expectTask: true, firstStep: "browser_tab" });
+expect("go back", { expectTask: true, firstStep: "browser_tab" });
+expect("refresh the page", { expectTask: true, firstStep: "browser_tab" });
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

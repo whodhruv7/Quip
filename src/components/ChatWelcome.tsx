@@ -1,22 +1,40 @@
 // Quip V2 — Welcome screen.
 //
-// Shows when there are no messages yet. Companion greeting + quick suggestions.
-// Premium, minimal, Apple × Arc × Linear style.
+// Shows when there are no messages yet. Companion greeting + brain status +
+// quick suggestions. Premium, minimal, Apple × Arc × Linear style.
 
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import type { CompanionId } from "@/types";
+import type { ModelRouterStatus } from "@/types/models";
 import { getCompanion } from "@/lib/companion-config";
 import { CHAT_SUGGESTIONS } from "@/lib/constants";
 
 interface ChatWelcomeProps {
   companionId: CompanionId;
   onSuggestionClick: (text: string) => void;
+  /** Opens Settings on the AI tab when the brain isn't connected. */
+  onOpenKeySetup?: () => void;
 }
 
-// Removed inline SUGGESTIONS
-
-export function ChatWelcome({ companionId, onSuggestionClick }: ChatWelcomeProps) {
+export function ChatWelcome({ companionId, onSuggestionClick, onOpenKeySetup }: ChatWelcomeProps) {
   const theme = getCompanion(companionId);
+  const [modelStatus, setModelStatus] = useState<ModelRouterStatus | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    window.quip
+      .getModelStatus()
+      .then((s) => {
+        if (alive) setModelStatus(s);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const connected = !!modelStatus?.healthy;
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-6 py-8">
@@ -71,13 +89,67 @@ export function ChatWelcome({ companionId, onSuggestionClick }: ChatWelcomeProps
         style={{
           fontSize: 13,
           color: "#9ca3af",
-          marginBottom: 28,
+          marginBottom: 16,
           textAlign: "center",
           lineHeight: 1.5,
         }}
       >
         {theme.subtitle}. Ask me anything or tell me what to do.
       </motion.p>
+
+      {/* Brain status — CONNECTED or NOT CONNECTED, never vague (Phase 9) */}
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.3 }}
+        className="mb-6"
+      >
+        {connected ? (
+          <div
+            className="flex items-center gap-1.5 rounded-full px-3 py-1.5"
+            style={{
+              fontSize: 10.5,
+              fontWeight: 500,
+              color: "#15803d",
+              background: "rgba(34,197,94,0.08)",
+              border: "1px solid rgba(34,197,94,0.18)",
+            }}
+          >
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: "#22c55e",
+              }}
+            />
+            Brain connected{modelStatus?.active?.label ? ` · ${modelStatus.active.label}` : ""}
+          </div>
+        ) : (
+          <button
+            onClick={onOpenKeySetup}
+            className="flex items-center gap-1.5 rounded-full px-3 py-1.5 transition-all hover:scale-[1.03]"
+            style={{
+              fontSize: 10.5,
+              fontWeight: 600,
+              color: "#b45309",
+              background: "rgba(245,158,11,0.09)",
+              border: "1px solid rgba(245,158,11,0.28)",
+              cursor: "pointer",
+            }}
+          >
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: "#f59e0b",
+              }}
+            />
+            Not connected — add your free AI key →
+          </button>
+        )}
+      </motion.div>
 
       {/* Quick suggestions */}
       <motion.div

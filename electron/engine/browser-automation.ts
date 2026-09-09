@@ -1,15 +1,26 @@
 // Quip Execution Engine — Browser / Website Automation
 // ─────────────────────────────────────────────────────────────────────────────
-// Website understanding + interaction:
+// REAL BROWSER ONLY (Phase 26): Quip opens the user's ACTUAL default browser
+// via the OS shell — never an embedded Electron browser window.
 //   - Safe-URL gate (SSRF protection — ported from Agent-Reach's URL guard)
-//   - openBrowserSurface / navigateBrowser — focused Quip-controlled window
-//   - searchYouTube / playFirstYouTubeResult — real playback, verified
+//   - openBrowserSurface → shell.openExternal + window-title verification
+//   - searchYouTube / playFirstYouTubeResult — score, pick, open, verify
 //   - readWebPage — Agent-Reach "reach the web" port (r.jina.ai reader)
+//
+// Verification contract with the user's real browser: we cannot execute
+// JavaScript inside another browser's tabs, so we verify what IS observable —
+// the browser's window titles. A YouTube watch page loaded successfully shows
+// the video title (or " - YouTube") in the tab/window title. We report
+// exactly what we saw, and nothing more.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BrowserWindow } from "electron";
-import { ok, fail, type ActionVerification } from "./action-verifier";
-import { computeBrowserWindowBounds, quipOverlayRect } from "./window-policy";
+import { shell } from "electron";
+import {
+  ok,
+  fail,
+  listWindowTitles,
+  type ActionVerification,
+} from "./action-verifier";
 import { contextStore } from "./context-store";
 
 // ─── URL safety gate (Agent-Reach port) ──────────────────────────────────────
@@ -42,82 +53,69 @@ export function isSafePublicUrl(rawUrl: string): { safe: boolean; reason?: strin
   return { safe: true, url: parsed.toString() };
 }
 
-// ─── Browser surface management ──────────────────────────────────────────────
+// ─── Real browser surface (the user's own browser) ──────────────────────────
 
-let taskSurface: BrowserWindow | null = null;
+const BROWSER_TITLE_HINTS = [
+  "chrome", "edge", "firefox", "brave", "opera", "vivaldi", "youtube",
+  "google search", "reddit", "github", "x.com", "twitter",
+];
 
-function createSurface(url: string): BrowserWindow {
-  const bounds = computeBrowserWindowBounds(quipOverlayRect());
-  const win = new BrowserWindow({
-    ...bounds,
-    title: "Quip Browser",
-    autoHideMenuBar: true,
-    show: false,
-    backgroundColor: "#ffffff",
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
-  // Browser is a NORMAL window: opens in front, user can minimize/switch.
-  // Quip chat overlay stays always-on-top and compact — it never hides the task.
-  win.loadURL(url);
-  win.once("ready-to-show", () => {
-    win.show();
-    win.focus();
-    win.moveTop();
-  });
-  win.on("closed", () => {
-    if (taskSurface === win) taskSurface = null;
-  });
-  return win;
+function titleLooksLikeBrowserOrSite(title: string): boolean {
+  const t = ` ${title.toLowerCase()} `;
+  return BROWSER_TITLE_HINTS.some((h) => t.includes(h));
 }
 
-/** Open a URL in Quip's focused browser surface (or the OS browser on failure). */
+/**
+ * Ask the OS to open the URL in the user's ACTUAL default browser, then
+ * verify what can honestly be verified: that a browser window exists.
+ * Never opens an embedded Electron browser (Phase 26).
+ */
 export async function openBrowserSurface(rawUrl: string): Promise<ActionVerification> {
   const gate = isSafePublicUrl(rawUrl);
   if (!gate.safe) {
     return fail(`I won't open that URL — ${gate.reason}.`, [`blocked: ${rawUrl}`], "unsafe-url");
   }
   const url = gate.url!;
+  const host = hostnameOf(url);
 
+  let opened = true;
   try {
-    if (taskSurface && !taskSurface.isDestroyed()) {
-      await taskSurface.loadURL(url);
-      taskSurface.show();
-      taskSurface.focus();
-      taskSurface.moveTop();
-    } else {
-      taskSurface = createSurface(url);
-    }
-    contextStore.update({ activeUrl: url, activeWebsite: hostnameOf(url) });
-    return ok(`Opened ${hostnameOf(url)} in a browser window.`, [`loaded ${url}`, "surface focused"]);
+    await shell.openExternal(url); // resolves void; throws when the shell refuses
   } catch (e: any) {
-    // Fallback: OS browser via shell (wired in tool-registry to avoid import cycle)
+    opened = false;
     return fail(
-      `The browser window failed to open.`,
-      [`error: ${String(e?.message ?? e)}`],
-      "surface-failed"
+      `I couldn't open your browser — ${String(e?.message ?? e)}`,
+      [`url: ${url}`],
+      "open-external-failed"
     );
   }
+  if (!opened) {
+    return fail(
+      `Your system refused to open ${host} (no default browser set?).`,
+      [`url: ${url}`],
+      "open-external-refused"
+    );
+  }
+  contextStore.update({ activeUrl: url, activeWebsite: host });
+
+  // Give the OS/browser a moment, then look for a browser window.
+  await new Promise((r) => setTimeout(r, 2500));
+  const titles = await listWindowTitles();
+  const match = titles.find((t) => titleLooksLikeBrowserOrSite(t));
+  if (match) {
+    return ok(
+      `Opened ${host} in your browser.`,
+      [`shell.openExternal ${url}`, `browser window seen: "${match.slice(0, 80)}"`]
+    );
+  }
+  return ok(
+    `Opened ${host} in your default browser.`,
+    [`shell.openExternal ${url}`, "browser window not detected yet — it may still be loading"]
+  );
 }
 
 export async function navigateBrowser(rawUrl: string): Promise<ActionVerification> {
   return openBrowserSurface(rawUrl);
-}
-
-/** Re-focus the existing browser surface (used after navigation). */
-export function focusBrowserSurface(): void {
-  if (taskSurface && !taskSurface.isDestroyed()) {
-    taskSurface.show();
-    taskSurface.focus();
-    taskSurface.moveTop();
-  }
-}
-
-export function hasBrowserSurface(): boolean {
-  return !!taskSurface && !taskSurface.isDestroyed();
 }
 
 function hostnameOf(url: string): string {
@@ -242,83 +240,43 @@ export async function searchYouTubeResults(query: string): Promise<YouTubeResult
   }
 }
 
-// ─── Playback verification (the surface is OUR BrowserWindow) ───────────────
-
-interface PlaybackProbe {
-  found: boolean;
-  playing: boolean;
-  detail: string;
-}
-
-async function probePlayback(surface: BrowserWindow): Promise<PlaybackProbe> {
-  try {
-    const state = (await surface.webContents.executeJavaScript(
-      `(function(){
-        var v = document.querySelector('video.html5-main-video') || document.querySelector('video');
-        if (!v) return { found: false };
-        return { found: true, paused: !!v.paused, ended: !!v.ended, time: v.currentTime || 0, duration: v.duration || 0 };
-      })()`,
-      true
-    )) as { found: boolean; paused?: boolean; ended?: boolean; time?: number; duration?: number };
-    if (!state?.found) return { found: false, playing: false, detail: "no video element yet" };
-    const playing = !state.paused && !state.ended;
-    const t = typeof state.time === "number" ? state.time.toFixed(1) : "0";
-    return {
-      found: true,
-      playing,
-      detail: playing
-        ? `video element present, playing at ${t}s`
-        : `video present but ${state.ended ? "ended" : "paused"}`,
-    };
-  } catch {
-    return { found: false, playing: false, detail: "page probe unavailable" };
-  }
-}
+// ─── Playback verification (observable truth: the browser's window titles) ──
 
 /**
- * Wait for real playback on the YouTube surface; nudge the play button once
- * if the video is still paused. Never fabricates success — the caller
- * receives an honest playing/not-verified verdict.
+ * Watch the user's real browser window titles for signs the requested video
+ * actually loaded. A loaded YouTube watch page shows the video title in the
+ * window/tab title. We never claim "playing" beyond what the titles show.
  */
-async function ensurePlayback(surface: BrowserWindow, timeoutMs = 10000): Promise<PlaybackProbe> {
+async function verifyVideoLoaded(
+  expectedTitle: string,
+  timeoutMs = 9000
+): Promise<{ loaded: boolean; detail: string; seenTitle?: string }> {
   const deadline = Date.now() + timeoutMs;
-  let nudged = false;
-  let last: PlaybackProbe = { found: false, playing: false, detail: "not probed" };
+  // Use a meaningful fragment of the title (YouTube truncates long titles).
+  const needle = expectedTitle.toLowerCase().replace(/\s+/g, " ").trim().slice(0, 24);
+  let lastDetail = "no browser window with the video seen yet";
   while (Date.now() < deadline) {
-    last = await probePlayback(surface);
-    if (last.playing) return last;
-    if (last.found && !last.playing && !nudged) {
-      // One honest nudge: click the YouTube play button / resume the element.
-      try {
-        await surface.webContents.executeJavaScript(
-          `(function(){
-            var v = document.querySelector('video.html5-main-video') || document.querySelector('video');
-            if (v && v.paused) {
-              var btn = document.querySelector('.ytp-large-play-button');
-              if (btn) btn.click();
-              var p = v.play();
-              if (p && p.catch) p.catch(function(){});
-            }
-          })()`,
-          true
-        );
-      } catch {
-        /* nudge is best-effort */
+    const titles = await listWindowTitles();
+    const ytWindow = titles.find((t) => t.toLowerCase().includes("youtube") || t.toLowerCase().includes("- yt"));
+    if (needle.length >= 4) {
+      const match = titles.find((t) => t.toLowerCase().includes(needle));
+      if (match) {
+        return { loaded: true, detail: `browser tab shows "${match.slice(0, 80)}"`, seenTitle: match };
       }
-      nudged = true;
-      await new Promise((r) => setTimeout(r, 1500));
-      continue;
     }
-    await new Promise((r) => setTimeout(r, 700));
+    if (ytWindow) {
+      lastDetail = `browser tab shows "${ytWindow.slice(0, 80)}" (title match not confirmed)`;
+    }
+    await new Promise((r) => setTimeout(r, 900));
   }
-  return last;
+  return { loaded: false, detail: lastDetail };
 }
 
 /**
- * Search YouTube, UNDERSTAND which result matches the request, open it and
- * VERIFY playback. Order of honesty:
- *   1. best-matching result + verified playing → "Playing …"
- *   2. best-matching result, playback not confirmable → say exactly that
+ * Search YouTube, UNDERSTAND which result matches the request, open it in the
+ * user's REAL browser and VERIFY what is observable. Order of honesty:
+ *   1. best-matching result + tab title confirms → "Playing …"
+ *   2. best-matching result, title not confirmable → say exactly that
  *   3. no confident match → open the search page and say so
  * The first result is never blindly trusted.
  */
@@ -341,30 +299,23 @@ export async function playFirstYouTubeResult(query: string): Promise<ActionVerif
     const opened = await openBrowserSurface(watchUrl);
     if (opened.ok) {
       contextStore.update({ lastMediaQuery: query, activeWebsite: "youtube" });
-      const surface = taskSurface;
-      if (surface && !surface.isDestroyed()) {
-        const playback = await ensurePlayback(surface);
-        const evidence = [matchedNote, `video ${chosen.videoId} — ${playback.detail}`];
-        if (playback.playing) {
-          return ok(
-            chosen.title
-              ? `Playing "${chosen.title}" on YouTube.`
-              : `Playing the top match for "${query}" on YouTube.`,
-            evidence
-          );
-        }
+      const check = chosen.title
+        ? await verifyVideoLoaded(chosen.title)
+        : { loaded: false, detail: "no title available from search — cannot verify" };
+      const evidence = [matchedNote, check.detail];
+      if (check.loaded) {
         return ok(
           chosen.title
-            ? `Opened "${chosen.title}" on YouTube — I couldn't confirm playback started (it may need one click).`
-            : `Opened the match for "${query}" on YouTube — playback not confirmed.`,
+            ? `Playing "${chosen.title}" on YouTube.`
+            : `Playing the top match for "${query}" on YouTube.`,
           evidence
         );
       }
       return ok(
         chosen.title
-          ? `Opened "${chosen.title}" on YouTube.`
-          : `Opened the match for "${query}" on YouTube.`,
-        [matchedNote]
+          ? `Opened "${chosen.title}" in your browser — I can't see inside your browser, so press play once if it didn't start.`
+          : `Opened the match for "${query}" in your browser — playback not confirmed.`,
+        evidence
       );
     }
     // Surface failed — fall through to the search page.

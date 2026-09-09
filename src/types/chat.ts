@@ -1,5 +1,18 @@
 
-export type PixState = "idle" | "hover" | "thinking" | "responding" | "sleeping";
+export type PixState =
+  | "idle"
+  | "hover"
+  | "thinking"
+  | "responding"
+  | "sleeping"
+  /** executing a multi-step task — engaged, determined */
+  | "working"
+  /** waiting for the user to approve a plan */
+  | "waiting"
+  /** brief happy flash after a verified success */
+  | "success"
+  /** brief concerned flash after a failure */
+  | "error";
 export type CompanionId = "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy";
 
 export interface ExecutionResult {

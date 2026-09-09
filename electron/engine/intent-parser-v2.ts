@@ -45,6 +45,7 @@ export type ActionType =
   | "volume"
   | "media_key"
   | "browser_tab"
+  | "self_check"
   | "drag"
   | "mouse_move"
   | "chat";
@@ -594,6 +595,15 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
       /^(gaana|gana|music|video)\s+(pause|rok|chalu)\s*(karo|kar)?$/.test(text)) {
     return single("media_key", "playpause", { action: "playpause" },
       "Toggle play/pause", "Toggling playback", 0.85);
+  }
+
+  // Device self-check — real executed probes, honest per-item report.
+  if (/^(run\s+)?(a\s+)?self\s*(check|test|diagnostic)s?$/.test(text) ||
+      /^run\s+diagnostics$/.test(text) ||
+      /^diagnos(e|tics)$/.test(text) ||
+      /^(check|test)\s+(yourself|your\s+(systems?|capabilities?))$/.test(text)) {
+    return single("self_check", "self", {},
+      "Run a self check of every device capability", "Running a self check", 0.9);
   }
 
   // Processes: list / force-close (kill). Plain "close X" stays graceful.
