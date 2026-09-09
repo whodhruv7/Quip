@@ -32,6 +32,8 @@
     "../electron/system/env-store.ts",
     "../electron/system/provider-probe.ts",
     "../electron/window-geometry.ts",
+    "../electron/brains/proactive-engine.ts",
+    "../electron/brains/swarm-manager.ts",
     "../src/lib/companion-config.ts",
     "../src/lib/storage.ts",
     "../src/types/**/*.ts"

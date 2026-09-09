@@ -21,7 +21,6 @@ import {
   clearCurrentMessages,
   loadSessions,
 } from "@/lib/storage";
-import { useProactiveCheckIn } from "./useProactiveCheckIn";
 import type { ApprovalRequestUI } from "@/types/api";
 
 const uid = () => crypto.randomUUID();
@@ -40,9 +39,13 @@ export function useChat(
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorKind, setErrorKind] = useState<string | null>(null);
-  /** Drives the companion's success/error animation — timestamped so the UI
-   *  can flash it briefly and fall back to idle. */
-  const [taskOutcome, setTaskOutcome] = useState<{ success: boolean; at: number } | null>(null);
+  /** Drives the companion's success/error/cancelled animation — timestamped
+   *  so the UI can flash it briefly and fall back to idle. */
+  const [taskOutcome, setTaskOutcome] = useState<{
+    success: boolean;
+    at: number;
+    cancelled?: boolean;
+  } | null>(null);
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequestUI | null>(null);
   const [taskProgress, setTaskProgress] = useState<TaskProgress | null>(null);
   const activeRequestId = useRef<string | null>(null);
@@ -117,12 +120,38 @@ export function useChat(
       setTaskProgress(p);
     });
 
+    // ─── Proactive check-ins (ONE authoritative source: the main process) ──
+    // The main-process reminder engine owns scheduling/cooldowns/quiet-hours
+    // and the Settings toggle. The renderer only displays what arrives —
+    // no UI timers, no duplicated schedulers.
+    const offProactive = quipApiRef.current.onProactiveSuggestion((s) => {
+      if (!s || typeof s.message !== "string" || !s.message.trim()) return;
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last && last.role === "assistant" && last.proactive && last.content === s.message) {
+          return prev; // de-dupe double deliveries
+        }
+        return [
+          ...prev,
+          {
+            id: uid(),
+            role: "assistant" as const,
+            content: s.message,
+            ts: Date.now(),
+            companionId,
+            proactive: true,
+          },
+        ];
+      });
+    });
+
     return () => {
       offChunk();
       offDone();
       offErr();
       offConfirm();
       offProgress();
+      offProactive();
     };
   }, [companionId]);
 
@@ -159,22 +188,25 @@ export function useChat(
 
       if (taskResult && taskResult.summary && !taskResult.plan?.isChat) {
         const trustNote = taskResult.notes.join("\n");
+        const cancelled = taskResult.cancelled === true;
         const assistantMsg: ChatMessage = {
           id: uid(),
           role: "assistant",
           content: taskResult.success
             ? taskResult.summary
-            : `Sorry, I couldn't do that: ${taskResult.summary}`,
+            : taskResult.summary,
           ts: Date.now(),
           companionId,
           contextNote: trustNote || undefined,
-          action: taskResult.success
-            ? { success: true, summary: taskResult.summary, notes: taskResult.notes }
-            : { success: false, summary: taskResult.summary, notes: taskResult.notes },
+          action: {
+            success: taskResult.success,
+            summary: taskResult.summary,
+            notes: taskResult.notes,
+          },
         };
         setMessages((prev) => [...prev, assistantMsg]);
         setTaskProgress(null);
-        setTaskOutcome({ success: taskResult.success, at: Date.now() });
+        setTaskOutcome({ success: taskResult.success, at: Date.now(), cancelled });
         setBusy(false);
         return;
       }
@@ -285,11 +317,20 @@ export function useChat(
     setErrorKind(null);
   }, []);
 
+  /** Stop button — asks the main process to cancel the running task before
+   *  its next step. The orchestrator returns an honest "stopped" result. */
+  const cancelTask = useCallback(() => {
+    try {
+      quipApiRef.current.cancelTask();
+    } catch {
+      /* non-fatal — the task will finish on its own */
+    }
+  }, []);
+
   const resolveApproval = useCallback((id: string, approved: boolean) => {
     quipApiRef.current.resolveApproval(id, approved);
     setApprovalRequest(null);
   }, []);
-  useProactiveCheckIn(messages, setMessages, busy, companionId);
 
-  return { messages, busy, error, errorKind, taskOutcome, send, clear, addNotice, sessions, newChat, openSession, clearError, approvalRequest, resolveApproval, taskProgress };
+  return { messages, busy, error, errorKind, taskOutcome, send, clear, addNotice, sessions, newChat, openSession, clearError, approvalRequest, resolveApproval, taskProgress, cancelTask };
 }

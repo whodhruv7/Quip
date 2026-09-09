@@ -61,7 +61,7 @@ export default function App() {
   );
   const [quipSay, setQuipSay] = useState<string | null>(null);
 
-  const { messages, busy: chatBusy, error, errorKind, taskOutcome, send, newChat, clearError, approvalRequest, resolveApproval, taskProgress } =
+  const { messages, busy: chatBusy, error, errorKind, taskOutcome, send, newChat, clearError, approvalRequest, resolveApproval, taskProgress, cancelTask } =
     useChat(companionId, restoredMessages);
 
   // Settings can open straight to a tab (e.g. "ai" from the no-key banner).
@@ -228,20 +228,29 @@ export default function App() {
   const isResponding =
     chatBusy &&
     messages.some((m) => m.role === "assistant" && m.streaming && m.content.length > 0);
-  // Fresh task outcome (≤2s old) wins: success jump or concerned shake.
-  // Then approval → waiting sway, running task → working bounce.
-  const outcomeFlash: "success" | "error" | null =
+  // Fresh task outcome (≤2s old) wins: success jump, concerned shake, or a
+  // gentle cancelled droop. Then approval → waiting sway, and a running task
+  // maps to its REAL phase — planning/observing/working, never fake states.
+  const outcomeFlash: "success" | "error" | "cancelled" | null =
     taskOutcome && Date.now() - taskOutcome.at < 2000
-      ? taskOutcome.success
-        ? "success"
-        : "error"
+      ? taskOutcome.cancelled
+        ? "cancelled"
+        : taskOutcome.success
+          ? "success"
+          : "error"
       : null;
   const pixState: PixState = outcomeFlash
     ? outcomeFlash
     : approvalRequest
       ? "waiting"
       : taskProgress
-        ? "working"
+        ? taskProgress.phase === "planning"
+          ? "planning"
+          : taskProgress.phase === "observing"
+            ? "observing"
+            : taskProgress.phase === "verifying"
+              ? "verifying"
+              : "working"
         : chatBusy
           ? isResponding
             ? "responding"
@@ -266,13 +275,15 @@ export default function App() {
     if (latestProactive) setQuipSay(latestProactive);
   }, [latestProactive]);
 
-  // Cute reactions — after a verified success or a failure, the companion
-  // says something tiny. Real events only (driven by taskOutcome).
+  // Cute reactions — after a verified success, failure, or cancellation the
+  // companion says something tiny. Real events only (driven by taskOutcome).
   useEffect(() => {
     if (!taskOutcome) return;
-    const lines = taskOutcome.success
-      ? ["That worked! ✨", "Done — and verified 😌", "Another one handled 🙌"]
-      : ["Hmm, that didn't work 😅", "I couldn't finish that one — ask me what happened."];
+    const lines = taskOutcome.cancelled
+      ? ["Okay, stopped 👍", "Cancelled — ready when you are."]
+      : taskOutcome.success
+        ? ["That worked! ✨", "Done — and verified 😌", "Another one handled 🙌"]
+        : ["Hmm, that didn't work 😅", "I couldn't finish that one — ask me what happened."];
     setQuipSay(lines[Math.floor(Math.random() * lines.length)]);
   }, [taskOutcome?.at]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -373,18 +384,44 @@ export default function App() {
                 animation: "quipPulse 1.2s ease-in-out infinite",
               }}
             />
-            <span style={{ fontWeight: 600, color: theme.primary, flexShrink: 0 }}>
-              Step {taskProgress.step}/{taskProgress.total}
+            <span
+              style={{
+                fontWeight: 600,
+                color: theme.primary,
+                flexShrink: 0,
+              }}
+            >
+              {taskProgress.step > 0
+                ? `Step ${taskProgress.step}/${taskProgress.total}`
+                : "Thinking…"}
             </span>
             <span
               style={{
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
+                flex: 1,
               }}
             >
               {taskProgress.description}
             </span>
+            <button
+              onClick={cancelTask}
+              style={{
+                flexShrink: 0,
+                fontSize: 10.5,
+                fontWeight: 600,
+                color: "#6b7280",
+                background: "rgba(0,0,0,0.05)",
+                border: "none",
+                borderRadius: 7,
+                padding: "3px 10px",
+                cursor: "pointer",
+              }}
+              aria-label="Stop this task"
+            >
+              Stop
+            </button>
           </motion.div>
         )}
       </AnimatePresence>

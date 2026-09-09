@@ -65,9 +65,10 @@ const api = {
   // ─── Task execution ──────────────────────────────────────────────────
   executeTask: (payload: TaskExecutePayload) =>
     ipcRenderer.invoke(IPC.TASK_EXECUTE, payload),
+  cancelTask: () => ipcRenderer.send(IPC.TASK_CANCEL),
 
   // ─── Set active companion (so the system prompt adapts personality/mood) ─
-  setCompanion: (id: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy") =>
+  setCompanion: (id: "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales") =>
     ipcRenderer.send("quip:set-companion", id),
   
   // ─── Execution Engine V2 — Permission modes ────────────────────────
@@ -169,6 +170,10 @@ const api = {
       message: string;
       kind: string;
     }>,
+  resolveProvider: () =>
+    ipcRenderer.invoke(IPC.RESOLVE_PROVIDER) as Promise<
+      Array<{ provider: "openrouter" | "groq"; configured: boolean; ok: boolean; latencyMs: number; message: string; kind: string; model: string }>
+    >,
 
   // ─── Companion visibility + real quit ────────────────────────────────
   getCompanionVisible: () =>
@@ -181,6 +186,12 @@ const api = {
     return () => ipcRenderer.removeListener(IPC.COMPANION_VISIBLE_CHANGED, handler as any);
   },
   quitApp: () => ipcRenderer.send(IPC.QUIT_APP),
+
+  // ─── Proactive check-ins toggle (Settings → Desktop) ─────────────────
+  getCheckInsEnabled: () =>
+    ipcRenderer.invoke(IPC.GET_CHECKINS_ENABLED) as Promise<boolean>,
+  setCheckInsEnabled: (enabled: boolean) =>
+    ipcRenderer.invoke(IPC.SET_CHECKINS_ENABLED, enabled) as Promise<boolean>,
 
   // ─── Permission system ──────────────────────────────────────────────
   getPermissions: () =>
@@ -218,13 +229,13 @@ const api = {
     ipcRenderer.invoke(IPC.RECORD_REFLECTION_FEEDBACK, { feedback }),
 
   // ─── Phase 3: Swarm Mode ─────────────────────────────────────────────
-  spawnCompanion: (companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy", headless?: boolean, autoTask?: string) =>
+  spawnCompanion: (companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales", headless?: boolean, autoTask?: string) =>
     ipcRenderer.invoke(IPC.SPAWN_COMPANION, { companionId, headless, autoTask }),
   dismissCompanion: (winId: number) =>
     ipcRenderer.invoke(IPC.DISMISS_COMPANION, { winId }),
   getSwarmInstances: () =>
     ipcRenderer.invoke(IPC.GET_SWARM_INSTANCES),
-  sendInterCompanionMsg: (to: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy", message: string) =>
+  sendInterCompanionMsg: (to: "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales", message: string) =>
     ipcRenderer.send(IPC.INTER_COMPANION_MSG, { to, message }),
   onInterCompanionMsg: (cb: (msg: { from: string; to: string; message: string }) => void) => {
     const handler = (_e: unknown, data: any) => cb(data);

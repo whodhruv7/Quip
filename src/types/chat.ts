@@ -5,15 +5,23 @@ export type PixState =
   | "thinking"
   | "responding"
   | "sleeping"
+  /** resolving the task into steps — before the first action runs */
+  | "planning"
   /** executing a multi-step task — engaged, determined */
   | "working"
+  /** reading the screen / page / results — honest observation */
+  | "observing"
+  /** double-checking an action's result before reporting success */
+  | "verifying"
   /** waiting for the user to approve a plan */
   | "waiting"
   /** brief happy flash after a verified success */
   | "success"
   /** brief concerned flash after a failure */
-  | "error";
-export type CompanionId = "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy";
+  | "error"
+  /** brief droop after the user cancels a task */
+  | "cancelled";
+export type CompanionId = "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales";
 
 export interface ExecutionResult {
   success: boolean;

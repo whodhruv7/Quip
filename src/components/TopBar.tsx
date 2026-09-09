@@ -37,7 +37,7 @@ export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onRef
     >
       {/* Companion dots — switch between all 6 companions */}
       <div className="flex items-center gap-1">
-        {(["pix", "kai", "ren", "bubbles", "capy", "ivy"] as CompanionId[]).map((id) => {
+        {(["pix", "kai", "ren", "bubbles", "capy", "skales"] as CompanionId[]).map((id) => {
           const c = getCompanion(id);
           const active = id === companionId;
           return (

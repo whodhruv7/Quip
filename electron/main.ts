@@ -109,7 +109,7 @@ import type {
 // ─── State ───────────────────────────────────────────────────────────────────
 const isDev = process.env.NODE_ENV === "development";
 const windows = new Map<number, BrowserWindow>();
-const windowCompanionMap = new Map<number, "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy">();
+const windowCompanionMap = new Map<number, "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales">();
 let tray: Tray | null = null;
 
 // True only while app.quit() is running — window close events are intercepted
@@ -127,7 +127,7 @@ let worldModel: WorldModel | null = null;
 let spatialConfig: SpatialConfig | null = null;
 
 // The default companion (set by renderer via IPC). Defaults to "pix".
-let defaultCompanionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy" = "pix";
+let defaultCompanionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales" = "pix";
 
 // ---------------------------------------------------------------------------
 // Local persistence — window position only.
@@ -294,7 +294,7 @@ function setWindowMode(win: BrowserWindow, mode: WindowMode) {
  *
  * @param userMessage - the current user message (for relevance filtering)
  */
-function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy" = "pix"): string {
+function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales" = "pix"): string {
   const env = environmentBrain.get();
   const sections: string[] = [];
 
@@ -305,7 +305,7 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
     ren: "Ren — curious, empathetic, reflective. Personal + emotional support.",
     bubbles: "Bubbles — bubbly, joyful, playful. Cheerful energy, celebratory, light on her feet.",
     capy: "Capy — unbothered, warm, steady. Cozy calm. Nothing is a crisis.",
-    ivy: "Ivy — loyal, reliable, helpful. Gets things done, always follows through.",
+    skales: "Skales — the original gecko: lime, curious, always mid-task. Chases goals one small step at a time.",
   };
   sections.push(
     "You are QUIP, a calm, concise AI companion on the user's desktop. " +
@@ -462,7 +462,7 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
 // ---------------------------------------------------------------------------
 // Window
 // ---------------------------------------------------------------------------
-function createWindow(companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy" = "pix", offsetX = 0, offsetY = 0) {
+function createWindow(companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales" = "pix", offsetX = 0, offsetY = 0) {
   // Quip always boots as the desktop companion — a small sprite on screen.
   // The user taps it to open the panel, and expands from there.
   const area = screen.getPrimaryDisplay().workArea;
@@ -797,8 +797,8 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
 // ---------------------------------------------------------------------------
 // IPC — set current companion (so system prompt can adapt)
 // ---------------------------------------------------------------------------
-ipcMain.on("quip:set-companion", (_e, id: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy") => {
-  if (id === "pix" || id === "kai" || id === "ren" || id === "bubbles" || id === "capy" || id === "ivy") {
+ipcMain.on("quip:set-companion", (_e, id: "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales") => {
+  if (id === "pix" || id === "kai" || id === "ren" || id === "bubbles" || id === "capy" || id === "skales") {
     defaultCompanionId = id;
     const win = BrowserWindow.fromWebContents(_e.sender);
     if (win) windowCompanionMap.set(win.id, id);
@@ -823,6 +823,21 @@ ipcMain.handle(
       sendToWindow(win, "quip:approval-request", request);
     };
 
+    // ── Cancellation token (Stop button / stop command) ────────────────
+    const cancelSignal = { aborted: false };
+    taskCancelSignals.add(cancelSignal);
+
+    // PLANNING is a real phase: from this moment until the first step starts,
+    // the companion honestly shows "planning" (never a fake WORKING state).
+    sendToWindow(win, IPC.TASK_PROGRESS, {
+      requestId: payload.requestId,
+      step: 0,
+      total: 0,
+      description: "Understanding what you need…",
+      phase: "planning",
+      status: "running",
+    } as TaskProgressPayload);
+
     // Parse intent once for plan metadata (orchestrator re-parses internally;
     // this is a pure regex parse — no model call, negligible cost).
     const intentInfo = parseIntentV2(payload.command);
@@ -830,15 +845,20 @@ ipcMain.handle(
     const result = await orchestrator.execute(payload.command, {
       platform,
       workspacePath,
+      signal: cancelSignal,
       onProgress: (update) => {
         sendToWindow(win, IPC.TASK_PROGRESS, {
           requestId: payload.requestId,
           step: update.step,
           total: update.total,
           description: update.description,
+          phase: update.phase,
+          status: update.status,
         } as TaskProgressPayload);
       },
     });
+
+    taskCancelSignals.delete(cancelSignal);
 
     // Record task completion for companion evolution and timeline
     if (result.success && result.stepsTotal > 0) {
@@ -901,7 +921,7 @@ ipcMain.handle("quip:cycle-permission-mode", () => {
 // ---------------------------------------------------------------------------
 // IPC — Phase 3: Swarm Mode (managed by SwarmManager)
 // ---------------------------------------------------------------------------
-ipcMain.handle(IPC.SPAWN_COMPANION, (_e, payload: { companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy"; headless?: boolean; autoTask?: string }) => {
+ipcMain.handle(IPC.SPAWN_COMPANION, (_e, payload: { companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales"; headless?: boolean; autoTask?: string }) => {
   const winId = swarmManager.spawn(payload.companionId, {
     headless: payload.headless ?? false,
     autoTask: payload.autoTask,
@@ -917,7 +937,7 @@ ipcMain.handle(IPC.GET_SWARM_INSTANCES, () => {
   return swarmManager.getInstances();
 });
 
-ipcMain.on(IPC.INTER_COMPANION_MSG, (_e, payload: { to: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy"; message: string }) => {
+ipcMain.on(IPC.INTER_COMPANION_MSG, (_e, payload: { to: "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales"; message: string }) => {
   const fromWin = BrowserWindow.fromWebContents(_e.sender);
   if (!fromWin) return;
   swarmManager.routeMessage(fromWin.id, payload.to, payload.message);
@@ -1067,7 +1087,7 @@ ipcMain.handle(IPC.RESET_USER_PROFILE, () => {
 // IPC — companion mood
 // ---------------------------------------------------------------------------
 ipcMain.handle(IPC.GET_COMPANION_MOOD, (_e, id: string) => {
-  if (id !== "pix" && id !== "kai" && id !== "ren" && id !== "bubbles" && id !== "capy" && id !== "ivy") return null;
+  if (id !== "pix" && id !== "kai" && id !== "ren" && id !== "bubbles" && id !== "capy" && id !== "skales") return null;
   return companionMood.getMood(id);
 });
 
@@ -1159,6 +1179,72 @@ ipcMain.on(IPC.QUIT_APP, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Task cancellation — the Stop button. One task runs at a time per window;
+// a single broadcast flag flips every live token.
+// ---------------------------------------------------------------------------
+const taskCancelSignals = new Set<{ aborted: boolean }>();
+
+ipcMain.on(IPC.TASK_CANCEL, () => {
+  for (const signal of taskCancelSignals) signal.aborted = true;
+});
+
+// ---------------------------------------------------------------------------
+// Proactive check-ins toggle (Settings → Desktop) — the MAIN process owns
+// the reminder schedule; the renderer only displays what arrives.
+// ---------------------------------------------------------------------------
+ipcMain.handle(IPC.GET_CHECKINS_ENABLED, () => proactiveEngine.isEnabled());
+
+ipcMain.handle(IPC.SET_CHECKINS_ENABLED, (_e, enabled: boolean) => {
+  proactiveEngine.setEnabled(enabled === true);
+  return proactiveEngine.isEnabled();
+});
+
+// ---------------------------------------------------------------------------
+// Provider auto-resolve — REAL probes of every configured provider with
+// honest CONNECTED / NOT CONNECTED statuses (spec: never fake a connection).
+// ---------------------------------------------------------------------------
+ipcMain.handle(IPC.RESOLVE_PROVIDER, async () => {
+  const out: Array<{
+    provider: "openrouter" | "groq";
+    configured: boolean;
+    ok: boolean;
+    latencyMs: number;
+    message: string;
+    kind: string;
+    model: string;
+  }> = [];
+  for (const provider of ["openrouter", "groq"] as const) {
+    const keyVar = PROVIDER_KEY_VAR[provider];
+    const modelVar = PROVIDER_MODEL_VAR[provider];
+    const apiKey = process.env[keyVar] || "";
+    const model = process.env[modelVar] || DEFAULT_MODELS[provider];
+    if (!apiKey) {
+      out.push({
+        provider,
+        configured: false,
+        ok: false,
+        latencyMs: 0,
+        message: "No key saved yet — paste one below.",
+        kind: "no-key",
+        model,
+      });
+      continue;
+    }
+    const r = await probeProvider(provider, apiKey, model);
+    out.push({
+      provider,
+      configured: true,
+      ok: r.ok,
+      latencyMs: r.latencyMs,
+      message: r.message,
+      kind: String(r.kind),
+      model,
+    });
+  }
+  return out;
+});
+
+// ---------------------------------------------------------------------------
 // IPC — permission system
 // ---------------------------------------------------------------------------
 ipcMain.handle(IPC.GET_PERMISSIONS, () => {
@@ -1220,15 +1306,41 @@ if (!app.requestSingleInstanceLock()) {
     // Initialize Phase 4 Dream Engine
     dreamEngine.init(app.getPath("userData"), modelRouter);
 
+    // ── ONE window factory for every companion ──────────────────────────
+    // The primary window is created directly below; any extra companion
+    // spawned later goes through the SAME factory so close-interception,
+    // crash recovery, self-heal, visibility control, position persistence
+    // and broadcast delivery apply to all of them.
+    swarmManager.setWindowFactory((id, ox, oy) => createWindow(id, ox, oy));
+
     // Initialize Phase 2 brains
     weeklyReflection.init(app.getPath("userData"));
+    // The proactive engine persists its toggle + cooldowns so a restart
+    // can neither spam check-ins nor silently lose the user's setting.
+    const proactiveStateFile = path.join(app.getPath("userData"), "quip-proactive.json");
+    proactiveEngine.configure({
+      load: () => {
+        try {
+          if (!fs.existsSync(proactiveStateFile)) return null;
+          const raw = JSON.parse(fs.readFileSync(proactiveStateFile, "utf8"));
+          if (!raw || typeof raw !== "object") return null;
+          return {
+            enabled: raw.enabled !== false,
+            lastFired: raw.lastFired && typeof raw.lastFired === "object" ? raw.lastFired : {},
+          };
+        } catch {
+          return null;
+        }
+      },
+      save: (state) => {
+        try {
+          fs.writeFileSync(proactiveStateFile, JSON.stringify(state, null, 2));
+        } catch {
+          /* best effort */
+        }
+      },
+    });
     proactiveEngine.start();
-
-    // Configure Phase 3 SwarmManager with correct asset paths
-    swarmManager.configure(
-      path.join(__dirname, "preload.js"),
-      path.join(__dirname, "../dist")
-    );
 
     // Check if weekly reflection is due (on startup)
     const lastReflectionMs = weeklyReflection.getLastReflectionMs();
@@ -1270,9 +1382,9 @@ if (!app.requestSingleInstanceLock()) {
       workspaceContext.refresh().catch(() => {});
     });
 
-    // Phase 3: Create the initial window via SwarmManager
+    // Phase 3: the PRIMARY companion boots through the single factory.
     companionVisible = readCompanionVisible();
-    swarmManager.spawn(defaultCompanionId);
+    createWindow(defaultCompanionId);
     createTray();
 
     // ── Self-heal: the companion must never silently vanish ──────────

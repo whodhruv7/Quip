@@ -66,7 +66,7 @@ export const DEFAULT_COSMETICS: CosmeticsConfig = {
     { tier: 2, name: "Cozy Blanket", description: "A warm blanket wrap", threshold: 150 },
     { tier: 3, name: "Sunset Aura", description: "A warm sunset glow", threshold: 300 },
   ],
-  ivy: [
+  skales: [
     { tier: 1, name: "Vine Wrap", description: "A small vine curls around", threshold: 50 },
     { tier: 2, name: "Berry Charm", description: "Tiny berries bloom", threshold: 150 },
     { tier: 3, name: "Forest Aura", description: "A fresh forest glow", threshold: 300 },
@@ -114,7 +114,7 @@ class CompanionEvolutionBrain {
       ren: makeBaseProgression("ren"),
       bubbles: makeBaseProgression("bubbles"),
       capy: makeBaseProgression("capy"),
-      ivy: makeBaseProgression("ivy"),
+      skales: makeBaseProgression("skales"),
     };
     this.progressions = {
       pix: { ...base.pix, depth: 0, unlockedCosmetics: [] },
@@ -122,7 +122,7 @@ class CompanionEvolutionBrain {
       ren: { ...base.ren, depth: 0, unlockedCosmetics: [] },
       bubbles: { ...base.bubbles, depth: 0, unlockedCosmetics: [] },
       capy: { ...base.capy, depth: 0, unlockedCosmetics: [] },
-      ivy: { ...base.ivy, depth: 0, unlockedCosmetics: [] },
+      skales: { ...base.skales, depth: 0, unlockedCosmetics: [] },
     };
   }
 
@@ -137,7 +137,7 @@ class CompanionEvolutionBrain {
       if (fs.existsSync(this.filePath)) {
         const data = JSON.parse(fs.readFileSync(this.filePath, "utf8"));
         if (data && typeof data === "object") {
-          for (const id of ["pix", "kai", "ren", "bubbles", "capy", "ivy"] as CompanionId[]) {
+          for (const id of ["pix", "kai", "ren", "bubbles", "capy", "skales"] as CompanionId[]) {
             if (data[id]) {
               this.progressions[id] = { ...this.progressions[id], ...data[id] };
             }
@@ -251,7 +251,7 @@ class CompanionEvolutionBrain {
       ren: this.getProgression("ren"),
       bubbles: this.getProgression("bubbles"),
       capy: this.getProgression("capy"),
-      ivy: this.getProgression("ivy"),
+      skales: this.getProgression("skales"),
     };
   }
 }

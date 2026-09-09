@@ -72,9 +72,14 @@ export function SettingsPanel({
   const [saving, setSaving] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [saveResult, setSaveResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [resolving, setResolving] = useState(false);
+  const [providerStatuses, setProviderStatuses] = useState<
+    Array<{ provider: "openrouter" | "groq"; configured: boolean; ok: boolean; latencyMs: number; message: string; kind: string; model: string }>
+  | null>(null);
 
   // Desktop tab state
   const [companionVisible, setCompanionVisible] = useState(true);
+  const [checkInsEnabled, setCheckInsEnabled] = useState(true);
 
   useEffect(() => {
     setTab(initialTab);
@@ -87,11 +92,36 @@ export function SettingsPanel({
     window.quip.getUserProfile().then(setProfile).catch(() => {});
     window.quip.getCompanionProgression().then(setProgression).catch(() => {});
     window.quip.getModelStatus().then(setModelStatus).catch(() => {});
+    // Auto-check which provider actually works (real probes, honest badges).
+    handleResolveProviders();
     window.quip
       .getCompanionVisible()
       .then(setCompanionVisible)
       .catch(() => {});
+    window.quip
+      .getCheckInsEnabled()
+      .then(setCheckInsEnabled)
+      .catch(() => {});
   }, [open]);
+
+  /** Probe BOTH providers for real (main process) and auto-select the one
+   *  that is genuinely CONNECTED — the user never has to guess. */
+  const handleResolveProviders = async () => {
+    setResolving(true);
+    try {
+      const statuses = await window.quip.resolveProvider();
+      setProviderStatuses(statuses);
+      const working = statuses.find((s) => s.ok);
+      if (working) {
+        setProvider(working.provider);
+        if (!model.trim() && working.model) setModel(working.model);
+      }
+    } catch {
+      /* non-fatal — the manual Test connection button still works */
+    } finally {
+      setResolving(false);
+    }
+  };
 
   const handleTestConnection = async () => {
     setTesting(true);
@@ -280,6 +310,54 @@ export function SettingsPanel({
 
             <div style={{ fontSize: 11, color: "#6b7280" }}>
               Paste a free API key below — Quip saves it for you. No file editing needed.
+            </div>
+
+            {/* Auto-resolve: REAL probes of both providers, honest badges */}
+            <div
+              className="rounded-xl px-3 py-2.5"
+              style={{ border: "1px solid rgba(0,0,0,0.06)", background: "rgba(0,0,0,0.015)" }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>
+                  Which provider works?
+                </span>
+                <button
+                  onClick={handleResolveProviders}
+                  disabled={resolving}
+                  style={{
+                    fontSize: 10.5,
+                    fontWeight: 600,
+                    color: "#0c6b8f",
+                    background: "rgba(111,214,255,0.12)",
+                    border: "none",
+                    borderRadius: 7,
+                    padding: "3px 10px",
+                    cursor: resolving ? "default" : "pointer",
+                  }}
+                >
+                  {resolving ? "Checking…" : "Check again"}
+                </button>
+              </div>
+              {providerStatuses && providerStatuses.length > 0 && (
+                <div className="mt-2 flex flex-col gap-1.5">
+                  {providerStatuses.map((s) => (
+                    <div key={s.provider} className="flex items-center gap-2">
+                      <span
+                        className="h-2 w-2 shrink-0 rounded-full"
+                        style={{ background: s.ok ? "#22c55e" : s.configured ? "#ef4444" : "#d1d5db" }}
+                      />
+                      <span style={{ fontSize: 10.5, color: "#374151", fontWeight: 600, textTransform: "capitalize" }}>
+                        {s.provider}
+                      </span>
+                      <span style={{ fontSize: 10, color: s.ok ? "#15803d" : "#6b7280", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {s.ok
+                          ? `Connected ✓ (${s.latencyMs}ms)`
+                          : s.message}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Provider picker */}
@@ -480,6 +558,55 @@ export function SettingsPanel({
               system tray. Quitting fully is right here.
             </div>
 
+            {/* Proactive check-ins — main-process reminder engine, user-controlled */}
+            <div
+              className="flex items-center justify-between gap-3 rounded-xl px-3 py-3"
+              style={{ border: "1px solid rgba(0,0,0,0.06)", background: "rgba(0,0,0,0.015)" }}
+            >
+              <div className="flex flex-col" style={{ minWidth: 0 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "#111" }}>
+                  Let Quip check in on me
+                </span>
+                <span style={{ fontSize: 10.5, color: "#6b7280", marginTop: 2 }}>
+                  Small cute reminders now and then. Never at night, never spammy.
+                </span>
+              </div>
+              <button
+                role="switch"
+                aria-checked={checkInsEnabled}
+                aria-label="Let Quip check in on me"
+                onClick={async () => {
+                  try {
+                    const next = await window.quip.setCheckInsEnabled(!checkInsEnabled);
+                    setCheckInsEnabled(next);
+                  } catch {
+                    /* non-fatal */
+                  }
+                }}
+                className="relative shrink-0 rounded-full transition-colors"
+                style={{
+                  width: 44,
+                  height: 25,
+                  background: checkInsEnabled ? "linear-gradient(135deg, #6FD6FF, #8AB4FF)" : "rgba(0,0,0,0.14)",
+                }}
+              >
+                <motion.span
+                  layout
+                  transition={{ type: "spring", stiffness: 500, damping: 32 }}
+                  style={{
+                    position: "absolute",
+                    top: 3,
+                    left: checkInsEnabled ? 22 : 3,
+                    width: 19,
+                    height: 19,
+                    borderRadius: "50%",
+                    background: "#fff",
+                    boxShadow: "0 1px 4px rgba(0,0,0,0.2)",
+                  }}
+                />
+              </button>
+            </div>
+
             {/* The ONLY real quit */}
             <button
               onClick={() => setConfirmQuit(true)}
@@ -671,7 +798,7 @@ export function SettingsPanel({
               Your companions grow with you. As you talk, complete tasks, and create memories together, they unlock cosmetic upgrades.
             </div>
             {progression ? (
-              (["pix", "kai", "ren", "bubbles", "capy", "ivy"] as CompanionId[]).map((id) => {
+              (["pix", "kai", "ren", "bubbles", "capy", "skales"] as CompanionId[]).map((id) => {
                 const p = progression[id];
                 if (!p) return null;
                 const depthPct = Math.round(p.depth * 100);

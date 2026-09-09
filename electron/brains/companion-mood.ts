@@ -41,7 +41,7 @@ const PERSONALITIES: Record<CompanionId, CompanionPersonality> = {
   ren: { baseEnergy: 0.7, baseWarmth: 0.6, basePlayfulness: 0.5, baseFocus: 0.6 },
   bubbles: { baseEnergy: 0.85, baseWarmth: 0.75, basePlayfulness: 0.95, baseFocus: 0.45 },
   capy: { baseEnergy: 0.5, baseWarmth: 0.85, basePlayfulness: 0.4, baseFocus: 0.7 },
-  ivy: { baseEnergy: 0.7, baseWarmth: 0.8, basePlayfulness: 0.5, baseFocus: 0.75 },
+  skales: { baseEnergy: 0.85, baseWarmth: 0.7, basePlayfulness: 0.75, baseFocus: 0.8 },
 };
 
 /** Compute a mood label from mood values. */
@@ -69,7 +69,7 @@ class CompanionMoodBrain {
       ren: this.baseMood("ren"),
       bubbles: this.baseMood("bubbles"),
       capy: this.baseMood("capy"),
-      ivy: this.baseMood("ivy"),
+      skales: this.baseMood("skales"),
     };
   }
 

@@ -1227,6 +1227,29 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
     };
   }
 
+  // Bare "double click" / "right click" — act at the CURRENT cursor position
+  // (the executor resolves the live cursor; never a blind corner click).
+  const bareClickVar = text.match(/^(double|right)\s+click$/);
+  if (bareClickVar) {
+    const variant = bareClickVar[1] === "double" ? "double" : "right";
+    return {
+      ...base,
+      action: "click",
+      target: "cursor",
+      query: variant,
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "click",
+        target: "cursor",
+        params: { variant },
+        description: variant === "double" ? "Double-click at the cursor" : "Right-click at the cursor",
+      }],
+      summary: variant === "double" ? "Double-clicked" : "Right-clicked",
+      confidence: 0.9,
+    };
+  }
+
   // ─── FILE OPERATIONS ─────────────────────────────────────────────────────
   const folderCreate = text.match(/^(?:create|make|new)\s+(?:a\s+)?(?:new\s+)?(?:folder|directory)\s+(?:called\s+|named\s+)?(.+)$/);
   if (folderCreate) {

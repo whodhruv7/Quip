@@ -34,6 +34,18 @@ export interface ProactiveSuggestion {
   timestamp: number;
 }
 
+/** Persisted settings shape (userData/quip-proactive.json). */
+export interface ProactivePersistedState {
+  enabled: boolean;
+  lastFired: Partial<Record<ProactiveTrigger, number>>;
+}
+
+/** Injectable persistence so the engine stays testable without Electron. */
+export interface ProactivePersistence {
+  load(): ProactivePersistedState | null;
+  save(state: ProactivePersistedState): void;
+}
+
 type SuggestionListener = (s: ProactiveSuggestion) => void;
 
 // Cooldown per trigger — prevents repeated firing
@@ -74,6 +86,51 @@ class ProactiveEngine {
   private lastFired = new Map<ProactiveTrigger, number>();
   private sessionStartMs = Date.now();
   private timer: NodeJS.Timeout | null = null;
+  /** Settings toggle — "Let Quip check in on me". Battery warnings stay on. */
+  private enabled = true;
+  private persistence: ProactivePersistence | null = null;
+  private saveTimer: NodeJS.Timeout | null = null;
+
+  /** Wire persistence (userData JSON). Restores cooldowns + the toggle so a
+   *  restart cannot reset them (no "fires right after every relaunch"). */
+  configure(persistence: ProactivePersistence): void {
+    this.persistence = persistence;
+    const state = persistence.load();
+    if (state) {
+      if (typeof state.enabled === "boolean") this.enabled = state.enabled;
+      if (state.lastFired) {
+        for (const [k, v] of Object.entries(state.lastFired)) {
+          if (typeof v === "number") this.lastFired.set(k as ProactiveTrigger, v);
+        }
+      }
+    }
+  }
+
+  isEnabled(): boolean {
+    return this.enabled;
+  }
+
+  setEnabled(value: boolean): void {
+    this.enabled = value === true;
+    this.persist();
+  }
+
+  private persist(): void {
+    if (!this.persistence) return;
+    // Debounced — fire() can burst.
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = null;
+      try {
+        this.persistence!.save({
+          enabled: this.enabled,
+          lastFired: Object.fromEntries(this.lastFired.entries()),
+        });
+      } catch {
+        /* best effort */
+      }
+    }, 500);
+  }
 
   start(): void {
     if (this.timer) return;
@@ -192,11 +249,15 @@ class ProactiveEngine {
   }
 
   private fire(suggestion: ProactiveSuggestion): void {
+    // The settings toggle gates every nudge EXCEPT critical battery —
+    // that one protects unsaved work, not cuteness.
+    if (!this.enabled && suggestion.trigger !== "battery_critical") return;
     const last = this.lastFired.get(suggestion.trigger) ?? 0;
     const cooldown = TRIGGER_COOLDOWNS_MS[suggestion.trigger];
     if (Date.now() - last < cooldown) return; // Still in cooldown
 
     this.lastFired.set(suggestion.trigger, Date.now());
+    this.persist();
     this.listeners.forEach((l) => l(suggestion));
   }
 }

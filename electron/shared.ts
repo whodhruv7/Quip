@@ -20,6 +20,7 @@ export const IPC = {
   // Task execution
   TASK_EXECUTE: "quip:task-execute",
   TASK_PROGRESS: "quip:task-progress",
+  TASK_CANCEL: "quip:task-cancel",
 
   // Device brain
   GET_DEVICE_PROFILE: "quip:get-device-profile",
@@ -60,12 +61,17 @@ export const IPC = {
   GET_MODEL_STATUS: "quip:get-model-status",
   SAVE_MODEL_KEYS: "quip:save-model-keys",
   TEST_MODEL_CONNECTION: "quip:test-model-connection",
+  RESOLVE_PROVIDER: "quip:resolve-provider",
 
   // Companion visibility + app lifecycle (settings-controlled)
   SET_COMPANION_VISIBLE: "quip:set-companion-visible",
   GET_COMPANION_VISIBLE: "quip:get-companion-visible",
   COMPANION_VISIBLE_CHANGED: "quip:companion-visible-changed",
   QUIT_APP: "quip:quit-app",
+
+  // Proactive check-ins toggle (Settings → Desktop)
+  GET_CHECKINS_ENABLED: "quip:get-checkins-enabled",
+  SET_CHECKINS_ENABLED: "quip:set-checkins-enabled",
 
   // Permission system
   GET_PERMISSIONS: "quip:get-permissions",
@@ -137,6 +143,10 @@ export interface TaskProgressPayload {
   step: number;
   total: number;
   description: string;
+  /** What the agent is actually doing — drives the companion's honest
+   *  state animations (planning → executing → observing/verifying). */
+  phase?: "planning" | "executing" | "observing" | "verifying";
+  status?: "running" | "done" | "failed" | "skipped";
 }
 
 export interface TaskResultPayload {
@@ -216,22 +226,22 @@ export interface CommunicationDNAPayload {
 // ─── Phase 3 payloads ──────────────────────────────────────────────────────
 
 export interface SpawnCompanionPayload {
-  companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy";
+  companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales";
   headless?: boolean;
   autoTask?: string;
 }
 
 export interface SwarmInstance {
   winId: number;
-  companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy";
+  companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales";
   headless: boolean;
   spawnedAt: number;
   label: string;
 }
 
 export interface InterCompanionMsgPayload {
-  from: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy";
-  to: "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy";
+  from: "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales";
+  to: "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales";
   message: string;
 }
 

@@ -38,6 +38,8 @@ export interface ChatAPI {
 export interface TaskAPI {
   executeTask: (payload: { requestId: string; command: string; }) => Promise<TaskResultPayload>;
   onTaskProgress: (cb: (p: TaskProgress) => void) => () => void;
+  cancelTask: () => void;
+  onProactiveSuggestion: (cb: (s: { trigger: string; message: string; actionLabel?: string; actionId?: string; timestamp: number }) => void) => () => void;
 }
 
 export interface PermissionAPI {
@@ -86,12 +88,17 @@ export interface ModelSetupAPI {
     apiKey?: string;
     model?: string;
   }) => Promise<{ ok: boolean; latencyMs: number; message: string; kind: string }>;
+  resolveProvider: () => Promise<
+    Array<{ provider: "openrouter" | "groq"; configured: boolean; ok: boolean; latencyMs: number; message: string; kind: string; model: string }>
+  >;
 }
 
 export interface LifecycleAPI {
   getCompanionVisible: () => Promise<boolean>;
   setCompanionVisible: (visible: boolean) => Promise<boolean>;
   onCompanionVisibleChanged: (cb: (visible: boolean) => void) => () => void;
+  getCheckInsEnabled: () => Promise<boolean>;
+  setCheckInsEnabled: (enabled: boolean) => Promise<boolean>;
   quitApp: () => void;
 }
 

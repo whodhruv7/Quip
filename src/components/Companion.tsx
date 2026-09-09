@@ -9,9 +9,11 @@
 //   Ren     — purple/gold, bold explorer, dark body
 //   Bubbles — teal/sky, joyful blob, wobbly round body
 //   Capy    — warm tan, calm capybara, cozy body with little ears
-//   Ivy     — green/mint, loyal gecko helper, body with tail curl
+//   Skales  — lime gecko, the original Skales buddy, body with tail curl
 //
-// Each has: idle, hover, thinking, responding, sleeping states.
+// Each has: idle, hover, thinking, responding, sleeping states — plus the
+// agent lifecycle states: planning, working, observing, verifying, waiting,
+// success, error, cancelled.
 
 import { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -73,6 +75,31 @@ const pixFloat: Record<PixState, any> = {
     x: [0, -1.8, 1.8, -1.2, 0],
     y: [0, -1, 0],
     transition: { duration: 0.5, repeat: 1, ease: "easeInOut" },
+  },
+  // Resolving the task into steps — a quick, smart pulse before acting.
+  planning: {
+    y: [0, -2.5, 0],
+    scale: [1, 1.03, 1],
+    transition: { duration: 1.3, repeat: Infinity, ease: "easeInOut" },
+  },
+  // Reading the screen/page/results — attentive little look-around lean.
+  observing: {
+    y: [0, -1.5, 0],
+    rotate: [0, 2, 0, -2, 0],
+    scale: 1.02,
+    transition: { duration: 2.2, repeat: Infinity, ease: "easeInOut" },
+  },
+  // Double-checking a result before reporting success — a small sure nod.
+  verifying: {
+    y: [0, -1, 0, -1, 0],
+    scale: [1, 1.015, 1],
+    transition: { duration: 1.6, repeat: Infinity, ease: "easeInOut" },
+  },
+  // Cancelled — a gentle droop, then calm again. Never dramatic.
+  cancelled: {
+    y: [0, 2.5, 0.5],
+    scale: [1, 0.96, 0.99],
+    transition: { duration: 0.7, repeat: 1, ease: "easeInOut" },
   },
 };
 
@@ -315,7 +342,7 @@ function CapyBody({ t, asleep, blinking, eyeOffset = { x: 0, y: 0 } }: { t: Comp
   );
 }
 
-function IvyBody({ t, asleep, blinking, eyeOffset = { x: 0, y: 0 } }: { t: CompanionTheme; asleep: boolean; blinking: boolean; eyeOffset?: { x: number; y: number } }) {
+function SkalesBody({ t, asleep, blinking, eyeOffset = { x: 0, y: 0 } }: { t: CompanionTheme; asleep: boolean; blinking: boolean; eyeOffset?: { x: number; y: number } }) {
   return (
     <>
       {/* Sprout antenna — a tiny leaf */}
@@ -511,7 +538,7 @@ export function Companion({ id, state, size = 80, unlockedCosmetics = [], moodSp
     id === "ren" ? RenBody :
     id === "bubbles" ? BubblesBody :
     id === "capy" ? CapyBody :
-    id === "ivy" ? IvyBody :
+    id === "skales" ? SkalesBody :
     PixBody;
 
   // Scale the float animation duration by mood speed
@@ -765,16 +792,16 @@ function Cosmetics({ id, unlocked, theme }: { id: CompanionId; unlocked: string[
         </g>
       )}
 
-      {/* Ivy: Vine Wrap (tier 1) */}
-      {id === "ivy" && unlocked.includes("ivy-tier1") && (
+      {/* Skales: Vine Wrap (tier 1) */}
+      {id === "skales" && unlocked.includes("skales-tier1") && (
         <g>
           <path d="M 5 20 Q 3 17 5 14" fill="none" stroke="#4ade80" strokeWidth="0.8" strokeLinecap="round" opacity="0.85" />
           <path d="M 4.2 16.4 Q 2.6 15.6 2.4 14 Q 4 14.2 4.6 15.4 Z" fill="#4ade80" opacity="0.85" />
         </g>
       )}
 
-      {/* Ivy: Berry Charm (tier 2) */}
-      {id === "ivy" && unlocked.includes("ivy-tier2") && (
+      {/* Skales: Berry Charm (tier 2) */}
+      {id === "skales" && unlocked.includes("skales-tier2") && (
         <motion.g
           animate={{ opacity: [0.5, 1, 0.5] }}
           transition={{ duration: 2.4, repeat: Infinity }}
@@ -787,7 +814,7 @@ function Cosmetics({ id, unlocked, theme }: { id: CompanionId; unlocked: string[
 
       {/* Tier 3 — subtle aura boost for all companions */}
       {(unlocked.includes("pix-tier3") || unlocked.includes("kai-tier3") || unlocked.includes("ren-tier3") ||
-        unlocked.includes("bubbles-tier3") || unlocked.includes("capy-tier3") || unlocked.includes("ivy-tier3")) && (
+        unlocked.includes("bubbles-tier3") || unlocked.includes("capy-tier3") || unlocked.includes("skales-tier3")) && (
         <motion.circle
           cx="16"
           cy="16"

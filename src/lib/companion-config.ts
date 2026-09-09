@@ -1,8 +1,8 @@
 // Quip V2 — Companion theme definitions.
 //
 // All 6 companions live in ONE system. Pix, Kai and Ren are Quip originals;
-// Bubbles, Capy and Ivy joined the family from the Skales companion roster,
-// redrawn in Quip's own pixel-sprite visual language.
+// Bubbles, Capy and Skales are the REAL Skales companions (the pets/ roster in
+// github.com/skalesapp/skales), redrawn in Quip's own pixel-sprite language.
 //
 // Used by App.tsx, TopBar, ChatInput, ChatMessage, etc.
 
@@ -89,17 +89,19 @@ export const COMPANIONS: CompanionTheme[] = [
     mouthThinking: "#FFD9A8",
   },
   {
-    id: "ivy",
-    name: "Ivy",
-    subtitle: "The Loyal Helper",
-    primary: "#86E3A8",
-    secondary: "#C8F7D8",
-    dark: "#0B1410",
-    eyeColor: "#86E3A8",
-    cheekColor: "rgba(134,227,168,0.40)",
-    auraA: "rgba(134,227,168,0.30)",
-    auraB: "rgba(200,247,216,0.16)",
-    mouthThinking: "#C8F7D8",
+    // Skales — the actual original Skales companion (skalesapp/skales pets/),
+    // redrawn in Quip's own pixel-sprite visual identity.
+    id: "skales",
+    name: "Skales",
+    subtitle: "The Original Gecko",
+    primary: "#A3E635",
+    secondary: "#D9F99D",
+    dark: "#0C1408",
+    eyeColor: "#A3E635",
+    cheekColor: "rgba(217,249,157,0.42)",
+    auraA: "rgba(163,230,53,0.28)",
+    auraB: "rgba(217,249,157,0.16)",
+    mouthThinking: "#D9F99D",
   },
 ];
 

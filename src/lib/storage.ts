@@ -11,7 +11,7 @@ const PREFS_KEY = "quip:prefs";
 
 // All valid companion ids (kept in sync with companion-config).
 const VALID_COMPANION_IDS = new Set<string>([
-  "pix", "kai", "ren", "bubbles", "capy", "ivy",
+  "pix", "kai", "ren", "bubbles", "capy", "skales",
 ]);
 
 function currentKey(cid: CompanionId) {
@@ -43,6 +43,10 @@ export function loadPrefs(): QuipPrefs {
     if ((parsed.companionId as string) === "zee") {
       parsed.companionId = "ren";
     }
+    // Migration: "ivy" was a stand-in — the real Skales gecko is "skales" now.
+    if ((parsed.companionId as string) === "ivy") {
+      parsed.companionId = "skales";
+    }
     if (parsed.companionId && !VALID_COMPANION_IDS.has(parsed.companionId)) {
       delete parsed.companionId;
     }
@@ -72,6 +76,18 @@ export function loadCurrentMessages(cid: CompanionId): ChatMessage[] {
         try {
           localStorage.setItem(currentKey("ren"), raw);
           localStorage.removeItem(`${CURRENT_KEY_PREFIX}zee`);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    // Migration: "ivy" messages belong to the real Skales gecko now.
+    if (!raw && cid === "skales") {
+      raw = localStorage.getItem(`${CURRENT_KEY_PREFIX}ivy`);
+      if (raw) {
+        try {
+          localStorage.setItem(currentKey("skales"), raw);
+          localStorage.removeItem(`${CURRENT_KEY_PREFIX}ivy`);
         } catch {
           /* ignore */
         }

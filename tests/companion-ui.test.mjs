@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { COMPANIONS, getCompanion } from "../dist-test/src/lib/companion-config.js";
 
 // Pix, Kai, Ren are Quip originals; Bubbles, Capy, Ivy joined from Skales.
-const EXPECTED_IDS = ["pix", "kai", "ren", "bubbles", "capy", "ivy"];
+const EXPECTED_IDS = ["pix", "kai", "ren", "bubbles", "capy", "skales"];
 
 test("Quip has exactly 6 companions", () => {
   assert.equal(COMPANIONS.length, 6);
@@ -25,10 +25,10 @@ test("originals Pix, Kai and Ren remain functional (ren replaced old 'zee')", ()
   assert.equal(getCompanion("ren").id, "ren");
 });
 
-test("Skales-origin companions (bubbles, capy, ivy) are integrated as first-class companions", () => {
+test("The real Skales companions (bubbles, capy, skales) are first-class — exactly 6 total", () => {
   assert.equal(getCompanion("bubbles").name, "Bubbles");
   assert.equal(getCompanion("capy").name, "Capy");
-  assert.equal(getCompanion("ivy").name, "Ivy");
+  assert.equal(getCompanion("skales").name, "Skales");
 });
 
 test("every companion has complete theme fields in Quip's palette", () => {

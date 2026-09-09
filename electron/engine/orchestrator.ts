@@ -23,6 +23,16 @@ import { executeTool, type ToolResult, type ToolContext } from "./tool-registry"
 import { contextStore } from "./context-store";
 import type { ModelRouter } from "../system/model-router";
 
+export interface ProgressUpdate {
+  step: number;
+  total: number;
+  description: string;
+  status: "running" | "done" | "failed" | "skipped";
+  /** What the agent is actually doing right now — drives the companion's
+   *  honest state animation (never shows WORKING unless really executing). */
+  phase?: "planning" | "executing" | "observing" | "verifying";
+}
+
 export interface ExecutionResult {
   success: boolean;
   summary: string;
@@ -30,13 +40,8 @@ export interface ExecutionResult {
   stepsCompleted: number;
   stepsTotal: number;
   durationMs: number;
-}
-
-export interface ProgressUpdate {
-  step: number;
-  total: number;
-  description: string;
-  status: "running" | "done" | "failed" | "skipped";
+  /** True when the user cancelled the task (Stop). */
+  cancelled?: boolean;
 }
 
 interface ExecuteOptions {
@@ -48,11 +53,28 @@ interface ExecuteOptions {
   modelAssist?: {
     complete(systemPrompt: string, history: { role: "user" | "assistant"; content: string }[], timeoutMs?: number): Promise<string>;
   };
+  /** Cancellation token — set aborted=true to stop before the next step.
+   *  Already-running steps finish (interrupting mid-action is unsafe). */
+  signal?: { aborted: boolean };
 }
 
 const ASSIST_SCHEMA = `Reply with ONLY compact JSON, no prose:
 {"action":"open|play|search|navigate|type|click|scroll|close|focus|clipboard|read|chat","target":"short target name","query":"search/song/file text or empty","url":"https URL if navigating, else empty"}
 Rules: "open VS Code" → open,target:"vs code". "open YouTube and play X" → play,target:"youtube",query:"X". Open installed desktop apps as apps, websites as websites.`;
+
+/** Steps that READ the screen/world — the honest OBSERVING state. */
+const OBSERVING_ACTIONS = new Set([
+  "screen",
+  "windows_list",
+  "read_page",
+  "site_search",
+  "search_web",
+  "search_youtube",
+]);
+
+function phaseForStep(action: string): "observing" | "executing" {
+  return OBSERVING_ACTIONS.has(action) ? "observing" : "executing";
+}
 
 /**
  * Actions that may be retried after a failure — loading/reading a state is
@@ -158,7 +180,7 @@ class Orchestrator {
       };
     }
 
-    // ─── Step 2: Risk-gated permission check ───────────────────────────────
+    // ─── Step 2: Risk-gated permission check ───────────────────────────
     const planRisk: RiskLevel = permissionSystem.stepsRisk(intent.steps);
 
     if (permissionSystem.stepsNeedApproval(intent.steps)) {
@@ -171,6 +193,7 @@ class Orchestrator {
       if (!approved) {
         return {
           success: false,
+          cancelled: true,
           summary: "Cancelled — you declined the task.",
           notes: ["You declined this task"],
           stepsCompleted: 0,
@@ -187,12 +210,26 @@ class Orchestrator {
     let lastEvidence: string[] = [];
 
     for (let i = 0; i < intent.steps.length; i++) {
+      // ── Cancellation: stop BEFORE starting any new action ───────────
+      if (opts.signal?.aborted) {
+        return {
+          success: false,
+          cancelled: true,
+          summary: `Stopped — completed ${stepsCompleted} of ${intent.steps.length} steps before you cancelled.`,
+          notes: [...notes, "Cancelled by the user"],
+          stepsCompleted,
+          stepsTotal: intent.steps.length,
+          durationMs: Date.now() - t0,
+        };
+      }
+
       const step = intent.steps[i];
       opts.onProgress?.({
         step: i + 1,
         total: intent.steps.length,
         description: step.description,
         status: "running",
+        phase: phaseForStep(step.action),
       });
 
       // Per-step confirmation for medium/dangerous actions in ask_every_time

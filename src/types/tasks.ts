@@ -38,6 +38,8 @@ export interface TaskResultPayload {
   success: boolean;
   summary: string;
   notes: string[];
+  /** True when the user stopped the task (Stop button / cancellation). */
+  cancelled?: boolean;
   plan: TaskPlan;
 }
 
@@ -46,4 +48,7 @@ export interface TaskProgress {
   step: number;
   total: number;
   description: string;
+  /** What the agent is actually doing — drives honest companion states. */
+  phase?: "planning" | "executing" | "observing" | "verifying";
+  status?: "running" | "done" | "failed" | "skipped";
 }

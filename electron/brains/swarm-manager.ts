@@ -16,10 +16,22 @@
 // SwarmManager wraps the window management logic for clean separation.
 // -----------------------------------------------------------------------------
 
-import { BrowserWindow, screen } from "electron";
-import path from "node:path";
+import { BrowserWindow } from "electron";
 
-export type CompanionId = "pix" | "kai" | "ren" | "bubbles" | "capy" | "ivy";
+/**
+ * The SINGLE window factory — injected by main.ts. Every companion window
+ * must be created through it so close-interception, crash recovery,
+ * self-heal, visibility control, position persistence and broadcast
+ * delivery apply to ALL companions (root-cause fix: swarm windows used to
+ * bypass every stability system).
+ */
+export type CompanionWindowFactory = (
+  companionId: CompanionId,
+  offsetX?: number,
+  offsetY?: number
+) => BrowserWindow;
+
+export type CompanionId = "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales";
 
 export interface SwarmInstance {
   winId: number;
@@ -43,78 +55,53 @@ const COMPANION_LABELS: Record<CompanionId, string> = {
   ren: "Ren — Empathetic",
   bubbles: "Bubbles — Playful",
   capy: "Capy — Calm",
-  ivy: "Ivy — Reliable",
+  skales: "Skales — The Original",
 };
 
 class SwarmManager {
   private instances = new Map<number, SwarmInstance>();
-  private preloadPath = "";
-  private distPath = "";
-  private isDev = process.env.NODE_ENV === "development";
-  private viteUrl = process.env.VITE_DEV_SERVER_URL ?? "http://localhost:5173";
+  private windowFactory: CompanionWindowFactory | null = null;
   private messageListeners = new Set<(from: CompanionId, to: CompanionId, message: string) => void>();
 
-  /** Called once during bootstrap to set asset paths. */
-  configure(preloadPath: string, distPath: string): void {
-    this.preloadPath = preloadPath;
-    this.distPath = distPath;
+  /**
+   * Inject the single window factory (main.createWindow). Every spawned
+   * companion then inherits ALL lifecycle guarantees — one factory, one
+   * set of maps, zero duplicated window systems.
+   */
+  setWindowFactory(factory: CompanionWindowFactory): void {
+    this.windowFactory = factory;
   }
 
-  /** Spawn a new companion window. Returns the window ID. */
+  /**
+   * Spawn a new companion through the injected factory.
+   * Headless spawns no window at all (an invisible zombie window would
+   * fight the self-heal loop — headless companions are registry-only).
+   * Returns the window ID, or -1 for headless instances.
+   */
   spawn(companionId: CompanionId, opts: SpawnOptions = {}): number {
     const { headless = false, offsetX = 0, offsetY = 0, autoTask } = opts;
 
+    if (headless || !this.windowFactory) {
+      // Registry-only instance — no window, no sprite, no lifecycle risk.
+      const ghostId = -1 - this.instances.size;
+      this.instances.set(ghostId, {
+        winId: ghostId,
+        companionId,
+        headless: true,
+        spawnedAt: Date.now(),
+        label: COMPANION_LABELS[companionId],
+      });
+      return ghostId;
+    }
+
+    // Stack extra companions so they never sit exactly on top of each other.
     const existingCount = this.instances.size;
-    const area = screen.getPrimaryDisplay().workArea;
-
-    // Spawned companions boot as desktop companions too (small sprite window).
-    const w = 132;
-    const h = 176;
-    const baseX = area.x + area.width - w - 20 + offsetX + existingCount * 40;
-    const baseY = area.y + area.height - h - 20 + offsetY + existingCount * 40;
-
-    const win = new BrowserWindow({
-      width: w,
-      height: h,
-      x: Math.min(baseX, area.x + area.width - w),
-      y: Math.min(baseY, area.y + area.height - h),
-      frame: false,
-      transparent: true,
-      resizable: false,
-      maximizable: false,
-      minimizable: false,
-      fullscreenable: false,
-      hasShadow: false,
-      skipTaskbar: true,
-      alwaysOnTop: true,
-      show: !headless,
-      backgroundColor: "#00000000",
-      webPreferences: {
-        preload: this.preloadPath,
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: false,
-      },
-    });
-
-    if (!headless) {
-      win.setAlwaysOnTop(true, "screen-saver");
-      win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-      win.showInactive();
-      win.moveTop();
-    }
-
-    // Load the app
-    const url = this.isDev
-      ? `${this.viteUrl}?companion=${companionId}`
-      : undefined;
-    const file = !this.isDev ? path.join(this.distPath, "index.html") : undefined;
-
-    if (url) {
-      win.loadURL(url);
-    } else if (file) {
-      win.loadFile(file, { search: `companion=${companionId}` });
-    }
+    const stack = existingCount * 40;
+    const win = this.windowFactory(
+      companionId,
+      offsetX + stack,
+      offsetY + stack
+    );
 
     // If autoTask specified, send it after page load
     if (autoTask) {
@@ -128,7 +115,7 @@ class SwarmManager {
     const instance: SwarmInstance = {
       winId: win.id,
       companionId,
-      headless,
+      headless: false,
       spawnedAt: Date.now(),
       label: COMPANION_LABELS[companionId],
     };
@@ -152,9 +139,10 @@ class SwarmManager {
     return this.instances.get(winId)?.companionId ?? null;
   }
 
-  /** Get the BrowserWindow for a companion (first match). */
+  /** Get the BrowserWindow for a companion (first match, live windows only). */
   getWindowForCompanion(companionId: CompanionId): BrowserWindow | null {
     for (const [winId, inst] of this.instances.entries()) {
+      if (inst.headless || winId < 0) continue;
       if (inst.companionId === companionId) {
         const win = BrowserWindow.fromId(winId);
         if (win && !win.isDestroyed()) return win;
@@ -189,9 +177,10 @@ class SwarmManager {
     return true;
   }
 
-  /** Broadcast a message to all running companions. */
+  /** Broadcast a message to all running (windowed) companions. */
   broadcast(channel: string, data: unknown): void {
-    for (const [winId] of this.instances.entries()) {
+    for (const [winId, inst] of this.instances.entries()) {
+      if (inst.headless || winId < 0) continue;
       const win = BrowserWindow.fromId(winId);
       if (win && !win.isDestroyed()) {
         win.webContents.send(channel, data);
@@ -199,11 +188,16 @@ class SwarmManager {
     }
   }
 
-  /** Dismiss (close) a companion window. */
+  /** Dismiss a companion window. destroy() bypasses the close-interception
+   *  (which intentionally hides the PRIMARY companion on Alt+F4) — dismissal
+   *  must actually remove the extra sprite, and its "closed" event must fire
+   *  so the instance registry stays truthful. */
   dismiss(winId: number): void {
-    const win = BrowserWindow.fromId(winId);
-    if (win && !win.isDestroyed()) {
-      win.close();
+    if (winId >= 0) {
+      const win = BrowserWindow.fromId(winId);
+      if (win && !win.isDestroyed()) {
+        win.destroy();
+      }
     }
     this.instances.delete(winId);
   }
