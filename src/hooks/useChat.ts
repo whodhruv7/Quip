@@ -187,7 +187,9 @@ export function useChat(
       }
 
       if (taskResult && taskResult.summary && !taskResult.plan?.isChat) {
-        const trustNote = taskResult.notes.join("\n");
+        // Honest failure reporting: plain-language reasons for what went wrong.
+        const failureLines = (taskResult.failures ?? []).filter(Boolean);
+        const trustNote = [...failureLines, ...taskResult.notes].filter(Boolean).join("\n");
         const cancelled = taskResult.cancelled === true;
         const assistantMsg: ChatMessage = {
           id: uid(),

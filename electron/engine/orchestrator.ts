@@ -21,6 +21,7 @@ import { parseIntentV2, type ParsedIntent, type TaskStep } from "./intent-parser
 import { permissionSystem, riskForStep, type ApprovalRequest, type RiskLevel } from "./permission-modes";
 import { executeTool, type ToolResult, type ToolContext } from "./tool-registry";
 import { contextStore } from "./context-store";
+import { runAgentLoop, agentBrain } from "./agent-loop";
 import type { ModelRouter } from "../system/model-router";
 
 export interface ProgressUpdate {
@@ -40,6 +41,10 @@ export interface ExecutionResult {
   stepsCompleted: number;
   stepsTotal: number;
   durationMs: number;
+  /** Plain-language reasons for every step that failed (spec #35). */
+  failures?: string[];
+  /** True when the agent loop answered without tools — treat as chat. */
+  chatReply?: string;
   /** True when the user cancelled the task (Stop). */
   cancelled?: boolean;
 }
@@ -168,8 +173,23 @@ class Orchestrator {
       `contextChars=${contextSummary.length} toolCount=${intent.steps.length}`
     );
 
-    // Not a task → pure chat
+    // Not a confident deterministic task → let the AGENT try with real tools
+    // before falling back to plain chat. Gated by a cheap verb heuristic so
+    // obvious conversation never pays an extra model call. This is the tier
+    // that makes complex goals ("copy this and save it to a file", Hinglish
+    // commands the parser missed) actually DO something. When no brain is
+    // bound (tests) or the model is unreachable, falls back to chat honestly.
     if (!intent.isTask || intent.steps.length === 0) {
+      if (this.looksLikeTask(command) || intent.needsModelAssist) {
+        const agentResult = await this.runAgentFallback(command, opts, ctx, "planning");
+        if (agentResult) {
+          if (agentResult.chatReply) {
+            // Agent said "this is conversation" — hand back to chat.
+            return { ...agentResult, chatReply: undefined };
+          }
+          return agentResult;
+        }
+      }
       return {
         success: true,
         summary: "",
@@ -281,23 +301,97 @@ class Orchestrator {
       }
     }
 
-    // ─── Step 4: Verified report ───────────────────────────────────────────
+    // ─── Step 4: Agent recovery when the deterministic plan went 0-for-N ───
+    if (stepsCompleted === 0 && !allSuccess && !opts.signal?.aborted) {
+      const recovered = await this.runAgentFallback(command, opts, ctx, "recovery");
+      if (recovered && !recovered.chatReply) {
+        return recovered;
+      }
+    }
+
+    // ─── Step 5: Verified report ──────────────────────────────────────────
+    const failures = notes
+      .filter((n) => /couldn't|failed|not found|missing|denied|declined/i.test(n))
+      .slice(0, 3);
     const summary = this.generateSummary(intent, allSuccess, stepsCompleted, notes, lastEvidence);
 
     return {
       success: allSuccess,
       summary,
       notes,
+      ...(failures.length ? { failures } : {}),
       stepsCompleted,
       stepsTotal: intent.steps.length,
       durationMs: Date.now() - t0,
     };
   }
 
-  /** Cheap lexical check: does this message look like a command? */
+  /** Cheap lexical check: does this message look like a command? Includes
+   *  the Hinglish imperative verbs the deterministic parser may have missed. */
   private looksLikeTask(command: string): boolean {
     const t = command.toLowerCase();
-    return /\b(open|launch|start|play|search|close|focus|type|press|click|scroll|copy|paste|read|goto|go to|find|kill|navigate)\b/.test(t);
+    return /\b(open|launch|start|play|search|close|focus|type|press|click|scroll|copy|paste|read|goto|go to|find|kill|navigate|run|write|save|delete|download|check|look at my screen|screenshot)\b/.test(t) ||
+      /\b(kholo|khol do|karo|kar do|dekho|dikhao|bhejo|likho|likh do|chalao|bajao|band karo|dhundo|dhoondo|paste karo|copy karo|scroll karo|click karo|type karo|search karo|save karo|check karo)\b/.test(t);
+  }
+
+  /**
+   * The agentic escalation: hand the goal to the tool-calling loop. Returns
+   * null when the agent tier is unavailable (no brain bound / provider
+   * unreachable) so the caller can fall back to its previous behavior.
+   */
+  private async runAgentFallback(
+    command: string,
+    opts: ExecuteOptions,
+    ctx: ToolContext,
+    reason: "planning" | "recovery"
+  ): Promise<ExecutionResult | null> {
+    try {
+      const result = await runAgentLoop({
+        goal: command,
+        platform: opts.platform,
+        brain: agentBrain,
+        signal: opts.signal,
+        onProgress: (update) =>
+          opts.onProgress?.({
+            step: update.step,
+            total: update.step + 2,
+            description: update.description,
+            status: update.status,
+            phase: update.phase,
+          }),
+      });
+      console.log(
+        `agent-loop reason=${reason} tools=${result.toolsUsed.length} ok=${result.success} ` +
+        `chat=${result.isChat} ms=${result.durationMs}`
+      );
+      if (result.isChat) {
+        return {
+          success: true,
+          summary: "",
+          notes: [],
+          stepsCompleted: 0,
+          stepsTotal: 0,
+          durationMs: result.durationMs,
+          chatReply: result.chatReply,
+        };
+      }
+      return {
+        success: result.success,
+        summary: result.cancelled
+          ? `Stopped — ${result.summary}`
+          : result.summary || "I tried, but nothing changed.",
+        notes: result.notes,
+        failures: result.failures,
+        stepsCompleted: result.toolsUsed.length - result.failures.length,
+        stepsTotal: result.toolsUsed.length,
+        durationMs: result.durationMs,
+        cancelled: result.cancelled,
+      };
+    } catch (err: any) {
+      // No brain bound (tests) or provider dead — honest fallback, no crash.
+      console.log(`agent-loop unavailable: ${String(err?.message ?? err)}`);
+      return null;
+    }
   }
 
   /** Build a full intent from model-assist JSON — or fall back to the

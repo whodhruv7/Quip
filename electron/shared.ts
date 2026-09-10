@@ -60,6 +60,8 @@ export const IPC = {
   // Model router
   GET_MODEL_STATUS: "quip:get-model-status",
   SAVE_MODEL_KEYS: "quip:save-model-keys",
+  GET_PROVIDER_CONFIG: "quip:get-provider-config",
+  SET_PROVIDER_CONFIG: "quip:set-provider-config",
   TEST_MODEL_CONNECTION: "quip:test-model-connection",
   RESOLVE_PROVIDER: "quip:resolve-provider",
 
@@ -154,6 +156,8 @@ export interface TaskResultPayload {
   success: boolean;
   summary: string;
   notes: string[];
+  /** Plain-language reasons for every failed step — honest failure UI. */
+  failures?: string[];
   plan: {
     id: string;
     intent: { type: string; raw: string };

@@ -91,6 +91,17 @@ export interface ModelSetupAPI {
   resolveProvider: () => Promise<
     Array<{ provider: "openrouter" | "groq"; configured: boolean; ok: boolean; latencyMs: number; message: string; kind: string; model: string }>
   >;
+  getProviderConfig: () => Promise<{
+    primary: "groq" | "openrouter";
+    groqEnabled: boolean;
+    openrouterEnabled: boolean;
+    visionModel: string | null;
+  }>;
+  setProviderConfig: (payload: {
+    primary: "groq" | "openrouter";
+    groqEnabled: boolean;
+    openrouterEnabled: boolean;
+  }) => Promise<{ ok: boolean; message: string; active?: string }>;
 }
 
 export interface LifecycleAPI {

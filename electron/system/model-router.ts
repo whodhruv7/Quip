@@ -3,14 +3,24 @@
 // One place that knows how to talk to LLM providers.
 //
 // Reliability strategy:
-//   1. Provider order comes from QUIP_PRIMARY_PROVIDER (default: whichever key
-//      exists — OpenRouter preferred because Groq free keys 401 often).
-//   2. On transport failure, retry once (transient network), then try the
+//   1. Provider order: QUIP_PRIMARY_PROVIDER env (set from Settings) →
+//      GROQ FIRST when a Groq key exists (user preference: the Groq key is
+//      THE key — fastest inference, vision-capable llama-4 models),
+//      OpenRouter as the automatic fallback.
+//   2. Per-provider kill switches from Settings: QUIP_GROQ_ENABLED=0 removes
+//      Groq from the chain entirely, QUIP_OPENROUTER_ENABLED=0 removes
+//      OpenRouter. A disabled provider is never dialed.
+//   3. On transport failure, retry once (transient network), then try the
 //      next provider.
-//   3. TLS/certificate errors are retried through Electron's net.fetch which
+//   4. TLS/certificate errors are retried through Electron's net.fetch which
 //      uses the OS certificate store (fixes corporate proxies / AV inspection).
-//   4. Errors carry a stable `kind` so IPC can show precise, calm messages.
-//   5. Secrets are NEVER logged raw — only masked diagnostics.
+//   5. Errors carry a stable `kind` so IPC can show precise, calm messages.
+//   6. reload() re-reads the environment after Settings changes — the
+//      singleton never needs an app restart to switch providers.
+//   7. completeVision() sends a screenshot to a vision-capable model on the
+//      SAME configured keys (Groq llama-4 first) — the screen-understanding
+//      loop runs on the user's primary brain, not a separate service.
+//   8. Secrets are NEVER logged raw — only masked diagnostics.
 // -----------------------------------------------------------------------------
 
 import { net } from "electron";
@@ -43,6 +53,10 @@ interface ProviderAdapter {
   config: ModelConfig;
   /** Returns true if this provider has a usable key. */
   isConfigured: () => boolean;
+  /** Settings kill-switch: a disabled provider is never dialed. */
+  isEnabled: () => boolean;
+  /** Model used for image understanding on this provider (or null if none). */
+  visionModel: () => string | null;
   /** Stream a chat completion. Throws ModelTransportError on failure. */
   stream: (
     systemPrompt: string,
@@ -55,6 +69,44 @@ interface ProviderAdapter {
     history: { role: "user" | "assistant"; content: string }[],
     timeoutMs?: number
   ) => Promise<string>;
+  /** Vision completion: one user message with an image + text. Throws on error. */
+  completeVision: (
+    prompt: string,
+    imageBase64: string,
+    mimeType: string,
+    timeoutMs?: number
+  ) => Promise<string>;
+  /** Tool-calling completion for the agent loop. Throws on error. */
+  completeWithTools: (
+    systemPrompt: string,
+    history: ChatPart[],
+    tools: ToolSchema[],
+    timeoutMs?: number,
+    maxTokens?: number
+  ) => Promise<{ content: string; toolCalls: ToolCall[] }>;
+}
+
+/**
+ * One message in a model conversation (OpenAI-compatible shapes):
+ * - plain user/assistant text
+ * - assistant asking for tools (tool_calls)
+ * - tool result (role "tool" + tool_call_id)
+ * - user message with an image (vision)
+ */
+export interface ChatPart {
+  role: "user" | "assistant" | "tool";
+  content:
+    | string
+    | Array<
+        | { type: "text"; text: string }
+        | { type: "image_url"; image_url: { url: string } }
+      >;
+  tool_calls?: Array<{
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }>;
+  tool_call_id?: string;
 }
 
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -108,12 +160,13 @@ interface OpenAICompat {
   extraHeaders?: Record<string, string>;
 }
 
-function buildBody(cfg: OpenAICompat, systemPrompt: string, history: { role: "user" | "assistant"; content: string }[], stream: boolean, maxTokens?: number) {
+function buildBody(cfg: OpenAICompat, systemPrompt: string, history: ChatPart[], stream: boolean, maxTokens?: number, tools?: unknown[]) {
   return JSON.stringify({
     model: cfg.model,
     stream,
     messages: [{ role: "system", content: systemPrompt }, ...history],
     ...(stream ? {} : { temperature: 0.3, max_tokens: maxTokens ?? 1000 }),
+    ...(tools && tools.length ? { tools, tool_choice: "auto", temperature: 0.1, max_tokens: maxTokens ?? 2048 } : {}),
   });
 }
 
@@ -167,10 +220,11 @@ async function completeOpenAICompat(
   cfg: OpenAICompat,
   provider: string,
   systemPrompt: string,
-  history: { role: "user" | "assistant"; content: string }[],
+  history: ChatPart[],
   timeoutMs = 30_000,
-  maxTokens = 1000
-): Promise<string> {
+  maxTokens = 1000,
+  tools?: unknown[]
+): Promise<{ content: string; toolCalls: ToolCall[] }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -184,7 +238,7 @@ async function completeOpenAICompat(
           "Content-Type": "application/json",
           ...cfg.extraHeaders,
         },
-        body: buildBody(cfg, systemPrompt, history, false, maxTokens),
+        body: buildBody(cfg, systemPrompt, history, false, maxTokens, tools),
         signal: controller.signal,
       });
     } catch (err: any) {
@@ -199,10 +253,56 @@ async function completeOpenAICompat(
     }
 
     const data: any = await resp.json();
-    return data?.choices?.[0]?.message?.content ?? "";
+    const message = data?.choices?.[0]?.message ?? {};
+    const content: string = message.content ?? "";
+    const toolCalls: ToolCall[] = Array.isArray(message.tool_calls)
+      ? message.tool_calls
+          .filter((tc: any) => tc?.function?.name)
+          .map((tc: any, i: number) =>
+            parseToolCall({
+              id: typeof tc.id === "string" && tc.id ? tc.id : `call_${i}`,
+              name: String(tc.function.name),
+              arguments: typeof tc.function.arguments === "string"
+                ? tc.function.arguments
+                : JSON.stringify(tc.function.arguments ?? {}),
+            })
+          )
+      : [];
+    return { content, toolCalls };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/** One tool the model may call (OpenAI-compatible function shape). */
+export interface ToolSchema {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+/** A tool call the model asked for (parsed from the OpenAI-compatible reply). */
+export interface ToolCall {
+  id: string;
+  name: string;
+  /** Raw JSON string of arguments (as sent by the model). */
+  arguments: string;
+  /** Parsed arguments object — empty when the JSON is malformed. */
+  parsed: Record<string, any>;
+}
+
+export function parseToolCall(raw: { id: string; name: string; arguments: string }): ToolCall {
+  let parsed: Record<string, any> = {};
+  try {
+    const p = JSON.parse(raw.arguments || "{}");
+    if (p && typeof p === "object") parsed = p;
+  } catch {
+    /* malformed — parsed stays empty, the loop reports it honestly */
+  }
+  return { ...raw, parsed };
 }
 
 // ---------------------------------------------------------------------------
@@ -257,27 +357,52 @@ function makeGroq(): ProviderAdapter {
     label: `Groq · ${process.env.GROQ_MODEL || "Llama 3.3 70B"}`,
     available: false,
   };
+  const chat = (model?: string) => ({
+    url: "https://api.groq.com/openai/v1/chat/completions",
+    key: process.env.GROQ_API_KEY ?? "",
+    model: model || config.model,
+  });
   return {
     config,
     isConfigured: () => {
       const k = process.env.GROQ_API_KEY;
       return !!k && k !== "your-groq-key-here" && k.length > 8;
     },
+    isEnabled: () => process.env.QUIP_GROQ_ENABLED !== "0",
+    visionModel: () => process.env.GROQ_VISION_MODEL || "meta-llama/llama-4-scout-17b-16e-instruct",
     async stream(systemPrompt, history, cb) {
       const key = process.env.GROQ_API_KEY;
       if (!key) throw new ModelTransportError("no-key", "no-groq-key");
-      return streamOpenAICompat(
-        { url: "https://api.groq.com/openai/v1/chat/completions", key, model: config.model },
-        "groq", systemPrompt, history, cb
-      );
+      return streamOpenAICompat(chat(), "groq", systemPrompt, history, cb);
     },
     async complete(systemPrompt, history, timeoutMs = 30_000) {
       const key = process.env.GROQ_API_KEY;
       if (!key) throw new ModelTransportError("no-key", "no-groq-key");
-      return completeOpenAICompat(
-        { url: "https://api.groq.com/openai/v1/chat/completions", key, model: config.model },
-        "groq", systemPrompt, history, timeoutMs
+      const { content } = await completeOpenAICompat(chat(), "groq", systemPrompt, history, timeoutMs);
+      return content;
+    },
+    async completeVision(prompt, imageBase64, mimeType, timeoutMs = 30_000) {
+      const key = process.env.GROQ_API_KEY;
+      if (!key) throw new ModelTransportError("no-key", "no-groq-key");
+      const { content } = await completeOpenAICompat(
+        chat(), "groq",
+        "You are Quip's screen-reading eye. Answer with the exact data requested — coordinates as bare JSON when asked.",
+        [{
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: `data:${mimeType};base64,${imageBase64}` } },
+          ],
+        }],
+        timeoutMs,
+        600
       );
+      return content;
+    },
+    async completeWithTools(systemPrompt, history, tools, timeoutMs = 45_000, maxTokens = 2048) {
+      const key = process.env.GROQ_API_KEY;
+      if (!key) throw new ModelTransportError("no-key", "no-groq-key");
+      return completeOpenAICompat(chat(), "groq", systemPrompt, history, timeoutMs, maxTokens, tools);
     },
   };
 }
@@ -289,37 +414,53 @@ function makeOpenRouter(): ProviderAdapter {
     label: `OpenRouter · ${(process.env.OPENROUTER_MODEL || "minimax/minimax-m3:free").split("/").pop()}`,
     available: false,
   };
+  const chat = () => ({
+    url: "https://openrouter.ai/api/v1/chat/completions",
+    key: process.env.OPENROUTER_API_KEY ?? "",
+    model: config.model,
+    extraHeaders: { "HTTP-Referer": "https://quip.app", "X-Title": "Quip" },
+  });
   return {
     config,
     isConfigured: () => {
       const k = process.env.OPENROUTER_API_KEY;
       return !!k && k !== "sk-or-v1-your-key-here" && k.length > 8;
     },
+    isEnabled: () => process.env.QUIP_OPENROUTER_ENABLED !== "0",
+    visionModel: () => process.env.OPENROUTER_VISION_MODEL || "qwen/qwen-2.5-vl-72b-instruct:free",
     async stream(systemPrompt, history, cb) {
       const key = process.env.OPENROUTER_API_KEY;
       if (!key) throw new ModelTransportError("no-key", "no-openrouter-key");
-      return streamOpenAICompat(
-        {
-          url: "https://openrouter.ai/api/v1/chat/completions",
-          key,
-          model: config.model,
-          extraHeaders: { "HTTP-Referer": "https://quip.app", "X-Title": "Quip" },
-        },
-        "openrouter", systemPrompt, history, cb
-      );
+      return streamOpenAICompat(chat(), "openrouter", systemPrompt, history, cb);
     },
     async complete(systemPrompt, history, timeoutMs = 30_000) {
       const key = process.env.OPENROUTER_API_KEY;
       if (!key) throw new ModelTransportError("no-key", "no-openrouter-key");
-      return completeOpenAICompat(
-        {
-          url: "https://openrouter.ai/api/v1/chat/completions",
-          key,
-          model: config.model,
-          extraHeaders: { "HTTP-Referer": "https://quip.app", "X-Title": "Quip" },
-        },
-        "openrouter", systemPrompt, history, timeoutMs
+      const { content } = await completeOpenAICompat(chat(), "openrouter", systemPrompt, history, timeoutMs);
+      return content;
+    },
+    async completeVision(prompt, imageBase64, mimeType, timeoutMs = 30_000) {
+      const key = process.env.OPENROUTER_API_KEY;
+      if (!key) throw new ModelTransportError("no-key", "no-openrouter-key");
+      const { content } = await completeOpenAICompat(
+        chat(), "openrouter",
+        "You are Quip's screen-reading eye. Answer with the exact data requested — coordinates as bare JSON when asked.",
+        [{
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: `data:${mimeType};base64,${imageBase64}` } },
+          ],
+        }],
+        timeoutMs,
+        600
       );
+      return content;
+    },
+    async completeWithTools(systemPrompt, history, tools, timeoutMs = 45_000, maxTokens = 2048) {
+      const key = process.env.OPENROUTER_API_KEY;
+      if (!key) throw new ModelTransportError("no-key", "no-openrouter-key");
+      return completeOpenAICompat(chat(), "openrouter", systemPrompt, history, timeoutMs, maxTokens, tools);
     },
   };
 }
@@ -329,41 +470,66 @@ function makeOpenRouter(): ProviderAdapter {
 // ---------------------------------------------------------------------------
 
 export class ModelRouter {
-  private primary: ProviderAdapter;
-  private fallback: ProviderAdapter | null;
+  private primary!: ProviderAdapter;
+  private fallback: ProviderAdapter | null = null;
   private activeProvider: ModelProvider = "groq";
 
   constructor() {
+    this.rebuild();
+  }
+
+  /** Re-read the environment and rebuild the provider chain. Called on
+   *  construction AND after Settings changes — no app restart needed. */
+  reload(): void {
+    this.rebuild();
+  }
+
+  private rebuild(): void {
     const groq = makeGroq();
     const openrouter = makeOpenRouter();
     const primaryPref = (process.env.QUIP_PRIMARY_PROVIDER || "").toLowerCase();
 
-    // Provider order: explicit env override → whichever is configured → OpenRouter first.
-    if (primaryPref === "groq") {
+    // A provider is chain-eligible only when enabled AND configured.
+    const groqOk = groq.isEnabled() && groq.isConfigured();
+    const orOk = openrouter.isEnabled() && openrouter.isConfigured();
+
+    // Priority: explicit env override → GROQ FIRST (user preference: the
+    // Groq key is THE active key) → OpenRouter alone when it's the only one.
+    if (primaryPref === "groq" && groqOk) {
       this.primary = groq;
-      this.fallback = openrouter;
-    } else if (primaryPref === "openrouter") {
+      this.fallback = orOk ? openrouter : null;
+    } else if (primaryPref === "openrouter" && orOk) {
       this.primary = openrouter;
-      this.fallback = groq;
-    } else if (openrouter.isConfigured()) {
+      this.fallback = groqOk ? groq : null;
+    } else if (groqOk) {
+      this.primary = groq;
+      this.fallback = orOk ? openrouter : null;
+    } else if (orOk) {
       this.primary = openrouter;
-      this.fallback = groq;
+      this.fallback = null;
     } else {
-      this.primary = groq;
-      this.fallback = openrouter;
+      // Nothing usable — keep Groq as the primary identity so status UI
+      // shows the honest "key missing/disabled" state for the preferred brain.
+      this.primary = groq.isEnabled() ? groq : openrouter;
+      this.fallback = this.primary === groq ? openrouter : groq;
     }
-    this.activeProvider = this.primary.isConfigured()
+    this.activeProvider = this.primary.isConfigured() && this.primary.isEnabled()
       ? this.primary.config.provider
-      : this.fallback?.isConfigured()
+      : this.fallback?.isConfigured() && this.fallback.isEnabled()
         ? this.fallback.config.provider
         : this.primary.config.provider;
   }
 
-  /** Ordered, configured providers (primary first). */
+  /** Ordered, configured+enabled providers (primary first). */
   private chain(): ProviderAdapter[] {
     const list: ProviderAdapter[] = [];
-    if (this.primary.isConfigured()) list.push(this.primary);
-    if (this.fallback && this.fallback.isConfigured() && this.fallback !== this.primary) {
+    if (this.primary.isEnabled() && this.primary.isConfigured()) list.push(this.primary);
+    if (
+      this.fallback &&
+      this.fallback !== this.primary &&
+      this.fallback.isEnabled() &&
+      this.fallback.isConfigured()
+    ) {
       list.push(this.fallback);
     }
     return list;
@@ -446,6 +612,90 @@ export class ModelRouter {
       }
     }
     throw lastErr ?? new ModelTransportError("no-key", "No AI provider configured");
+  }
+
+  /**
+   * TOOL-CALLING completion — the agent loop's engine. Sends the message
+   * history + tool schemas and returns either the assistant's text or the
+   * tool calls it wants executed. Tries each configured provider in order.
+   * Throws ModelTransportError when nothing answers.
+   */
+  async completeWithTools(
+    systemPrompt: string,
+    history: ChatPart[],
+    tools: ToolSchema[],
+    timeoutMs = 45_000,
+    maxTokens = 2048
+  ): Promise<{ content: string; toolCalls: ToolCall[]; provider: ModelProvider }> {
+    const providers = this.chain();
+    let lastErr: unknown = null;
+    for (const p of providers) {
+      try {
+        const { content, toolCalls } = await p.completeWithTools(systemPrompt, history, tools, timeoutMs, maxTokens);
+        this.activeProvider = p.config.provider;
+        return { content, toolCalls, provider: p.config.provider };
+      } catch (err: any) {
+        lastErr = err;
+        const kind: ChatErrorKind = err instanceof ModelTransportError ? err.kind : "network";
+        if (kind === "auth" || kind === "no-key") continue;
+        // one transient retry on the same provider, then move on
+        try {
+          const { content, toolCalls } = await p.completeWithTools(systemPrompt, history, tools, timeoutMs, maxTokens);
+          this.activeProvider = p.config.provider;
+          return { content, toolCalls, provider: p.config.provider };
+        } catch (err2) {
+          lastErr = err2;
+        }
+      }
+    }
+    throw lastErr ?? new ModelTransportError("no-key", "No AI provider configured");
+  }
+
+  /**
+   * VISION completion — send one screenshot + prompt to the first provider
+   * that has a working vision model (Groq llama-4 first). This is the
+   * screen-understanding primitive: "look at the REAL screen and answer".
+   */
+  async completeVision(
+    prompt: string,
+    imageBase64: string,
+    mimeType = "image/png",
+    timeoutMs = 30_000
+  ): Promise<{ text: string; provider: ModelProvider }> {
+    const providers = this.chain();
+    let lastErr: unknown = null;
+    for (const p of providers) {
+      const vModel = p.visionModel();
+      if (!vModel) continue;
+      try {
+        const text = await p.completeVision(prompt, imageBase64, mimeType, timeoutMs);
+        this.activeProvider = p.config.provider;
+        return { text, provider: p.config.provider };
+      } catch (err: any) {
+        lastErr = err;
+        const kind: ChatErrorKind = err instanceof ModelTransportError ? err.kind : "network";
+        if (kind === "auth" || kind === "no-key") continue;
+        // one transient retry, then next provider
+        try {
+          const text = await p.completeVision(prompt, imageBase64, mimeType, timeoutMs);
+          this.activeProvider = p.config.provider;
+          return { text, provider: p.config.provider };
+        } catch (err2) {
+          lastErr = err2;
+        }
+      }
+    }
+    throw lastErr ?? new ModelTransportError("no-key", "No vision-capable provider configured");
+  }
+
+  /** Which model would answer vision requests right now (for honest status). */
+  activeVisionModel(): string | null {
+    const providers = this.chain();
+    for (const p of providers) {
+      const v = p.visionModel();
+      if (v) return v;
+    }
+    return null;
   }
 
   /** Masked diagnostics — safe to log/show. Never includes raw keys. */

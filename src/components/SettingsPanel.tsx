@@ -65,7 +65,7 @@ export function SettingsPanel({
 
   // AI Brain tab state
   const [modelStatus, setModelStatus] = useState<ModelRouterStatus | null>(null);
-  const [provider, setProvider] = useState<"openrouter" | "groq">("openrouter");
+  const [provider, setProvider] = useState<"openrouter" | "groq">("groq");
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("");
   const [testing, setTesting] = useState(false);
@@ -76,6 +76,14 @@ export function SettingsPanel({
   const [providerStatuses, setProviderStatuses] = useState<
     Array<{ provider: "openrouter" | "groq"; configured: boolean; ok: boolean; latencyMs: number; message: string; kind: string; model: string }>
   | null>(null);
+  const [providerConfig, setProviderConfig] = useState<{
+    primary: "groq" | "openrouter";
+    groqEnabled: boolean;
+    openrouterEnabled: boolean;
+    visionModel: string | null;
+  } | null>(null);
+  const [configNote, setConfigNote] = useState<string | null>(null);
+  const [savingConfig, setSavingConfig] = useState(false);
 
   // Desktop tab state
   const [companionVisible, setCompanionVisible] = useState(true);
@@ -92,6 +100,7 @@ export function SettingsPanel({
     window.quip.getUserProfile().then(setProfile).catch(() => {});
     window.quip.getCompanionProgression().then(setProgression).catch(() => {});
     window.quip.getModelStatus().then(setModelStatus).catch(() => {});
+    window.quip.getProviderConfig().then(setProviderConfig).catch(() => {});
     // Auto-check which provider actually works (real probes, honest badges).
     handleResolveProviders();
     window.quip
@@ -120,6 +129,30 @@ export function SettingsPanel({
       /* non-fatal — the manual Test connection button still works */
     } finally {
       setResolving(false);
+    }
+  };
+
+  /** Set which key is THE active brain + which stay off — live, no restart. */
+  const handleSetProviderConfig = async (
+    primary: "groq" | "openrouter",
+    groqEnabled: boolean,
+    openrouterEnabled: boolean
+  ) => {
+    setSavingConfig(true);
+    setConfigNote(null);
+    try {
+      const r = await window.quip.setProviderConfig({ primary, groqEnabled, openrouterEnabled });
+      setConfigNote(r.message);
+      if (r.ok) {
+        setProviderConfig({ primary, groqEnabled, openrouterEnabled, visionModel: providerConfig?.visionModel ?? null });
+        const fresh = await window.quip.getModelStatus();
+        setModelStatus(fresh);
+        handleResolveProviders();
+      }
+    } catch {
+      setConfigNote("I couldn't save that — try again.");
+    } finally {
+      setSavingConfig(false);
     }
   };
 
@@ -357,6 +390,78 @@ export function SettingsPanel({
                     </div>
                   ))}
                 </div>
+              )}
+            </div>
+
+            {/* Provider priority + kill switches — which key is THE brain */}
+            <div
+              className="rounded-xl px-3 py-2.5"
+              style={{ border: "1px solid rgba(0,0,0,0.06)", background: "rgba(0,0,0,0.015)" }}
+            >
+              <div style={{ fontSize: 11, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                Which key should be active?
+              </div>
+              <div className="flex flex-col gap-1.5">
+                {([
+                  { id: "groq" as const, label: "Groq", enabled: providerConfig?.groqEnabled ?? true },
+                  { id: "openrouter" as const, label: "OpenRouter", enabled: providerConfig?.openrouterEnabled ?? true },
+                ]).map((p) => {
+                  const isPrimary = (providerConfig?.primary ?? "groq") === p.id;
+                  return (
+                    <div key={p.id} className="flex items-center justify-between gap-2">
+                      <button
+                        onClick={() => handleSetProviderConfig(p.id, p.id === "groq" ? (providerConfig?.groqEnabled ?? true) : (providerConfig?.openrouterEnabled ?? true), p.id === "groq" ? (providerConfig?.openrouterEnabled ?? true) : (providerConfig?.groqEnabled ?? true))}
+                        disabled={savingConfig || !p.enabled}
+                        className="flex items-center gap-2 rounded-lg px-2 py-1 transition-all"
+                        style={{
+                          border: `1.5px solid ${isPrimary ? "rgba(111,214,255,0.65)" : "rgba(0,0,0,0.07)"}`,
+                          background: isPrimary ? "rgba(111,214,255,0.08)" : "transparent",
+                          cursor: p.enabled && !savingConfig ? "pointer" : "default",
+                          opacity: p.enabled ? 1 : 0.45,
+                        }}
+                      >
+                        <span
+                          className="h-2 w-2 rounded-full"
+                          style={{ background: isPrimary ? "#0c6b8f" : "rgba(0,0,0,0.15)" }}
+                        />
+                        <span style={{ fontSize: 11, fontWeight: 600, color: "#111" }}>{p.label}</span>
+                        <span style={{ fontSize: 9.5, color: isPrimary ? "#0c6b8f" : "#9ca3af" }}>
+                          {isPrimary ? "PRIMARY" : "make primary"}
+                        </span>
+                      </button>
+                      <button
+                        onClick={() =>
+                          handleSetProviderConfig(
+                            isPrimary ? (p.id === "groq" ? "openrouter" : "groq") : (providerConfig?.primary ?? "groq"),
+                            p.id === "groq" ? !p.enabled : (providerConfig?.groqEnabled ?? true),
+                            p.id === "openrouter" ? !p.enabled : (providerConfig?.openrouterEnabled ?? true)
+                          )
+                        }
+                        disabled={savingConfig}
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 600,
+                          color: p.enabled ? "#15803d" : "#6b7280",
+                          background: p.enabled ? "rgba(34,197,94,0.08)" : "rgba(0,0,0,0.04)",
+                          border: "none",
+                          borderRadius: 7,
+                          padding: "3px 10px",
+                          cursor: savingConfig ? "default" : "pointer",
+                        }}
+                      >
+                        {p.enabled ? "ON" : "OFF"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              {providerConfig?.visionModel && (
+                <div style={{ fontSize: 9.5, color: "#6b7280", marginTop: 6 }}>
+                  Screen vision runs on {providerConfig.visionModel} — no extra key needed.
+                </div>
+              )}
+              {configNote && (
+                <div style={{ fontSize: 10, color: "#374151", marginTop: 6 }}>{configNote}</div>
               )}
             </div>
 

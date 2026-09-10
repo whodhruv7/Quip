@@ -87,6 +87,8 @@ const memoryExtractor = new MemoryExtractorBrain({
 
 // Execution Engine V2
 import { orchestrator } from "./engine/orchestrator";
+import { bindAgentBrain } from "./engine/agent-loop";
+import { bindVisionBrain } from "./engine/screen-vision";
 import { permissionSystem as execPermissionSystem, type ApprovalRequest } from "./engine/permission-modes";
 import { invalidateAppIndex } from "./engine/tool-registry";
 import { parseIntentV2 } from "./engine/intent-parser-v2";
@@ -95,6 +97,10 @@ import { contextStore } from "./engine/context-store";
 // The orchestrator uses the model ONLY for ambiguous intent (compact schema,
 // one small call) — deterministic tools handle the obvious actions.
 orchestrator.setModelRouter(modelRouter);
+// The agent loop + screen vision run on the SAME router — the user's Groq
+// key powers both the brain (tool calling) and the eyes (llama-4 vision).
+bindAgentBrain(modelRouter);
+bindVisionBrain(modelRouter);
 
 import type {
   DeviceProfile,
@@ -879,6 +885,7 @@ ipcMain.handle(
       success: result.success,
       summary: result.summary,
       notes: result.notes,
+      ...(result.failures?.length ? { failures: result.failures } : {}),
       plan: {
         id: payload.requestId,
         requestId: payload.requestId,
@@ -1109,6 +1116,55 @@ companionEvolution.onUnlock((unlock) => {
 ipcMain.handle(IPC.GET_MODEL_STATUS, () => {
   return modelRouter.status();
 });
+
+// ---------------------------------------------------------------------------
+// IPC — provider priority + enable switches (Settings → AI Brain)
+// Which key is THE active brain, which stays off, live without a restart.
+// ---------------------------------------------------------------------------
+ipcMain.handle(IPC.GET_PROVIDER_CONFIG, () => {
+  return {
+    primary: (process.env.QUIP_PRIMARY_PROVIDER as "groq" | "openrouter") || "groq",
+    groqEnabled: process.env.QUIP_GROQ_ENABLED !== "0",
+    openrouterEnabled: process.env.QUIP_OPENROUTER_ENABLED !== "0",
+    visionModel: modelRouter.activeVisionModel(),
+  };
+});
+
+ipcMain.handle(
+  IPC.SET_PROVIDER_CONFIG,
+  (_e, payload: { primary?: string; groqEnabled?: boolean; openrouterEnabled?: boolean }) => {
+    const primary = payload?.primary === "openrouter" ? "openrouter" : "groq";
+    const groqEnabled = payload?.groqEnabled !== false;
+    const openrouterEnabled = payload?.openrouterEnabled !== false;
+
+    if (!groqEnabled && !openrouterEnabled) {
+      return { ok: false, message: "At least one AI key must stay enabled — turn the other one off instead." };
+    }
+
+    const entries: Record<string, string> = {
+      QUIP_PRIMARY_PROVIDER: primary,
+      QUIP_GROQ_ENABLED: groqEnabled ? "1" : "0",
+      QUIP_OPENROUTER_ENABLED: openrouterEnabled ? "1" : "0",
+    };
+    const res = upsertEnvFile(path.join(app.getPath("userData"), ".env"), entries);
+    if (!res.ok) {
+      return { ok: false, message: `I couldn't save the settings: ${res.error}` };
+    }
+
+    // Live-apply + rebuild the chain — no restart needed.
+    process.env.QUIP_PRIMARY_PROVIDER = primary;
+    process.env.QUIP_GROQ_ENABLED = groqEnabled ? "1" : "0";
+    process.env.QUIP_OPENROUTER_ENABLED = openrouterEnabled ? "1" : "0";
+    modelRouter.reload();
+
+    const status = modelRouter.status();
+    return {
+      ok: true,
+      message: `Done — ${primary === "groq" ? "Groq" : "OpenRouter"} is now the primary brain${status.healthy ? " and it's active." : ", but no key is working yet."}`,
+      active: status.active.provider,
+    };
+  }
+);
 
 // ---------------------------------------------------------------------------
 // IPC — in-app API key setup (Settings → AI Brain)

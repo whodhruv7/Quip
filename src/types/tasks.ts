@@ -38,6 +38,8 @@ export interface TaskResultPayload {
   success: boolean;
   summary: string;
   notes: string[];
+  /** Plain-language reasons for every failed step — honest failure UI. */
+  failures?: string[];
   /** True when the user stopped the task (Stop button / cancellation). */
   cancelled?: boolean;
   plan: TaskPlan;

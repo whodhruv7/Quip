@@ -174,6 +174,19 @@ const api = {
     ipcRenderer.invoke(IPC.RESOLVE_PROVIDER) as Promise<
       Array<{ provider: "openrouter" | "groq"; configured: boolean; ok: boolean; latencyMs: number; message: string; kind: string; model: string }>
     >,
+  getProviderConfig: () =>
+    ipcRenderer.invoke(IPC.GET_PROVIDER_CONFIG) as Promise<{
+      primary: "groq" | "openrouter";
+      groqEnabled: boolean;
+      openrouterEnabled: boolean;
+      visionModel: string | null;
+    }>,
+  setProviderConfig: (payload: { primary: "groq" | "openrouter"; groqEnabled: boolean; openrouterEnabled: boolean }) =>
+    ipcRenderer.invoke(IPC.SET_PROVIDER_CONFIG, payload) as Promise<{
+      ok: boolean;
+      message: string;
+      active?: string;
+    }>,
 
   // ─── Companion visibility + real quit ────────────────────────────────
   getCompanionVisible: () =>

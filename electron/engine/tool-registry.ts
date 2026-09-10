@@ -46,10 +46,71 @@ import {
   type TabAction,
 } from "./system-control";
 import { deviceSelfCheck } from "./device-selfcheck";
+import { observeScreen, screenClickElement, screenTypeInto } from "./screen-vision";
+import { youtubeRead, redditRead, rssRead } from "./web-reading";
+import { execFile } from "node:child_process";
 
 const TAB_ACTIONS: TabAction[] = [
   "new", "close", "next", "previous", "reopen", "back", "forward", "reload",
 ];
+
+// ─── Shell command execution (Skales computer-use parity, approval-gated) ────
+
+/** Absolute-catastrophe deny list — the approval card is the main gate,
+ *  this only stops disk-wipers even if approved by accident. */
+const COMMAND_DENY = [
+  /rm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r)\s+\/(?!home|users)/i,
+  /rm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r)\s+[a-z]:?\\?\s*$/i,
+  /format\s+[a-z]:/i,
+  /del\s+\/[fsq][^\n]*c:\\(windows|users)/i,
+  /shutdown|restart-computer|stop-computer/i,
+  /mkfs/i,
+  /:(){ :|:& };:/,
+];
+
+async function runShellCommand(command: string): Promise<ToolResult> {
+  const cmd = (command ?? "").trim();
+  if (!cmd) {
+    return { success: false, output: "No command was given.", note: "empty-command" };
+  }
+  if (COMMAND_DENY.some((re) => re.test(cmd))) {
+    return {
+      success: false,
+      output: "I won't run that command — it looks destructive to system data.",
+      note: "deny-listed command",
+    };
+  }
+  const isWin = process.platform === "win32";
+  const shell = isWin ? "cmd" : "/bin/sh";
+  const args = isWin ? ["/d", "/s", "/c", cmd] : ["-c", cmd];
+  try {
+    const { stdout, stderr } = await new Promise<{ stdout: string; stderr: string }>(
+      (resolve, reject) => {
+        execFile(shell, args, { timeout: 20_000, maxBuffer: 1024 * 1024, windowsHide: true }, (err, so, se) => {
+          if (err && !so && !se) reject(err);
+          else resolve({ stdout: String(so ?? ""), stderr: String(se ?? "") });
+        });
+      }
+    );
+    const out = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n");
+    return {
+      success: true,
+      output: out ? out.slice(0, 3000) : "(command ran — no output)",
+      note: `ran: ${cmd.slice(0, 120)}`,
+      evidence: [`shell: ${shell}`, `exit ok`],
+    };
+  } catch (e: any) {
+    const timedOut = e?.killed || e?.signal === "SIGTERM";
+    return {
+      success: false,
+      output: timedOut
+        ? "The command took too long (20s) — I stopped it."
+        : `The command failed: ${String(e?.message ?? e).slice(0, 300)}`,
+      note: `command failed: ${cmd.slice(0, 120)}`,
+      evidence: [`shell: ${shell}`],
+    };
+  }
+}
 
 export interface ToolResult {
   success: boolean;
@@ -478,9 +539,63 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
   async self_check(_step, _ctx) {
     return fromVerification(await deviceSelfCheck());
   },
+
+  // ── V3: vision, shell, app index, web reading (Agent-Reach role) ─────────
+  async screen_observe(_step, _ctx) {
+    return fromVerification(await observeScreen());
+  },
+
+  async screen_click_element(step, _ctx) {
+    return fromVerification(await screenClickElement(String(step.params.element ?? step.target ?? "")));
+  },
+
+  async screen_type_into(step, _ctx) {
+    return fromVerification(
+      await screenTypeInto(String(step.params.element ?? ""), String(step.params.text ?? ""))
+    );
+  },
+
+  async run_command(step, _ctx) {
+    return runShellCommand(String(step.params.command ?? step.target ?? ""));
+  },
+
+  async youtube_read(step, _ctx) {
+    const r = await youtubeRead(String(step.params.query_or_url ?? step.target ?? ""));
+    return { success: r.ok, output: r.summary, note: r.summary, evidence: r.evidence };
+  },
+
+  async reddit_read(step, _ctx) {
+    const r = await redditRead(String(step.params.query_or_url ?? step.params.query ?? step.target ?? ""));
+    return { success: r.ok, output: r.summary, note: r.summary, evidence: r.evidence };
+  },
+
+  async rss_read(step, _ctx) {
+    const r = await rssRead(String(step.params.url ?? step.target ?? ""));
+    return { success: r.ok, output: r.summary, note: r.summary, evidence: r.evidence };
+  },
+
+  async app_list(_step, _ctx) {
+    const apps = await getAppIndex();
+    if (apps.length === 0) {
+      return { success: false, output: "I couldn't scan the installed apps yet.", note: "empty app index" };
+    }
+    const names = apps.slice(0, 40).map((a) => a.name);
+    return {
+      success: true,
+      output: `${apps.length} apps installed. First ${names.length}:\n${names.map((n) => `• ${n}`).join("\n")}`,
+      note: `app index: ${apps.length} entries`,
+      evidence: ["cached installed-app index"],
+    };
+  },
 };
 
 // ─── Router ──────────────────────────────────────────────────────────────────
+
+/** Names of every real executor — used by tests to prove the model-facing
+ *  catalog never advertises a capability that doesn't exist. */
+export function executorNames(): string[] {
+  return Object.keys(Executors);
+}
 
 export async function executeTool(
   action: string,

@@ -88,6 +88,12 @@ export function riskForStep(
   if (action === "browser_tab") {
     return params?.op === "close" ? "medium" : "safe";
   }
+  // V3 agent tools — screen vision is a real click when it acts; the web
+  // readers are read-only; app_list is read-only.
+  if (action === "screen_observe" || action === "app_list") return "safe";
+  if (action === "screen_click_element") return "medium";
+  if (action === "screen_type_into") return "medium";
+  if (action === "youtube_read" || action === "reddit_read" || action === "rss_read") return "safe";
   return getRiskLevel(action);
 }
 
