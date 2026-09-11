@@ -17,6 +17,8 @@ export interface ExecutionContextState {
   lastMediaQuery?: string;
   lastOpenedPath?: string;
   lastSelectedEntity?: string;
+  /** Text of the last page the agent read — lets "summarize that" work. */
+  lastReadPage?: string;
   updatedAt: number;
 }
 
@@ -50,6 +52,7 @@ export const contextStore = {
     if (state.lastMediaQuery) parts.push(`lastMedia="${state.lastMediaQuery}"`);
     if (state.lastOpenedPath) parts.push(`lastPath=${state.lastOpenedPath}`);
     if (state.lastSelectedEntity) parts.push(`selected="${state.lastSelectedEntity}"`);
+    if (state.lastReadPage) parts.push(`lastRead=${state.lastReadPage.length} chars`);
     return parts.length ? `Current context: ${parts.join(", ")}` : "";
   },
 

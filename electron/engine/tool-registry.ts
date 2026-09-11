@@ -47,7 +47,12 @@ import {
 } from "./system-control";
 import { deviceSelfCheck } from "./device-selfcheck";
 import { observeScreen, screenClickElement, screenTypeInto } from "./screen-vision";
-import { youtubeRead, redditRead, rssRead } from "./web-reading";
+import { youtubeRead, redditRead, rssRead, githubRead, v2exRead, bilibiliRead, tweetRead } from "./web-reading";
+import { weatherRead } from "./weather";
+import { createDocument, pdfRead, docxRead, type DocKind } from "./docs-tools";
+import { sysInfo, networkInfo } from "./sys-info";
+import { speakText } from "../system/speech";
+import { modelRouter } from "../system/model-router";
 import { execFile } from "node:child_process";
 
 const TAB_ACTIONS: TabAction[] = [
@@ -339,7 +344,12 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
   },
 
   async read_page(step, _ctx) {
-    return fromVerification(await readWebPage(step.params.url));
+    const verification = await readWebPage(step.params.url);
+    // Remember the text so "summarize that" works right after.
+    if (verification.ok && verification.summary.length > 100) {
+      contextStore.update({ lastReadPage: verification.summary.slice(0, 20_000) });
+    }
+    return fromVerification(verification);
   },
 
   async window_control(step, _ctx) {
@@ -572,6 +582,120 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
   async rss_read(step, _ctx) {
     const r = await rssRead(String(step.params.url ?? step.target ?? ""));
     return { success: r.ok, output: r.summary, note: r.summary, evidence: r.evidence };
+  },
+
+  async github_read(step, _ctx) {
+    const r = await githubRead(String(step.params.query_or_url ?? step.target ?? ""));
+    return { success: r.ok, output: r.summary, note: r.summary, evidence: r.evidence };
+  },
+
+  async v2ex_read(step, _ctx) {
+    const r = await v2exRead(String(step.params.node ?? ""));
+    return { success: r.ok, output: r.summary, note: r.summary, evidence: r.evidence };
+  },
+
+  async bilibili_read(step, _ctx) {
+    const r = await bilibiliRead(String(step.params.query ?? step.target ?? ""));
+    return { success: r.ok, output: r.summary, note: r.summary, evidence: r.evidence };
+  },
+
+  async tweet_read(step, _ctx) {
+    const r = await tweetRead(String(step.params.query_or_url ?? step.target ?? ""));
+    return { success: r.ok, output: r.summary, note: r.summary, evidence: r.evidence };
+  },
+
+  async weather(step, _ctx) {
+    const r = await weatherRead(String(step.params.place ?? step.target ?? ""));
+    return { success: r.ok, output: r.summary, note: r.summary, evidence: r.evidence };
+  },
+
+  async summarize(step, _ctx) {
+    const raw = String(step.params.text ?? "").trim();
+    let text = raw;
+    if (!text) {
+      const last = contextStore.get().lastReadPage;
+      if (!last) {
+        return { success: false, output: "Give me the text to summarize — or ask me to read a page first.", note: "nothing to summarize" };
+      }
+      text = last;
+    }
+    if (text.length < 60) {
+      return { success: false, output: "That's too short to need a summary — I'd just be repeating it.", note: "text too short" };
+    }
+    try {
+      const summary = await modelRouter.complete(
+        "Summarize the text in 2-4 clear sentences. Keep the key facts, numbers and names. Plain text only.",
+        [{ role: "user", content: text.slice(0, 12_000) }],
+        25_000
+      );
+      return { success: true, output: summary.trim(), note: `summarized ${text.length} chars`, evidence: ["llm summary"] };
+    } catch (e: any) {
+      return { success: false, output: `I couldn't summarize — the AI brain didn't answer (${String(e?.message ?? e).slice(0, 120)}).`, note: "summary failed" };
+    }
+  },
+
+  async pdf_read(step, _ctx) {
+    const r = pdfRead(String(step.params.path ?? step.target ?? ""));
+    return { success: r.ok, output: r.summary, note: r.summary, evidence: r.evidence };
+  },
+
+  async docx_read(step, _ctx) {
+    const r = docxRead(String(step.params.path ?? step.target ?? ""));
+    return { success: r.ok, output: r.summary, note: r.summary, evidence: r.evidence };
+  },
+
+  async doc_create(step, _ctx) {
+    const kind = String(step.params.kind ?? "docx") as DocKind;
+    let rows: string[][] | undefined;
+    let slides: { title: string; body: string }[] | undefined;
+    try {
+      if (step.params.rows) rows = JSON.parse(step.params.rows);
+    } catch {
+      return { success: false, output: "The rows weren't valid JSON — send them as an array of arrays of strings.", note: "bad rows json" };
+    }
+    try {
+      if (step.params.slides) slides = JSON.parse(step.params.slides);
+    } catch {
+      return { success: false, output: "The slides weren't valid JSON — send them as [{\"title\":…,\"body\":…}]", note: "bad slides json" };
+    }
+    const r = createDocument(kind, String(step.params.path ?? ""), {
+      text: step.params.text,
+      rows,
+      slides,
+    });
+    return { success: r.ok, output: r.summary, note: r.summary, evidence: r.evidence };
+  },
+
+  async sys_info(_step, _ctx) {
+    const r = await sysInfo();
+    return { success: r.ok, output: r.summary, note: r.summary, evidence: r.evidence };
+  },
+
+  async network_info(_step, _ctx) {
+    const r = await networkInfo();
+    return { success: r.ok, output: r.summary, note: r.summary, evidence: r.evidence };
+  },
+
+  async speak(step, _ctx) {
+    const text = String(step.params.text ?? step.target ?? "").trim();
+    if (!text) {
+      return { success: false, output: "Tell me exactly what to say out loud.", note: "empty speak text" };
+    }
+    const outcome = await speakText(text);
+    if (outcome.ok) {
+      return {
+        success: true,
+        output: `Said it out loud (${outcome.engine === "groq" ? "Groq voice" : "laptop voice"}).`,
+        note: outcome.message,
+        evidence: ["tts", outcome.engine],
+      };
+    }
+    return {
+      success: false,
+      output: `I couldn't speak — ${outcome.message}`,
+      note: "speak failed",
+      evidence: ["tts", outcome.engine],
+    };
   },
 
   async app_list(_step, _ctx) {

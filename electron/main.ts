@@ -40,11 +40,14 @@ import type {
 } from "./shared";
 
 import { bootstrap, BootstrapResult } from "./system/bootstrap";
-import { modelRouter, describeError } from "./system/model-router";
+import { modelRouter, describeError, ModelTransportError } from "./system/model-router";
 import { permissionSystem } from "./system/permission-system";
 import {
   PROVIDER_KEY_VAR,
   PROVIDER_MODEL_VAR,
+  PROVIDER_ENABLED_VAR,
+  PROVIDER_ORDER,
+  PROVIDER_LABEL,
   DEFAULT_MODELS,
   validateApiKey,
   upsertEnvFile,
@@ -52,6 +55,8 @@ import {
   type ProviderId,
 } from "./system/env-store";
 import { probeProvider } from "./system/provider-probe";
+import { discoverModels } from "./system/model-discovery";
+import { speakText, stopSpeaking, getSpeakConfig, speakConfigEnvEntries, type SpeakConfig } from "./system/speech";
 import { clampRect } from "./window-geometry";
 
 import { ensureProfile, loadProfile } from "./brains/device-brain";
@@ -462,6 +467,24 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
       "unless the execution layer reports it did."
   );
 
+  // ─── 11. Capability introspection (know what you can and cannot do) ──
+  sections.push(
+    "MORE things you CAN do: real weather for any city, summarize long text (or the " +
+      "last page you read), extract text from PDFs, read .docx files, create real Word " +
+      "(.docx), Excel (.xlsx) and PowerPoint (.pptx) files, live system status (CPU/RAM/" +
+      "disk/battery), network + Wi-Fi status, speak replies OUT LOUD (you have a real " +
+      "voice), read GitHub repos, V2EX, Bilibili search, and single tweets by link, " +
+      "read Reddit/YouTube/RSS/web pages directly, and run shell commands (with approval)."
+  );
+  sections.push(
+    "What you CANNOT do (say so honestly, never fake it): send Telegram/WhatsApp/Discord " +
+      "messages as bots, send emails directly (you CAN open a compose window), Google " +
+      "Calendar/image/video generation (no keys wired), scan files with VirusTotal, see " +
+      "or control phones, or search all of X/Twitter (only single tweets by link). " +
+      "When the user asks for these, say exactly what's missing and offer the nearest " +
+      "thing you can do."
+  );
+
   return sections.join("\n\n");
 }
 
@@ -744,7 +767,7 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
   workspaceContext.refresh().catch(() => {});
 
   try {
-    const { full } = await modelRouter.stream(systemPrompt, payload.history, {
+    const { full, provider, switched } = await modelRouter.stream(systemPrompt, payload.history, {
       onChunk: (delta: string) => {
         sendToWindow(win, IPC.CHAT_CHUNK, {
           requestId: payload.requestId,
@@ -771,11 +794,32 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
     sendToWindow(win, IPC.CHAT_DONE, {
       requestId: payload.requestId,
       full,
+      provider,
+      switched,
     });
+
+    // ─── Auto-speak: the companion SAYS the reply out loud ───────────
+    // Engine chain: Groq neural voice → laptop's built-in voice. The Groq
+    // engine ships a wav through TTS_ON_AUDIO; the local engine speaks in
+    // the main process (renderer gets nothing to play — it already played).
+    try {
+      const speakOutcome = await speakText(full);
+      if (speakOutcome.ok && speakOutcome.engine === "groq" && speakOutcome.audioBase64) {
+        sendToWindow(win, IPC.TTS_ON_AUDIO, {
+          requestId: payload.requestId,
+          engine: "groq",
+          audioBase64: speakOutcome.audioBase64,
+          mime: speakOutcome.mime ?? "audio/wav",
+        });
+      }
+    } catch {
+      /* speech is best-effort — the text reply already went out */
+    }
 
     return { ok: true };
   } catch (err: any) {
-    // ModelTransportError carries a stable kind — calm, precise user message.
+    // ModelTransportError carries a stable kind + the honest failure TRAIL:
+    // one line per provider explaining exactly why it couldn't answer.
     const described = describeError(err);
     const kind: ChatErrorPayload["kind"] =
       described.kind === "no-key" || described.kind === "auth"
@@ -786,13 +830,22 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
             ? "network"
             : "network";
 
+    let message = described.message;
+    const trail =
+      err instanceof ModelTransportError && err.attempts.length > 0
+        ? err.attempts.slice(0, 6).map((a) => `• ${a}`).join("\n")
+        : "";
+    if (trail) {
+      message = `${message}\nWhat I tried:\n${trail}`;
+    }
+
     if (kind === "network" || kind === "http") {
       console.error("model request failed:", modelRouter.diagnostics());
     }
 
     sendToWindow(win, IPC.CHAT_ERROR, {
       requestId: payload.requestId,
-      message: described.message,
+      message,
       kind,
     });
 
@@ -1119,33 +1172,42 @@ ipcMain.handle(IPC.GET_MODEL_STATUS, () => {
 
 // ---------------------------------------------------------------------------
 // IPC — provider priority + enable switches (Settings → AI Brain)
-// Which key is THE active brain, which stays off, live without a restart.
+// Which key is THE active brain, which stay off, live without a restart.
+// Four providers: groq · cerebras · nvidia · openrouter.
 // ---------------------------------------------------------------------------
 ipcMain.handle(IPC.GET_PROVIDER_CONFIG, () => {
+  const enabled: Record<string, boolean> = {};
+  for (const p of PROVIDER_ORDER) {
+    enabled[p] = process.env[PROVIDER_ENABLED_VAR[p]] !== "0";
+  }
   return {
-    primary: (process.env.QUIP_PRIMARY_PROVIDER as "groq" | "openrouter") || "groq",
-    groqEnabled: process.env.QUIP_GROQ_ENABLED !== "0",
-    openrouterEnabled: process.env.QUIP_OPENROUTER_ENABLED !== "0",
+    primary: (process.env.QUIP_PRIMARY_PROVIDER as ProviderId) || "groq",
+    enabled,
     visionModel: modelRouter.activeVisionModel(),
+    chain: modelRouter
+      .chain()
+      .map((p) => p.config.provider),
   };
 });
 
 ipcMain.handle(
   IPC.SET_PROVIDER_CONFIG,
-  (_e, payload: { primary?: string; groqEnabled?: boolean; openrouterEnabled?: boolean }) => {
-    const primary = payload?.primary === "openrouter" ? "openrouter" : "groq";
-    const groqEnabled = payload?.groqEnabled !== false;
-    const openrouterEnabled = payload?.openrouterEnabled !== false;
+  (_e, payload: { primary?: string; enabled?: Record<string, boolean> }) => {
+    const requested = (payload?.primary ?? "groq").toLowerCase() as ProviderId;
+    const primary: ProviderId = PROVIDER_ORDER.includes(requested) ? requested : "groq";
 
-    if (!groqEnabled && !openrouterEnabled) {
+    const enabled: Record<string, boolean> = {};
+    for (const p of PROVIDER_ORDER) {
+      enabled[p] = payload?.enabled?.[p] !== false;
+    }
+    if (!PROVIDER_ORDER.some((p) => enabled[p])) {
       return { ok: false, message: "At least one AI key must stay enabled — turn the other one off instead." };
     }
 
-    const entries: Record<string, string> = {
-      QUIP_PRIMARY_PROVIDER: primary,
-      QUIP_GROQ_ENABLED: groqEnabled ? "1" : "0",
-      QUIP_OPENROUTER_ENABLED: openrouterEnabled ? "1" : "0",
-    };
+    const entries: Record<string, string> = { QUIP_PRIMARY_PROVIDER: primary };
+    for (const p of PROVIDER_ORDER) {
+      entries[PROVIDER_ENABLED_VAR[p]] = enabled[p] ? "1" : "0";
+    }
     const res = upsertEnvFile(path.join(app.getPath("userData"), ".env"), entries);
     if (!res.ok) {
       return { ok: false, message: `I couldn't save the settings: ${res.error}` };
@@ -1153,15 +1215,22 @@ ipcMain.handle(
 
     // Live-apply + rebuild the chain — no restart needed.
     process.env.QUIP_PRIMARY_PROVIDER = primary;
-    process.env.QUIP_GROQ_ENABLED = groqEnabled ? "1" : "0";
-    process.env.QUIP_OPENROUTER_ENABLED = openrouterEnabled ? "1" : "0";
+    for (const p of PROVIDER_ORDER) {
+      process.env[PROVIDER_ENABLED_VAR[p]] = enabled[p] ? "1" : "0";
+    }
     modelRouter.reload();
 
     const status = modelRouter.status();
+    const active = status.active?.provider;
+    const note = status.healthy
+      ? active === primary
+        ? `Done — ${PROVIDER_LABEL[primary]} is now the primary brain and it's active.`
+        : `Saved — ${PROVIDER_LABEL[primary]} is the primary, but it has no key yet, so ${PROVIDER_LABEL[active as ProviderId]} answered instead.`
+      : `Saved — but none of the enabled keys work yet. Paste a key below and use Test connection.`;
     return {
       ok: true,
-      message: `Done — ${primary === "groq" ? "Groq" : "OpenRouter"} is now the primary brain${status.healthy ? " and it's active." : ", but no key is working yet."}`,
-      active: status.active.provider,
+      message: note,
+      active: status.active?.provider,
     };
   }
 );
@@ -1173,18 +1242,23 @@ ipcMain.handle(
   IPC.SAVE_MODEL_KEYS,
   (_e, payload: { provider?: string; apiKey?: string; model?: string }) => {
     const provider = (payload?.provider ?? "") as ProviderId;
-    if (provider !== "openrouter" && provider !== "groq") {
+    if (!PROVIDER_ORDER.includes(provider)) {
       return { ok: false, masked: "", message: "Unknown provider." };
     }
     const apiKey = (payload?.apiKey ?? "").trim();
-    const check = validateApiKey(provider, apiKey);
-    if (!check.ok) {
-      return { ok: false, masked: "", message: check.message };
+    const entries: Record<string, string> = {};
+    if (apiKey) {
+      const check = validateApiKey(provider, apiKey);
+      if (!check.ok) {
+        return { ok: false, masked: "", message: check.message };
+      }
+      entries[PROVIDER_KEY_VAR[provider]] = apiKey;
     }
-
-    const entries: Record<string, string> = { [PROVIDER_KEY_VAR[provider]]: apiKey };
     const model = (payload?.model ?? "").trim();
     if (model) entries[PROVIDER_MODEL_VAR[provider]] = model;
+    if (Object.keys(entries).length === 0) {
+      return { ok: false, masked: "", message: "Nothing to save — paste a key or pick a model first." };
+    }
 
     // Persist to userData/.env — the file main.ts already loads at boot.
     const res = upsertEnvFile(path.join(app.getPath("userData"), ".env"), entries);
@@ -1193,13 +1267,16 @@ ipcMain.handle(
     }
 
     // Live-apply so no restart is needed.
-    process.env[PROVIDER_KEY_VAR[provider]] = apiKey;
+    if (apiKey) process.env[PROVIDER_KEY_VAR[provider]] = apiKey;
     if (model) process.env[PROVIDER_MODEL_VAR[provider]] = model;
+    modelRouter.reload();
 
     return {
       ok: true,
-      masked: maskKey(apiKey),
-      message: `Key saved and active (${provider}). ${maskKey(apiKey)}`,
+      masked: apiKey ? maskKey(apiKey) : "",
+      message: model && !apiKey
+        ? `Model switched — ${PROVIDER_LABEL[provider]} now runs ${model}.`
+        : `Key saved and active (${provider}). ${maskKey(apiKey)}`,
     };
   }
 );
@@ -1208,7 +1285,7 @@ ipcMain.handle(
   IPC.TEST_MODEL_CONNECTION,
   async (_e, payload: { provider?: string; apiKey?: string; model?: string }) => {
     const provider = (payload?.provider ?? "") as ProviderId;
-    if (provider !== "openrouter" && provider !== "groq") {
+    if (!PROVIDER_ORDER.includes(provider)) {
       return { ok: false, latencyMs: 0, message: "Unknown provider.", kind: "no-key" as const };
     }
     const keyVar = PROVIDER_KEY_VAR[provider];
@@ -1219,6 +1296,20 @@ ipcMain.handle(
     return result;
   }
 );
+
+// ---------------------------------------------------------------------------
+// IPC — model discovery: every model the user's key can reach, per provider.
+// Powers the Settings model browser (scroll through them all, pick one).
+// ---------------------------------------------------------------------------
+ipcMain.handle(IPC.LIST_PROVIDER_MODELS, async (_e, payload: { provider?: string; apiKey?: string }) => {
+  const provider = (payload?.provider ?? "") as ProviderId;
+  if (!PROVIDER_ORDER.includes(provider)) {
+    return { ok: false, models: [], message: "Unknown provider." };
+  }
+  const apiKey = (payload?.apiKey ?? "").trim() || process.env[PROVIDER_KEY_VAR[provider]] || "";
+  const result = await discoverModels(provider, apiKey);
+  return result;
+});
 
 // ---------------------------------------------------------------------------
 // IPC — companion visibility + real quit (Settings → Desktop)
@@ -1261,7 +1352,7 @@ ipcMain.handle(IPC.SET_CHECKINS_ENABLED, (_e, enabled: boolean) => {
 // ---------------------------------------------------------------------------
 ipcMain.handle(IPC.RESOLVE_PROVIDER, async () => {
   const out: Array<{
-    provider: "openrouter" | "groq";
+    provider: ProviderId;
     configured: boolean;
     ok: boolean;
     latencyMs: number;
@@ -1269,7 +1360,7 @@ ipcMain.handle(IPC.RESOLVE_PROVIDER, async () => {
     kind: string;
     model: string;
   }> = [];
-  for (const provider of ["openrouter", "groq"] as const) {
+  for (const provider of PROVIDER_ORDER) {
     const keyVar = PROVIDER_KEY_VAR[provider];
     const modelVar = PROVIDER_MODEL_VAR[provider];
     const apiKey = process.env[keyVar] || "";
@@ -1298,6 +1389,52 @@ ipcMain.handle(IPC.RESOLVE_PROVIDER, async () => {
     });
   }
   return out;
+});
+
+// ---------------------------------------------------------------------------
+// IPC — speech (the companion's REAL voice)
+// speakText runs the engine chain: Groq playai-tts → laptop's built-in voice.
+// Auto-speak of chat replies flows through TTS_ON_AUDIO (wav) or, when the
+// local engine spoke, an engine=local event with no audio needed.
+// ---------------------------------------------------------------------------
+ipcMain.handle(IPC.TTS_SPEAK, async (_e, payload: { requestId?: string; text?: string }) => {
+  const text = String(payload?.text ?? "");
+  if (!text.trim()) {
+    return { ok: false, engine: "none", message: "Nothing to say." };
+  }
+  const outcome = await speakText(text);
+  // Groq engine → ship the wav to the renderer to play.
+  if (outcome.ok && outcome.engine === "groq" && outcome.audioBase64) {
+    const win = BrowserWindow.fromWebContents(_e.sender);
+    sendToWindow(win, IPC.TTS_ON_AUDIO, {
+      requestId: payload?.requestId ?? "",
+      engine: "groq",
+      audioBase64: outcome.audioBase64,
+      mime: outcome.mime ?? "audio/wav",
+    });
+    return { ok: true, engine: "groq", message: outcome.message };
+  }
+  return { ok: outcome.ok, engine: outcome.engine, message: outcome.message };
+});
+
+ipcMain.on(IPC.TTS_STOP, () => {
+  stopSpeaking();
+});
+
+ipcMain.handle(IPC.GET_SPEAK_CONFIG, () => {
+  return { ...getSpeakConfig(), platform: process.platform };
+});
+
+ipcMain.handle(IPC.SET_SPEAK_CONFIG, (_e, payload: Partial<SpeakConfig>) => {
+  const entries = speakConfigEnvEntries(payload ?? {});
+  const res = upsertEnvFile(path.join(app.getPath("userData"), ".env"), entries);
+  if (!res.ok) {
+    return { ok: false, message: `I couldn't save the voice settings: ${res.error}` };
+  }
+  // Live-apply.
+  for (const [k, v] of Object.entries(entries)) process.env[k] = v;
+  if (payload?.enabled === false) stopSpeaking();
+  return { ok: true, message: "Voice settings saved.", config: getSpeakConfig() };
 });
 
 // ---------------------------------------------------------------------------

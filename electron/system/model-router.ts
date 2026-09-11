@@ -1,26 +1,30 @@
-// Quip V2 — MODEL ROUTER (hardened)
+// Quip V3 — MODEL ROUTER (hardened, 4 providers)
 // -----------------------------------------------------------------------------
 // One place that knows how to talk to LLM providers.
 //
 // Reliability strategy:
-//   1. Provider order: QUIP_PRIMARY_PROVIDER env (set from Settings) →
-//      GROQ FIRST when a Groq key exists (user preference: the Groq key is
-//      THE key — fastest inference, vision-capable llama-4 models),
-//      OpenRouter as the automatic fallback.
-//   2. Per-provider kill switches from Settings: QUIP_GROQ_ENABLED=0 removes
-//      Groq from the chain entirely, QUIP_OPENROUTER_ENABLED=0 removes
-//      OpenRouter. A disabled provider is never dialed.
-//   3. On transport failure, retry once (transient network), then try the
-//      next provider.
-//   4. TLS/certificate errors are retried through Electron's net.fetch which
+//   1. FOUR providers — Groq, Cerebras, NVIDIA, OpenRouter — all
+//      OpenAI-compatible. The chain is built from every provider that is
+//      enabled AND has a key. Priority: QUIP_PRIMARY_PROVIDER env (set from
+//      Settings) → GROQ FIRST when no preference (user preference: the Groq
+//      key is THE key) → Cerebras → NVIDIA → OpenRouter.
+//   2. Per-provider kill switches from Settings: QUIP_GROQ_ENABLED=0 etc.
+//      removes a provider from the chain entirely — it is never dialed.
+//   3. On transport failure, retry once (transient network), then move to
+//      the NEXT provider automatically. The user sees which provider answered.
+//   4. When EVERY provider fails, the thrown error carries a failure TRAIL:
+//      one honest line per provider explaining why it was skipped (no key,
+//      key rejected, rate limit, timeout…). No more mystery "can't connect".
+//   5. TLS/certificate errors are retried through Electron's net.fetch which
 //      uses the OS certificate store (fixes corporate proxies / AV inspection).
-//   5. Errors carry a stable `kind` so IPC can show precise, calm messages.
-//   6. reload() re-reads the environment after Settings changes — the
+//   6. Errors carry a stable `kind` so IPC can show precise, calm messages.
+//   7. reload() re-reads the environment after Settings changes — the
 //      singleton never needs an app restart to switch providers.
-//   7. completeVision() sends a screenshot to a vision-capable model on the
-//      SAME configured keys (Groq llama-4 first) — the screen-understanding
-//      loop runs on the user's primary brain, not a separate service.
-//   8. Secrets are NEVER logged raw — only masked diagnostics.
+//   8. completeVision() sends a screenshot to a vision-capable model on the
+//      SAME configured keys (Groq llama-4 first, then Cerebras/NVIDIA llama-4,
+//      then OpenRouter) — the screen-understanding loop runs on the user's
+//      primary brain, not a separate service.
+//   9. Secrets are NEVER logged raw — only masked diagnostics.
 // -----------------------------------------------------------------------------
 
 import { net } from "electron";
@@ -30,6 +34,7 @@ import type {
   ModelRouterStatus,
 } from "../../src/types";
 import { maskSecret, describeError as describeErrorPure } from "./model-config";
+import { PROVIDER_ORDER, PROVIDER_LABEL, PROVIDER_ENABLED_VAR, DEFAULT_MODELS } from "./env-store";
 
 export { maskSecret } from "./model-config";
 
@@ -43,9 +48,12 @@ export type ChatErrorKind = "no-key" | "auth" | "rate-limit" | "http" | "network
 /** Error with a stable machine-readable kind (used by IPC error mapping). */
 export class ModelTransportError extends Error {
   kind: ChatErrorKind;
-  constructor(kind: ChatErrorKind, message: string) {
+  /** One honest line per provider that was tried/skipped, in order. */
+  attempts: string[];
+  constructor(kind: ChatErrorKind, message: string, attempts: string[] = []) {
     super(message);
     this.kind = kind;
+    this.attempts = attempts;
   }
 }
 
@@ -142,11 +150,18 @@ async function modelFetch(url: string, init: RequestInit): Promise<Response> {
   }
 }
 
-function classifyStatus(provider: string, status: number): ChatErrorKind {
+function classifyStatus(status: number): ChatErrorKind {
   if (status === 401 || status === 403) return "auth";
   if (status === 429) return "rate-limit";
-  if (status >= 500) return "http";
   return "http";
+}
+
+function keyMissingNote(varName: string): string {
+  return `${varName} not set — add the key in Settings → AI Brain`;
+}
+
+function disabledNote(label: string): string {
+  return `${label} is switched off in Settings → AI Brain`;
 }
 
 // ---------------------------------------------------------------------------
@@ -205,7 +220,7 @@ async function streamOpenAICompat(
     if (!resp.ok || !resp.body) {
       const text = await resp.text().catch(() => "");
       throw new ModelTransportError(
-        classifyStatus(provider, resp.status),
+        classifyStatus(resp.status),
         `${provider}-http-${resp.status}`
       );
     }
@@ -249,7 +264,7 @@ async function completeOpenAICompat(
     }
 
     if (!resp.ok) {
-      throw new ModelTransportError(classifyStatus(provider, resp.status), `${provider}-http-${resp.status}`);
+      throw new ModelTransportError(classifyStatus(resp.status), `${provider}-http-${resp.status}`);
     }
 
     const data: any = await resp.json();
@@ -274,7 +289,7 @@ async function completeOpenAICompat(
   }
 }
 
-/** One tool the model may call (OpenAI-compatible function shape). */
+/** One tool the model may call (OpenAI tools array shape). */
 export interface ToolSchema {
   type: "function";
   function: {
@@ -306,7 +321,7 @@ export function parseToolCall(raw: { id: string; name: string; arguments: string
 }
 
 // ---------------------------------------------------------------------------
-// SSE reader — shared by both OpenAI-compatible providers.
+// SSE reader — shared by all OpenAI-compatible providers.
 // ---------------------------------------------------------------------------
 
 async function readSSE(
@@ -347,8 +362,16 @@ async function readSSE(
 }
 
 // ---------------------------------------------------------------------------
-// Provider adapters
+// Provider adapters — one factory per provider, all OpenAI-compatible.
 // ---------------------------------------------------------------------------
+
+const VISION_SYSTEM_PROMPT =
+  "You are Quip's screen-reading eye. Answer with the exact data requested — coordinates as bare JSON when asked.";
+
+/** Guard against placeholder values that used to ship in .env templates. */
+function realKey(value: string | undefined, placeholder: string): boolean {
+  return !!value && value !== placeholder && value.length > 8;
+}
 
 function makeGroq(): ProviderAdapter {
   const config: ModelConfig = {
@@ -364,10 +387,7 @@ function makeGroq(): ProviderAdapter {
   });
   return {
     config,
-    isConfigured: () => {
-      const k = process.env.GROQ_API_KEY;
-      return !!k && k !== "your-groq-key-here" && k.length > 8;
-    },
+    isConfigured: () => realKey(process.env.GROQ_API_KEY, "your-groq-key-here"),
     isEnabled: () => process.env.QUIP_GROQ_ENABLED !== "0",
     visionModel: () => process.env.GROQ_VISION_MODEL || "meta-llama/llama-4-scout-17b-16e-instruct",
     async stream(systemPrompt, history, cb) {
@@ -386,7 +406,7 @@ function makeGroq(): ProviderAdapter {
       if (!key) throw new ModelTransportError("no-key", "no-groq-key");
       const { content } = await completeOpenAICompat(
         chat(), "groq",
-        "You are Quip's screen-reading eye. Answer with the exact data requested — coordinates as bare JSON when asked.",
+        VISION_SYSTEM_PROMPT,
         [{
           role: "user",
           content: [
@@ -407,6 +427,114 @@ function makeGroq(): ProviderAdapter {
   };
 }
 
+function makeCerebras(): ProviderAdapter {
+  const config: ModelConfig = {
+    provider: "cerebras",
+    model: process.env.CEREBRAS_MODEL || DEFAULT_MODELS.cerebras,
+    label: `Cerebras · ${(process.env.CEREBRAS_MODEL || "Llama 3.3 70B").split("/").pop()}`,
+    available: false,
+  };
+  const chat = (model?: string) => ({
+    url: "https://api.cerebras.ai/v1/chat/completions",
+    key: process.env.CEREBRAS_API_KEY ?? "",
+    model: model || config.model,
+  });
+  return {
+    config,
+    isConfigured: () => realKey(process.env.CEREBRAS_API_KEY, "your-cerebras-key-here"),
+    isEnabled: () => process.env.QUIP_CEREBRAS_ENABLED !== "0",
+    visionModel: () => process.env.CEREBRAS_VISION_MODEL || "llama-4-scout-17b-16e-instruct",
+    async stream(systemPrompt, history, cb) {
+      const key = process.env.CEREBRAS_API_KEY;
+      if (!key) throw new ModelTransportError("no-key", "no-cerebras-key");
+      return streamOpenAICompat(chat(), "cerebras", systemPrompt, history, cb);
+    },
+    async complete(systemPrompt, history, timeoutMs = 30_000) {
+      const key = process.env.CEREBRAS_API_KEY;
+      if (!key) throw new ModelTransportError("no-key", "no-cerebras-key");
+      const { content } = await completeOpenAICompat(chat(), "cerebras", systemPrompt, history, timeoutMs);
+      return content;
+    },
+    async completeVision(prompt, imageBase64, mimeType, timeoutMs = 30_000) {
+      const key = process.env.CEREBRAS_API_KEY;
+      if (!key) throw new ModelTransportError("no-key", "no-cerebras-key");
+      const { content } = await completeOpenAICompat(
+        chat(process.env.CEREBRAS_VISION_MODEL || "llama-4-scout-17b-16e-instruct"), "cerebras",
+        VISION_SYSTEM_PROMPT,
+        [{
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: `data:${mimeType};base64,${imageBase64}` } },
+          ],
+        }],
+        timeoutMs,
+        600
+      );
+      return content;
+    },
+    async completeWithTools(systemPrompt, history, tools, timeoutMs = 45_000, maxTokens = 2048) {
+      const key = process.env.CEREBRAS_API_KEY;
+      if (!key) throw new ModelTransportError("no-key", "no-cerebras-key");
+      return completeOpenAICompat(chat(), "cerebras", systemPrompt, history, timeoutMs, maxTokens, tools);
+    },
+  };
+}
+
+function makeNvidia(): ProviderAdapter {
+  const config: ModelConfig = {
+    provider: "nvidia",
+    model: process.env.NVIDIA_MODEL || DEFAULT_MODELS.nvidia,
+    label: `NVIDIA · ${(process.env.NVIDIA_MODEL || "Llama 3.3 70B").split("/").pop()}`,
+    available: false,
+  };
+  const chat = (model?: string) => ({
+    url: "https://integrate.api.nvidia.com/v1/chat/completions",
+    key: process.env.NVIDIA_API_KEY ?? "",
+    model: model || config.model,
+  });
+  return {
+    config,
+    isConfigured: () => realKey(process.env.NVIDIA_API_KEY, "nvapi-your-key-here"),
+    isEnabled: () => process.env.QUIP_NVIDIA_ENABLED !== "0",
+    visionModel: () => process.env.NVIDIA_VISION_MODEL || "meta/llama-4-scout-17b-16e-instruct",
+    async stream(systemPrompt, history, cb) {
+      const key = process.env.NVIDIA_API_KEY;
+      if (!key) throw new ModelTransportError("no-key", "no-nvidia-key");
+      return streamOpenAICompat(chat(), "nvidia", systemPrompt, history, cb);
+    },
+    async complete(systemPrompt, history, timeoutMs = 30_000) {
+      const key = process.env.NVIDIA_API_KEY;
+      if (!key) throw new ModelTransportError("no-key", "no-nvidia-key");
+      const { content } = await completeOpenAICompat(chat(), "nvidia", systemPrompt, history, timeoutMs);
+      return content;
+    },
+    async completeVision(prompt, imageBase64, mimeType, timeoutMs = 30_000) {
+      const key = process.env.NVIDIA_API_KEY;
+      if (!key) throw new ModelTransportError("no-key", "no-nvidia-key");
+      const { content } = await completeOpenAICompat(
+        chat(process.env.NVIDIA_VISION_MODEL || "meta/llama-4-scout-17b-16e-instruct"), "nvidia",
+        VISION_SYSTEM_PROMPT,
+        [{
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: `data:${mimeType};base64,${imageBase64}` } },
+          ],
+        }],
+        timeoutMs,
+        600
+      );
+      return content;
+    },
+    async completeWithTools(systemPrompt, history, tools, timeoutMs = 45_000, maxTokens = 2048) {
+      const key = process.env.NVIDIA_API_KEY;
+      if (!key) throw new ModelTransportError("no-key", "no-nvidia-key");
+      return completeOpenAICompat(chat(), "nvidia", systemPrompt, history, timeoutMs, maxTokens, tools);
+    },
+  };
+}
+
 function makeOpenRouter(): ProviderAdapter {
   const config: ModelConfig = {
     provider: "openrouter",
@@ -422,10 +550,7 @@ function makeOpenRouter(): ProviderAdapter {
   });
   return {
     config,
-    isConfigured: () => {
-      const k = process.env.OPENROUTER_API_KEY;
-      return !!k && k !== "sk-or-v1-your-key-here" && k.length > 8;
-    },
+    isConfigured: () => realKey(process.env.OPENROUTER_API_KEY, "sk-or-v1-your-key-here"),
     isEnabled: () => process.env.QUIP_OPENROUTER_ENABLED !== "0",
     visionModel: () => process.env.OPENROUTER_VISION_MODEL || "qwen/qwen-2.5-vl-72b-instruct:free",
     async stream(systemPrompt, history, cb) {
@@ -444,7 +569,7 @@ function makeOpenRouter(): ProviderAdapter {
       if (!key) throw new ModelTransportError("no-key", "no-openrouter-key");
       const { content } = await completeOpenAICompat(
         chat(), "openrouter",
-        "You are Quip's screen-reading eye. Answer with the exact data requested — coordinates as bare JSON when asked.",
+        VISION_SYSTEM_PROMPT,
         [{
           role: "user",
           content: [
@@ -469,9 +594,18 @@ function makeOpenRouter(): ProviderAdapter {
 // Router
 // ---------------------------------------------------------------------------
 
+function makeAdapters(): Record<string, ProviderAdapter> {
+  return {
+    groq: makeGroq(),
+    cerebras: makeCerebras(),
+    nvidia: makeNvidia(),
+    openrouter: makeOpenRouter(),
+  };
+}
+
 export class ModelRouter {
-  private primary!: ProviderAdapter;
-  private fallback: ProviderAdapter | null = null;
+  private adapters: Record<string, ProviderAdapter> = {};
+  private order: ProviderAdapter[] = []; // priority order (may include unconfigured)
   private activeProvider: ModelProvider = "groq";
 
   constructor() {
@@ -485,54 +619,41 @@ export class ModelRouter {
   }
 
   private rebuild(): void {
-    const groq = makeGroq();
-    const openrouter = makeOpenRouter();
+    this.adapters = makeAdapters();
     const primaryPref = (process.env.QUIP_PRIMARY_PROVIDER || "").toLowerCase();
 
-    // A provider is chain-eligible only when enabled AND configured.
-    const groqOk = groq.isEnabled() && groq.isConfigured();
-    const orOk = openrouter.isEnabled() && openrouter.isConfigured();
-
-    // Priority: explicit env override → GROQ FIRST (user preference: the
-    // Groq key is THE active key) → OpenRouter alone when it's the only one.
-    if (primaryPref === "groq" && groqOk) {
-      this.primary = groq;
-      this.fallback = orOk ? openrouter : null;
-    } else if (primaryPref === "openrouter" && orOk) {
-      this.primary = openrouter;
-      this.fallback = groqOk ? groq : null;
-    } else if (groqOk) {
-      this.primary = groq;
-      this.fallback = orOk ? openrouter : null;
-    } else if (orOk) {
-      this.primary = openrouter;
-      this.fallback = null;
-    } else {
-      // Nothing usable — keep Groq as the primary identity so status UI
-      // shows the honest "key missing/disabled" state for the preferred brain.
-      this.primary = groq.isEnabled() ? groq : openrouter;
-      this.fallback = this.primary === groq ? openrouter : groq;
+    // Base priority: explicit env override → Groq → Cerebras → NVIDIA → OpenRouter.
+    const ids: string[] = [];
+    if (primaryPref && this.adapters[primaryPref]) ids.push(primaryPref);
+    for (const id of PROVIDER_ORDER) {
+      if (!ids.includes(id)) ids.push(id);
     }
-    this.activeProvider = this.primary.isConfigured() && this.primary.isEnabled()
-      ? this.primary.config.provider
-      : this.fallback?.isConfigured() && this.fallback.isEnabled()
-        ? this.fallback.config.provider
-        : this.primary.config.provider;
+    this.order = ids.map((id) => this.adapters[id]).filter(Boolean);
+    const firstUsable = this.order.find((p) => p.isEnabled() && p.isConfigured());
+    this.activeProvider = firstUsable
+      ? firstUsable.config.provider
+      : (this.order[0]?.config.provider ?? "groq");
   }
 
-  /** Ordered, configured+enabled providers (primary first). */
-  private chain(): ProviderAdapter[] {
-    const list: ProviderAdapter[] = [];
-    if (this.primary.isEnabled() && this.primary.isConfigured()) list.push(this.primary);
-    if (
-      this.fallback &&
-      this.fallback !== this.primary &&
-      this.fallback.isEnabled() &&
-      this.fallback.isConfigured()
-    ) {
-      list.push(this.fallback);
-    }
-    return list;
+  /** Ordered, configured+enabled providers — the live failover chain. */
+  chain(): ProviderAdapter[] {
+    return this.order.filter((p) => p.isEnabled() && p.isConfigured());
+  }
+
+  /**
+   * Honest per-provider status lines for the failure trail — WHY each
+   * provider was skipped. Only enabled providers appear (disabled ones are
+   * a user choice, not a failure).
+   */
+  private skipNotes(): string[] {
+    return this.order
+      .filter((p) => p.isEnabled())
+      .map((p) =>
+        p.isConfigured()
+          ? null
+          : `${PROVIDER_LABEL[p.config.provider]}: ${keyMissingNote(PROVIDER_KEY_VAR_FOR(p.config.provider))}`
+      )
+      .filter((s): s is string => !!s);
   }
 
   /** Stream a chat completion, trying each configured provider once (with one transient retry). */
@@ -540,20 +661,24 @@ export class ModelRouter {
     systemPrompt: string,
     history: { role: "user" | "assistant"; content: string }[],
     cb: StreamCallbacks
-  ): Promise<{ full: string; provider: ModelProvider }> {
+  ): Promise<{ full: string; provider: ModelProvider; switched: boolean }> {
     const providers = this.chain();
+    const attempts: string[] = [];
     let lastErr: unknown = null;
 
     for (const p of providers) {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
           const full = await p.stream(systemPrompt, history, cb);
+          const switched = p.config.provider !== providers[0].config.provider;
+          if (switched) attempts.push(`${PROVIDER_LABEL[p.config.provider]} answered after ${PROVIDER_LABEL[providers[0].config.provider]} failed.`);
           this.activeProvider = p.config.provider;
-          return { full, provider: p.config.provider };
+          return { full, provider: p.config.provider, switched };
         } catch (err: any) {
           lastErr = err;
           if (cb.signal?.aborted) throw err;
           const kind: ChatErrorKind = err instanceof ModelTransportError ? err.kind : "network";
+          attempts.push(`${PROVIDER_LABEL[p.config.provider]}: ${err?.message ?? err}`);
           // Retry only transient network failures; auth/rate-limit/http move on.
           if (kind === "network" && attempt === 0) continue;
           break;
@@ -562,25 +687,24 @@ export class ModelRouter {
       if (cb.signal?.aborted) break;
     }
 
-    throw lastErr ?? new ModelTransportError("no-key", "No AI provider configured");
+    throw this.wrapTotalFailure(lastErr, attempts);
   }
 
   status(): ModelRouterStatus {
-    const primary = { ...this.primary.config, available: this.primary.isConfigured() };
-    const fallback = this.fallback
-      ? { ...this.fallback.config, available: this.fallback.isConfigured() }
-      : null;
+    const chain = this.chain();
+    const primary = chain[0] ?? this.order[0];
+    const primaryCfg = { ...primary.config, available: primary.isConfigured() && primary.isEnabled() };
+    const second = chain[1] ?? null;
+    const fallback = second ? { ...second.config, available: true } : null;
     const active =
-      this.activeProvider === primary.provider
-        ? primary
-        : fallback && this.activeProvider === fallback.provider
-          ? fallback
-          : primary;
+      chain.find((p) => p.config.provider === this.activeProvider) ?? primary;
+    const activeCfg = { ...active.config, available: active.isConfigured() && active.isEnabled() };
     return {
-      primary,
+      primary: primaryCfg,
       fallback,
-      active,
-      healthy: primary.available || !!fallback?.available,
+      active: activeCfg,
+      healthy: chain.length > 0,
+      chain: chain.map((p) => ({ ...p.config, available: true })),
     };
   }
 
@@ -591,6 +715,7 @@ export class ModelRouter {
     timeoutMs?: number
   ): Promise<string> {
     const providers = this.chain();
+    const attempts: string[] = this.skipNotes();
     let lastErr: unknown = null;
     for (const p of providers) {
       try {
@@ -599,6 +724,7 @@ export class ModelRouter {
         return result;
       } catch (err: any) {
         lastErr = err;
+        attempts.push(`${PROVIDER_LABEL[p.config.provider]}: ${err?.message ?? err}`);
         const kind: ChatErrorKind = err instanceof ModelTransportError ? err.kind : "network";
         if (kind === "auth" || kind === "no-key") continue; // try next provider
         // rate-limit / network / timeout: brief single retry on same provider
@@ -608,10 +734,11 @@ export class ModelRouter {
           return result;
         } catch (err2) {
           lastErr = err2;
+          attempts.push(`${PROVIDER_LABEL[p.config.provider]} retry: ${(err2 as Error)?.message ?? err2}`);
         }
       }
     }
-    throw lastErr ?? new ModelTransportError("no-key", "No AI provider configured");
+    throw this.wrapTotalFailure(lastErr, attempts);
   }
 
   /**
@@ -628,6 +755,7 @@ export class ModelRouter {
     maxTokens = 2048
   ): Promise<{ content: string; toolCalls: ToolCall[]; provider: ModelProvider }> {
     const providers = this.chain();
+    const attempts: string[] = this.skipNotes();
     let lastErr: unknown = null;
     for (const p of providers) {
       try {
@@ -636,6 +764,7 @@ export class ModelRouter {
         return { content, toolCalls, provider: p.config.provider };
       } catch (err: any) {
         lastErr = err;
+        attempts.push(`${PROVIDER_LABEL[p.config.provider]}: ${err?.message ?? err}`);
         const kind: ChatErrorKind = err instanceof ModelTransportError ? err.kind : "network";
         if (kind === "auth" || kind === "no-key") continue;
         // one transient retry on the same provider, then move on
@@ -645,10 +774,11 @@ export class ModelRouter {
           return { content, toolCalls, provider: p.config.provider };
         } catch (err2) {
           lastErr = err2;
+          attempts.push(`${PROVIDER_LABEL[p.config.provider]} retry: ${(err2 as Error)?.message ?? err2}`);
         }
       }
     }
-    throw lastErr ?? new ModelTransportError("no-key", "No AI provider configured");
+    throw this.wrapTotalFailure(lastErr, attempts);
   }
 
   /**
@@ -663,6 +793,7 @@ export class ModelRouter {
     timeoutMs = 30_000
   ): Promise<{ text: string; provider: ModelProvider }> {
     const providers = this.chain();
+    const attempts: string[] = this.skipNotes();
     let lastErr: unknown = null;
     for (const p of providers) {
       const vModel = p.visionModel();
@@ -673,6 +804,7 @@ export class ModelRouter {
         return { text, provider: p.config.provider };
       } catch (err: any) {
         lastErr = err;
+        attempts.push(`${PROVIDER_LABEL[p.config.provider]} vision: ${err?.message ?? err}`);
         const kind: ChatErrorKind = err instanceof ModelTransportError ? err.kind : "network";
         if (kind === "auth" || kind === "no-key") continue;
         // one transient retry, then next provider
@@ -685,7 +817,7 @@ export class ModelRouter {
         }
       }
     }
-    throw lastErr ?? new ModelTransportError("no-key", "No vision-capable provider configured");
+    throw this.wrapTotalFailure(lastErr, attempts, "No vision-capable provider configured");
   }
 
   /** Which model would answer vision requests right now (for honest status). */
@@ -698,6 +830,16 @@ export class ModelRouter {
     return null;
   }
 
+  /** Wrap a chain-total failure into one error carrying the honest trail. */
+  private wrapTotalFailure(lastErr: unknown, attempts: string[], fallbackMsg = "No AI provider configured"): ModelTransportError {
+    if (lastErr instanceof ModelTransportError && lastErr.attempts.length > 0) {
+      return lastErr;
+    }
+    const kind: ChatErrorKind = lastErr instanceof ModelTransportError ? lastErr.kind : "no-key";
+    const trail = [...attempts, ...this.skipNotes()];
+    return new ModelTransportError(kind, fallbackMsg, trail);
+  }
+
   /** Masked diagnostics — safe to log/show. Never includes raw keys. */
   diagnostics(): string {
     const s = this.status();
@@ -705,8 +847,21 @@ export class ModelRouter {
       `provider=${s.active.provider}`,
       `model=${s.active.model}`,
       `groqKey=${maskSecret(process.env.GROQ_API_KEY)}`,
+      `cerebrasKey=${maskSecret(process.env.CEREBRAS_API_KEY)}`,
+      `nvidiaKey=${maskSecret(process.env.NVIDIA_API_KEY)}`,
       `openrouterKey=${maskSecret(process.env.OPENROUTER_API_KEY)}`,
     ].join(" ");
+  }
+}
+
+/** Env var name for a provider's key (local helper — avoids an import cycle). */
+function PROVIDER_KEY_VAR_FOR(provider: ModelProvider): string {
+  switch (provider) {
+    case "groq": return "GROQ_API_KEY";
+    case "cerebras": return "CEREBRAS_API_KEY";
+    case "nvidia": return "NVIDIA_API_KEY";
+    case "openrouter": return "OPENROUTER_API_KEY";
+    default: return "API_KEY";
   }
 }
 

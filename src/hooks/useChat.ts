@@ -52,6 +52,8 @@ export function useChat(
   const quipApiRef = useRef(quipApi);
   quipApiRef.current = quipApi;
   const messagesRef = useRef<ChatMessage[]>(messages);
+  /** Current spoken audio element — new reply replaces the old voice. */
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -85,12 +87,18 @@ export function useChat(
       );
     });
 
-    const offDone = quipApiRef.current.onChatDone((_full, requestId) => {
+    const offDone = quipApiRef.current.onChatDone((_full, requestId, meta) => {
       if (requestId !== activeRequestId.current) return;
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === requestId ? { ...m, streaming: false } : m
-        )
+        prev.map((m) => {
+          if (m.id !== requestId) return m;
+          // Failover notice: the primary brain failed, another one answered.
+          const note =
+            meta?.switched && meta.provider
+              ? `${m.contextNote ? `${m.contextNote}\n` : ""}Auto-switched to ${meta.provider} — your primary provider didn't answer.`
+              : m.contextNote;
+          return { ...m, streaming: false, ...(note ? { contextNote: note } : {}) };
+        })
       );
       activeRequestId.current = null;
       setBusy(false);
@@ -145,6 +153,22 @@ export function useChat(
       });
     });
 
+    // ─── The companion's VOICE — play wav audio sent by the main process ──
+    // (Groq playai-tts engine; the local Windows engine speaks in main and
+    // needs no renderer audio.)
+    const offTts = quipApiRef.current.onTtsAudio((data) => {
+      try {
+        if (audioRef.current && !audioRef.current.paused) audioRef.current.pause();
+        const el = new Audio(`data:${data.mime || "audio/wav"};base64,${data.audioBase64}`);
+        audioRef.current = el;
+        el.play().catch(() => {
+          /* autoplay blocked until first interaction — harmless, text is shown */
+        });
+      } catch {
+        /* speech is best-effort */
+      }
+    });
+
     return () => {
       offChunk();
       offDone();
@@ -152,6 +176,7 @@ export function useChat(
       offConfirm();
       offProgress();
       offProactive();
+      offTts();
     };
   }, [companionId]);
 

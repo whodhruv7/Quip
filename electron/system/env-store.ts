@@ -1,28 +1,55 @@
-// Quip V2 — .env store (pure helpers, no Electron imports).
+// Quip V3 — .env store (pure helpers, no Electron imports).
 // ─────────────────────────────────────────────────────────────────────────────
-// The Settings panel lets the user paste an API key in-app. This module
-// persists it to the userData/.env file that main.ts already loads at boot,
+// The Settings panel lets the user paste API keys in-app. This module
+// persists them to the userData/.env file that main.ts already loads at boot,
 // and validates key formats so typos never reach the provider.
+// Four providers, all OpenAI-compatible:
+//   groq · cerebras · nvidia · openrouter
 // Pure Node so it can be regression-tested without Electron.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import fs from "node:fs";
 
-export type ProviderId = "openrouter" | "groq";
+export type ProviderId = "openrouter" | "groq" | "cerebras" | "nvidia";
+
+/** Canonical priority order when the user has not chosen a primary. */
+export const PROVIDER_ORDER: ProviderId[] = ["groq", "cerebras", "nvidia", "openrouter"];
+
+/** Typed as Record<string, string> because ModelProvider also includes the
+ *  "local" identity — indexing must stay safe for every caller. */
+export const PROVIDER_LABEL: Record<string, string> = {
+  groq: "Groq",
+  cerebras: "Cerebras",
+  nvidia: "NVIDIA",
+  openrouter: "OpenRouter",
+};
 
 export const PROVIDER_KEY_VAR: Record<ProviderId, string> = {
   openrouter: "OPENROUTER_API_KEY",
   groq: "GROQ_API_KEY",
+  cerebras: "CEREBRAS_API_KEY",
+  nvidia: "NVIDIA_API_KEY",
 };
 
 export const PROVIDER_MODEL_VAR: Record<ProviderId, string> = {
   openrouter: "OPENROUTER_MODEL",
   groq: "GROQ_MODEL",
+  cerebras: "CEREBRAS_MODEL",
+  nvidia: "NVIDIA_MODEL",
 };
 
 export const DEFAULT_MODELS: Record<ProviderId, string> = {
   openrouter: "minimax/minimax-m3:free",
   groq: "llama-3.3-70b-versatile",
+  cerebras: "llama-3.3-70b",
+  nvidia: "meta/llama-3.3-70b-instruct",
+};
+
+export const PROVIDER_ENABLED_VAR: Record<ProviderId, string> = {
+  openrouter: "QUIP_OPENROUTER_ENABLED",
+  groq: "QUIP_GROQ_ENABLED",
+  cerebras: "QUIP_CEREBRAS_ENABLED",
+  nvidia: "QUIP_NVIDIA_ENABLED",
 };
 
 export interface KeyValidation {
@@ -30,16 +57,25 @@ export interface KeyValidation {
   message: string;
 }
 
+/** The visible prefix of each provider's key — catches copy/paste mixups. */
+export const KEY_PREFIX: Record<ProviderId, string> = {
+  openrouter: "sk-or-",
+  groq: "gsk_",
+  cerebras: "csk-",
+  nvidia: "nvapi-",
+};
+
 /** Validate an API key's shape. Honest — we only check obvious formats. */
 export function validateApiKey(provider: ProviderId, apiKey: string): KeyValidation {
   const key = (apiKey ?? "").trim();
   if (!key) return { ok: false, message: "The key is empty — paste your API key first." };
   if (/\s/.test(key)) return { ok: false, message: "API keys can't contain spaces — re-copy the whole key." };
-  if (provider === "openrouter" && !key.startsWith("sk-or-")) {
-    return { ok: false, message: "OpenRouter keys start with \"sk-or-\". That doesn't look like an OpenRouter key." };
-  }
-  if (provider === "groq" && !key.startsWith("gsk_")) {
-    return { ok: false, message: "Groq keys start with \"gsk_\". That doesn't look like a Groq key." };
+  const prefix = KEY_PREFIX[provider];
+  if (!key.startsWith(prefix)) {
+    return {
+      ok: false,
+      message: `${PROVIDER_LABEL[provider]} keys start with "${prefix}". That doesn't look like a ${PROVIDER_LABEL[provider]} key.`,
+    };
   }
   return { ok: true, message: "Key format looks right." };
 }

@@ -43,11 +43,11 @@ const api = {
     ipcRenderer.on(IPC.CHAT_CHUNK, handler as any);
     return () => ipcRenderer.removeListener(IPC.CHAT_CHUNK, handler as any);
   },
-  onChatDone: (cb: (full: string, requestId: string) => void) => {
+  onChatDone: (cb: (full: string, requestId: string, meta?: { provider?: string; switched?: boolean }) => void) => {
     const handler = (
       _e: unknown,
-      data: { requestId: string; full: string }
-    ) => cb(data.full, data.requestId);
+      data: { requestId: string; full: string; provider?: string; switched?: boolean }
+    ) => cb(data.full, data.requestId, { provider: data.provider, switched: data.switched });
     ipcRenderer.on(IPC.CHAT_DONE, handler as any);
     return () => ipcRenderer.removeListener(IPC.CHAT_DONE, handler as any);
   },
@@ -157,13 +157,13 @@ const api = {
   // ─── Model router ────────────────────────────────────────────────────
   getModelStatus: () =>
     ipcRenderer.invoke(IPC.GET_MODEL_STATUS),
-  saveModelKeys: (payload: { provider: "openrouter" | "groq"; apiKey: string; model?: string }) =>
+  saveModelKeys: (payload: { provider: "openrouter" | "groq" | "cerebras" | "nvidia"; apiKey?: string; model?: string }) =>
     ipcRenderer.invoke(IPC.SAVE_MODEL_KEYS, payload) as Promise<{
       ok: boolean;
       masked: string;
       message: string;
     }>,
-  testModelConnection: (payload: { provider: "openrouter" | "groq"; apiKey?: string; model?: string }) =>
+  testModelConnection: (payload: { provider: "openrouter" | "groq" | "cerebras" | "nvidia"; apiKey?: string; model?: string }) =>
     ipcRenderer.invoke(IPC.TEST_MODEL_CONNECTION, payload) as Promise<{
       ok: boolean;
       latencyMs: number;
@@ -172,20 +172,53 @@ const api = {
     }>,
   resolveProvider: () =>
     ipcRenderer.invoke(IPC.RESOLVE_PROVIDER) as Promise<
-      Array<{ provider: "openrouter" | "groq"; configured: boolean; ok: boolean; latencyMs: number; message: string; kind: string; model: string }>
+      Array<{ provider: string; configured: boolean; ok: boolean; latencyMs: number; message: string; kind: string; model: string }>
     >,
+  listProviderModels: (payload: { provider: "openrouter" | "groq" | "cerebras" | "nvidia"; apiKey?: string }) =>
+    ipcRenderer.invoke(IPC.LIST_PROVIDER_MODELS, payload) as Promise<{
+      ok: boolean;
+      models: Array<{ id: string; ownedBy?: string }>;
+      message: string;
+    }>,
   getProviderConfig: () =>
     ipcRenderer.invoke(IPC.GET_PROVIDER_CONFIG) as Promise<{
-      primary: "groq" | "openrouter";
-      groqEnabled: boolean;
-      openrouterEnabled: boolean;
+      primary: "groq" | "openrouter" | "cerebras" | "nvidia";
+      enabled: Record<string, boolean>;
       visionModel: string | null;
+      chain: string[];
     }>,
-  setProviderConfig: (payload: { primary: "groq" | "openrouter"; groqEnabled: boolean; openrouterEnabled: boolean }) =>
+  setProviderConfig: (payload: { primary: "groq" | "openrouter" | "cerebras" | "nvidia"; enabled: Record<string, boolean> }) =>
     ipcRenderer.invoke(IPC.SET_PROVIDER_CONFIG, payload) as Promise<{
       ok: boolean;
       message: string;
       active?: string;
+    }>,
+
+  // ─── Speech (the companion's real voice) ─────────────────────────────
+  ttsSpeak: (payload: { requestId?: string; text: string }) =>
+    ipcRenderer.invoke(IPC.TTS_SPEAK, payload) as Promise<{
+      ok: boolean;
+      engine: string;
+      message: string;
+    }>,
+  ttsStop: () => ipcRenderer.send(IPC.TTS_STOP),
+  onTtsAudio: (cb: (data: { requestId: string; engine: string; audioBase64: string; mime: string }) => void) => {
+    const handler = (_e: unknown, data: any) => cb(data);
+    ipcRenderer.on(IPC.TTS_ON_AUDIO, handler as any);
+    return () => ipcRenderer.removeListener(IPC.TTS_ON_AUDIO, handler as any);
+  },
+  getSpeakConfig: () =>
+    ipcRenderer.invoke(IPC.GET_SPEAK_CONFIG) as Promise<{
+      enabled: boolean;
+      engine: "auto" | "groq" | "local";
+      voice: string;
+      localVoice: string;
+      platform: string;
+    }>,
+  setSpeakConfig: (payload: { enabled?: boolean; engine?: "auto" | "groq" | "local"; voice?: string; localVoice?: string }) =>
+    ipcRenderer.invoke(IPC.SET_SPEAK_CONFIG, payload) as Promise<{
+      ok: boolean;
+      message: string;
     }>,
 
   // ─── Companion visibility + real quit ────────────────────────────────

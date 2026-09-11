@@ -26,22 +26,47 @@ interface SettingsPanelProps {
 
 type Tab = "ai" | "general" | "desktop" | "device" | "memory" | "dna" | "progression";
 
-const AI_PROVIDERS = [
+type ProviderId = "openrouter" | "groq" | "cerebras" | "nvidia";
+
+const AI_PROVIDERS: Array<{
+  id: ProviderId;
+  name: string;
+  hint: string;
+  keyUrl: string;
+  keyPrefix: string;
+  modelPlaceholder: string;
+}> = [
   {
-    id: "openrouter" as const,
-    name: "OpenRouter",
-    hint: "Free key · minimax-m3",
-    keyUrl: "https://openrouter.ai/keys",
-    keyPrefix: "sk-or-",
-    modelPlaceholder: "minimax/minimax-m3:free",
-  },
-  {
-    id: "groq" as const,
+    id: "groq",
     name: "Groq",
-    hint: "Free key · very fast",
+    hint: "Free key · fastest voice + chat",
     keyUrl: "https://console.groq.com/keys",
     keyPrefix: "gsk_",
     modelPlaceholder: "llama-3.3-70b-versatile",
+  },
+  {
+    id: "cerebras",
+    name: "Cerebras",
+    hint: "Free key · extreme speed",
+    keyUrl: "https://cloud.cerebras.ai",
+    keyPrefix: "csk-",
+    modelPlaceholder: "llama-3.3-70b",
+  },
+  {
+    id: "nvidia",
+    name: "NVIDIA",
+    hint: "Free key · many models",
+    keyUrl: "https://build.nvidia.com",
+    keyPrefix: "nvapi-",
+    modelPlaceholder: "meta/llama-3.3-70b-instruct",
+  },
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    hint: "Free key · widest model choice",
+    keyUrl: "https://openrouter.ai/keys",
+    keyPrefix: "sk-or-",
+    modelPlaceholder: "minimax/minimax-m3:free",
   },
 ];
 
@@ -65,7 +90,7 @@ export function SettingsPanel({
 
   // AI Brain tab state
   const [modelStatus, setModelStatus] = useState<ModelRouterStatus | null>(null);
-  const [provider, setProvider] = useState<"openrouter" | "groq">("groq");
+  const [provider, setProvider] = useState<ProviderId>("groq");
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("");
   const [testing, setTesting] = useState(false);
@@ -74,16 +99,29 @@ export function SettingsPanel({
   const [saveResult, setSaveResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [resolving, setResolving] = useState(false);
   const [providerStatuses, setProviderStatuses] = useState<
-    Array<{ provider: "openrouter" | "groq"; configured: boolean; ok: boolean; latencyMs: number; message: string; kind: string; model: string }>
+    Array<{ provider: string; configured: boolean; ok: boolean; latencyMs: number; message: string; kind: string; model: string }>
   | null>(null);
   const [providerConfig, setProviderConfig] = useState<{
-    primary: "groq" | "openrouter";
-    groqEnabled: boolean;
-    openrouterEnabled: boolean;
+    primary: ProviderId;
+    enabled: Record<string, boolean>;
     visionModel: string | null;
+    chain: string[];
   } | null>(null);
   const [configNote, setConfigNote] = useState<string | null>(null);
   const [savingConfig, setSavingConfig] = useState(false);
+
+  // Model browser state — scroll through every model a provider has.
+  const [browsing, setBrowsing] = useState(false);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [discoveredModels, setDiscoveredModels] = useState<Array<{ id: string; ownedBy?: string }>>([]);
+  const [modelSearch, setModelSearch] = useState("");
+  const [modelBrowserNote, setModelBrowserNote] = useState<string | null>(null);
+
+  // Speech state — the companion's real voice.
+  const [speakEnabled, setSpeakEnabled] = useState(true);
+  const [speakEngine, setSpeakEngine] = useState<"auto" | "groq" | "local">("auto");
+  const [speakVoice, setSpeakVoice] = useState("Celeste-PlayAI");
+  const [speakNote, setSpeakNote] = useState<string | null>(null);
 
   // Desktop tab state
   const [companionVisible, setCompanionVisible] = useState(true);
@@ -101,6 +139,11 @@ export function SettingsPanel({
     window.quip.getCompanionProgression().then(setProgression).catch(() => {});
     window.quip.getModelStatus().then(setModelStatus).catch(() => {});
     window.quip.getProviderConfig().then(setProviderConfig).catch(() => {});
+    window.quip.getSpeakConfig().then((c) => {
+      setSpeakEnabled(c.enabled);
+      setSpeakEngine(c.engine);
+      setSpeakVoice(c.voice);
+    }).catch(() => {});
     // Auto-check which provider actually works (real probes, honest badges).
     handleResolveProviders();
     window.quip
@@ -134,25 +177,88 @@ export function SettingsPanel({
 
   /** Set which key is THE active brain + which stay off — live, no restart. */
   const handleSetProviderConfig = async (
-    primary: "groq" | "openrouter",
-    groqEnabled: boolean,
-    openrouterEnabled: boolean
+    primary: ProviderId,
+    enabled?: Record<string, boolean>
   ) => {
     setSavingConfig(true);
     setConfigNote(null);
+    const nextEnabled = { ...(providerConfig?.enabled ?? {}), ...(enabled ?? {}) };
     try {
-      const r = await window.quip.setProviderConfig({ primary, groqEnabled, openrouterEnabled });
+      const r = await window.quip.setProviderConfig({ primary, enabled: nextEnabled });
       setConfigNote(r.message);
       if (r.ok) {
-        setProviderConfig({ primary, groqEnabled, openrouterEnabled, visionModel: providerConfig?.visionModel ?? null });
-        const fresh = await window.quip.getModelStatus();
-        setModelStatus(fresh);
+        const fresh = await window.quip.getProviderConfig();
+        setProviderConfig(fresh);
+        const status = await window.quip.getModelStatus();
+        setModelStatus(status);
         handleResolveProviders();
       }
     } catch {
       setConfigNote("I couldn't save that — try again.");
     } finally {
       setSavingConfig(false);
+    }
+  };
+
+  /** Fetch every model the user's key can reach on this provider. */
+  const handleBrowseModels = async () => {
+    setLoadingModels(true);
+    setBrowsing(true);
+    setModelBrowserNote(null);
+    setDiscoveredModels([]);
+    try {
+      const r = await window.quip.listProviderModels({ provider, apiKey: apiKey || undefined });
+      if (r.ok) {
+        setDiscoveredModels(r.models);
+        if (r.models.length === 0) setModelBrowserNote("The key connected but the model list came back empty.");
+      } else {
+        setModelBrowserNote(r.message);
+      }
+    } catch {
+      setModelBrowserNote("I couldn't load the model list — try again.");
+    } finally {
+      setLoadingModels(false);
+    }
+  };
+
+  /** Pick one model from the browser — saves it live, no restart. */
+  const handleSelectModel = async (modelId: string) => {
+    setSaving(true);
+    try {
+      const r = await window.quip.saveModelKeys({ provider, model: modelId });
+      if (r.ok) {
+        setModel(modelId);
+        setModelBrowserNote(`Selected ${modelId} — it's live now.`);
+        setBrowsing(false);
+        const status = await window.quip.getModelStatus();
+        setModelStatus(status);
+      } else {
+        setModelBrowserNote(r.message);
+      }
+    } catch {
+      setModelBrowserNote("I couldn't switch the model — try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /** Voice settings — save live to .env. */
+  const handleSetSpeak = async (patch: { enabled?: boolean; engine?: "auto" | "groq" | "local"; voice?: string }) => {
+    if (patch.enabled !== undefined) setSpeakEnabled(patch.enabled);
+    if (patch.engine !== undefined) setSpeakEngine(patch.engine);
+    if (patch.voice !== undefined) setSpeakVoice(patch.voice);
+    setSpeakNote(null);
+    try {
+      const r = await window.quip.setSpeakConfig(patch);
+      setSpeakNote(r.ok ? "Voice updated." : r.message);
+      if (!r.ok) return;
+      if (patch.enabled === false) window.quip.ttsStop();
+      if (patch.enabled === true && patch.voice === undefined) {
+        // Tiny confirmation so the user KNOWS the voice works.
+        window.quip.ttsSpeak({ text: "Hi! I can speak now." });
+      }
+    } catch {
+      setSpeakNote("I couldn't save the voice settings — try again.");
     }
   };
 
@@ -402,54 +508,54 @@ export function SettingsPanel({
                 Which key should be active?
               </div>
               <div className="flex flex-col gap-1.5">
-                {([
-                  { id: "groq" as const, label: "Groq", enabled: providerConfig?.groqEnabled ?? true },
-                  { id: "openrouter" as const, label: "OpenRouter", enabled: providerConfig?.openrouterEnabled ?? true },
-                ]).map((p) => {
+                {AI_PROVIDERS.map((p) => {
                   const isPrimary = (providerConfig?.primary ?? "groq") === p.id;
+                  const isEnabled = providerConfig?.enabled?.[p.id] ?? true;
+                  const status = providerStatuses?.find((s) => s.provider === p.id);
                   return (
                     <div key={p.id} className="flex items-center justify-between gap-2">
                       <button
-                        onClick={() => handleSetProviderConfig(p.id, p.id === "groq" ? (providerConfig?.groqEnabled ?? true) : (providerConfig?.openrouterEnabled ?? true), p.id === "groq" ? (providerConfig?.openrouterEnabled ?? true) : (providerConfig?.groqEnabled ?? true))}
-                        disabled={savingConfig || !p.enabled}
-                        className="flex items-center gap-2 rounded-lg px-2 py-1 transition-all"
+                        onClick={() => handleSetProviderConfig(p.id)}
+                        disabled={savingConfig || !isEnabled}
+                        className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1 transition-all"
                         style={{
                           border: `1.5px solid ${isPrimary ? "rgba(111,214,255,0.65)" : "rgba(0,0,0,0.07)"}`,
                           background: isPrimary ? "rgba(111,214,255,0.08)" : "transparent",
-                          cursor: p.enabled && !savingConfig ? "pointer" : "default",
-                          opacity: p.enabled ? 1 : 0.45,
+                          cursor: isEnabled && !savingConfig ? "pointer" : "default",
+                          opacity: isEnabled ? 1 : 0.45,
                         }}
                       >
                         <span
-                          className="h-2 w-2 rounded-full"
+                          className="h-2 w-2 shrink-0 rounded-full"
                           style={{ background: isPrimary ? "#0c6b8f" : "rgba(0,0,0,0.15)" }}
                         />
-                        <span style={{ fontSize: 11, fontWeight: 600, color: "#111" }}>{p.label}</span>
-                        <span style={{ fontSize: 9.5, color: isPrimary ? "#0c6b8f" : "#9ca3af" }}>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: "#111" }}>{p.name}</span>
+                        <span style={{ fontSize: 9.5, color: isPrimary ? "#0c6b8f" : "#9ca3af", whiteSpace: "nowrap" }}>
                           {isPrimary ? "PRIMARY" : "make primary"}
                         </span>
+                        {status?.ok && (
+                          <span className="ml-auto shrink-0" style={{ fontSize: 9, color: "#15803d" }}>
+                            ✓ {status.latencyMs}ms
+                          </span>
+                        )}
                       </button>
                       <button
-                        onClick={() =>
-                          handleSetProviderConfig(
-                            isPrimary ? (p.id === "groq" ? "openrouter" : "groq") : (providerConfig?.primary ?? "groq"),
-                            p.id === "groq" ? !p.enabled : (providerConfig?.groqEnabled ?? true),
-                            p.id === "openrouter" ? !p.enabled : (providerConfig?.openrouterEnabled ?? true)
-                          )
-                        }
-                        disabled={savingConfig}
+                        onClick={() => handleSetProviderConfig(isPrimary ? "groq" : (providerConfig?.primary ?? "groq"), { [p.id]: !isEnabled })}
+                        disabled={savingConfig || (isPrimary && isEnabled)}
+                        title={isPrimary && isEnabled ? "Make another provider primary first" : ""}
                         style={{
                           fontSize: 10,
                           fontWeight: 600,
-                          color: p.enabled ? "#15803d" : "#6b7280",
-                          background: p.enabled ? "rgba(34,197,94,0.08)" : "rgba(0,0,0,0.04)",
+                          color: isEnabled ? "#15803d" : "#6b7280",
+                          background: isEnabled ? "rgba(34,197,94,0.08)" : "rgba(0,0,0,0.04)",
                           border: "none",
                           borderRadius: 7,
                           padding: "3px 10px",
-                          cursor: savingConfig ? "default" : "pointer",
+                          cursor: savingConfig || (isPrimary && isEnabled) ? "default" : "pointer",
+                          opacity: isPrimary && isEnabled ? 0.5 : 1,
                         }}
                       >
-                        {p.enabled ? "ON" : "OFF"}
+                        {isEnabled ? "ON" : "OFF"}
                       </button>
                     </div>
                   );
@@ -478,6 +584,10 @@ export function SettingsPanel({
                       setProvider(p.id);
                       setTestResult(null);
                       setSaveResult(null);
+                      setBrowsing(false);
+                      setDiscoveredModels([]);
+                      setModelSearch("");
+                      setModelBrowserNote(null);
                     }}
                     className="flex-1 rounded-xl px-3 py-2.5 text-left transition-all"
                     style={{
@@ -530,11 +640,29 @@ export function SettingsPanel({
               />
             </div>
 
-            {/* Model input (optional) */}
+            {/* Model picker — browse EVERY model the provider has */}
             <div>
-              <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-quip-gray">
-                Model <span style={{ textTransform: "none", fontWeight: 500 }}>(optional — default is fine)</span>
-              </label>
+              <div className="mb-2 flex items-center justify-between">
+                <label className="text-[11px] font-semibold uppercase tracking-wide text-quip-gray">
+                  Model
+                </label>
+                <button
+                  onClick={handleBrowseModels}
+                  disabled={loadingModels}
+                  style={{
+                    fontSize: 10.5,
+                    fontWeight: 600,
+                    color: "#0c6b8f",
+                    background: "rgba(111,214,255,0.12)",
+                    border: "none",
+                    borderRadius: 7,
+                    padding: "3px 10px",
+                    cursor: loadingModels ? "default" : "pointer",
+                  }}
+                >
+                  {loadingModels ? "Loading models…" : "Browse all models"}
+                </button>
+              </div>
               <input
                 type="text"
                 value={model}
@@ -551,6 +679,166 @@ export function SettingsPanel({
                   "--tw-ring-color": "rgba(111,214,255,0.4)",
                 }}
               />
+              {browsing && (
+                <div
+                  className="mt-2 rounded-xl px-2.5 py-2"
+                  style={{ border: "1px solid rgba(0,0,0,0.07)", background: "rgba(255,255,255,0.7)" }}
+                >
+                  {discoveredModels.length > 0 && (
+                    <>
+                      <input
+                        type="text"
+                        value={modelSearch}
+                        onChange={(e) => setModelSearch(e.target.value)}
+                        placeholder={`Search ${discoveredModels.length} models…`}
+                        spellCheck={false}
+                        className="mb-2 w-full rounded-lg px-2.5 py-1.5 outline-none"
+                        style={{
+                          fontSize: 11,
+                          border: "1px solid rgba(0,0,0,0.08)",
+                          background: "rgba(0,0,0,0.015)",
+                          color: "#111",
+                        }}
+                      />
+                      <div
+                        className="flex flex-col overflow-y-auto"
+                        style={{ maxHeight: 180, gap: 2 }}
+                      >
+                        {discoveredModels
+                          .filter((m) =>
+                            !modelSearch.trim() ||
+                            m.id.toLowerCase().includes(modelSearch.toLowerCase()) ||
+                            (m.ownedBy ?? "").toLowerCase().includes(modelSearch.toLowerCase())
+                          )
+                          .map((m) => {
+                            const selected = model.trim() === m.id;
+                            return (
+                              <button
+                                key={m.id}
+                                onClick={() => handleSelectModel(m.id)}
+                                disabled={saving}
+                                className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left transition-colors"
+                                style={{
+                                  background: selected ? "rgba(111,214,255,0.14)" : "transparent",
+                                  border: "none",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                <span
+                                  className="truncate"
+                                  style={{
+                                    fontSize: 10.5,
+                                    fontFamily: "monospace",
+                                    color: selected ? "#0c6b8f" : "#374151",
+                                    fontWeight: selected ? 700 : 400,
+                                  }}
+                                >
+                                  {m.id}
+                                </span>
+                                {selected ? (
+                                  <span style={{ fontSize: 9, fontWeight: 700, color: "#0c6b8f", whiteSpace: "nowrap" }}>IN USE</span>
+                                ) : (
+                                  <span style={{ fontSize: 9, color: "#9ca3af", whiteSpace: "nowrap" }}>
+                                    {m.ownedBy ?? ""}
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                      </div>
+                    </>
+                  )}
+                  {modelBrowserNote && (
+                    <div style={{ fontSize: 10, color: "#374151", padding: "2px 4px" }}>{modelBrowserNote}</div>
+                  )}
+                  {discoveredModels.length > 0 && (
+                    <button
+                      onClick={() => setBrowsing(false)}
+                      style={{ fontSize: 9.5, color: "#9ca3af", background: "none", border: "none", cursor: "pointer", marginTop: 4 }}
+                    >
+                      Close list
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Voice — the companion SPEAKS */}
+            <div
+              className="rounded-xl px-3 py-2.5"
+              style={{ border: "1px solid rgba(0,0,0,0.06)", background: "rgba(0,0,0,0.015)" }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-col" style={{ minWidth: 0 }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 600, color: "#111" }}>
+                    Let Quip speak replies out loud
+                  </span>
+                  <span style={{ fontSize: 9.5, color: "#6b7280" }}>
+                    Groq neural voice first — falls back to this laptop's built-in voice, so it can always talk.
+                  </span>
+                </div>
+                <button
+                  onClick={() => handleSetSpeak({ enabled: !speakEnabled })}
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    color: speakEnabled ? "#15803d" : "#6b7280",
+                    background: speakEnabled ? "rgba(34,197,94,0.08)" : "rgba(0,0,0,0.04)",
+                    border: "none",
+                    borderRadius: 7,
+                    padding: "3px 10px",
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {speakEnabled ? "ON" : "OFF"}
+                </button>
+              </div>
+              {speakEnabled && (
+                <div className="mt-2 flex flex-col gap-1.5">
+                  <div className="flex items-center gap-1.5">
+                    {(["auto", "groq", "local"] as const).map((e) => (
+                      <button
+                        key={e}
+                        onClick={() => handleSetSpeak({ engine: e })}
+                        style={{
+                          fontSize: 9.5,
+                          fontWeight: 600,
+                          color: speakEngine === e ? "#0c6b8f" : "#6b7280",
+                          background: speakEngine === e ? "rgba(111,214,255,0.14)" : "rgba(0,0,0,0.03)",
+                          border: "none",
+                          borderRadius: 6,
+                          padding: "2px 8px",
+                          cursor: "pointer",
+                        }}
+                      >
+                        {e === "auto" ? "Auto" : e === "groq" ? "Groq voice" : "Laptop voice"}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {["Celeste-PlayAI", "Fritz-PlayAI", "Nera-PlayAI", "Gail-PlayAI"].map((v) => (
+                      <button
+                        key={v}
+                        onClick={() => handleSetSpeak({ voice: v })}
+                        style={{
+                          fontSize: 9,
+                          fontWeight: 600,
+                          color: speakVoice === v ? "#0c6b8f" : "#9ca3af",
+                          background: speakVoice === v ? "rgba(111,214,255,0.14)" : "transparent",
+                          border: `1px solid ${speakVoice === v ? "rgba(111,214,255,0.5)" : "rgba(0,0,0,0.06)"}`,
+                          borderRadius: 6,
+                          padding: "2px 7px",
+                          cursor: "pointer",
+                        }}
+                      >
+                        {v.replace("-PlayAI", "")}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {speakNote && <div style={{ fontSize: 9.5, color: "#374151", marginTop: 4 }}>{speakNote}</div>}
             </div>
 
             {/* Actions */}

@@ -327,10 +327,14 @@ class Orchestrator {
   }
 
   /** Cheap lexical check: does this message look like a command? Includes
-   *  the Hinglish imperative verbs the deterministic parser may have missed. */
+   *  the Hinglish imperative verbs the deterministic parser may have missed,
+   *  plus the new capability keywords (weather / summarize / documents /
+   *  system status / social reading) so the agent tier can actually run them
+   *  with real tools instead of the chat brain guessing. */
   private looksLikeTask(command: string): boolean {
     const t = command.toLowerCase();
     return /\b(open|launch|start|play|search|close|focus|type|press|click|scroll|copy|paste|read|goto|go to|find|kill|navigate|run|write|save|delete|download|check|look at my screen|screenshot)\b/.test(t) ||
+      /\b(weather|temperature|forecast|mausam|summarize|summarise|summary|pdf|docx|xlsx|pptx|word file|excel|powerpoint|slide deck|cpu|memory usage|disk space|battery|network status|wifi|wi-fi|github repo|tweet)\b/.test(t) ||
       /\b(kholo|khol do|karo|kar do|dekho|dikhao|bhejo|likho|likh do|chalao|bajao|band karo|dhundo|dhoondo|paste karo|copy karo|scroll karo|click karo|type karo|search karo|save karo|check karo)\b/.test(t);
   }
 

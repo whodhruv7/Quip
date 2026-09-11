@@ -30,7 +30,7 @@ export interface WindowAPI {
 export interface ChatAPI {
   chatSend: (payload: { requestId: string; history: { role: "user" | "assistant"; content: string }[]; }) => Promise<{ ok: boolean }>;
   onChatChunk: (cb: (delta: string, requestId: string) => void) => () => void;
-  onChatDone: (cb: (full: string, requestId: string) => void) => () => void;
+  onChatDone: (cb: (full: string, requestId: string, meta?: { provider?: string; switched?: boolean }) => void) => () => void;
   onChatError: (cb: (err: { message: string; kind: string; requestId: string }) => void) => () => void;
   setCompanion: (id: CompanionId) => void;
 }
@@ -77,31 +77,55 @@ export interface SystemAPI {
   onBootstrapProgress: (cb: (p: BootstrapProgress) => void) => () => void;
 }
 
+export type ProviderIdUI = "openrouter" | "groq" | "cerebras" | "nvidia";
+
 export interface ModelSetupAPI {
   saveModelKeys: (payload: {
-    provider: "openrouter" | "groq";
-    apiKey: string;
+    provider: ProviderIdUI;
+    apiKey?: string;
     model?: string;
   }) => Promise<{ ok: boolean; masked: string; message: string }>;
   testModelConnection: (payload: {
-    provider: "openrouter" | "groq";
+    provider: ProviderIdUI;
     apiKey?: string;
     model?: string;
   }) => Promise<{ ok: boolean; latencyMs: number; message: string; kind: string }>;
   resolveProvider: () => Promise<
-    Array<{ provider: "openrouter" | "groq"; configured: boolean; ok: boolean; latencyMs: number; message: string; kind: string; model: string }>
+    Array<{ provider: ProviderIdUI; configured: boolean; ok: boolean; latencyMs: number; message: string; kind: string; model: string }>
   >;
+  listProviderModels: (payload: {
+    provider: ProviderIdUI;
+    apiKey?: string;
+  }) => Promise<{ ok: boolean; models: Array<{ id: string; ownedBy?: string }>; message: string }>;
   getProviderConfig: () => Promise<{
-    primary: "groq" | "openrouter";
-    groqEnabled: boolean;
-    openrouterEnabled: boolean;
+    primary: ProviderIdUI;
+    enabled: Record<string, boolean>;
     visionModel: string | null;
+    chain: string[];
   }>;
   setProviderConfig: (payload: {
-    primary: "groq" | "openrouter";
-    groqEnabled: boolean;
-    openrouterEnabled: boolean;
+    primary: ProviderIdUI;
+    enabled: Record<string, boolean>;
   }) => Promise<{ ok: boolean; message: string; active?: string }>;
+}
+
+export interface SpeechAPI {
+  ttsSpeak: (payload: { requestId?: string; text: string }) => Promise<{ ok: boolean; engine: string; message: string }>;
+  ttsStop: () => void;
+  onTtsAudio: (cb: (data: { requestId: string; engine: string; audioBase64: string; mime: string }) => void) => () => void;
+  getSpeakConfig: () => Promise<{
+    enabled: boolean;
+    engine: "auto" | "groq" | "local";
+    voice: string;
+    localVoice: string;
+    platform: string;
+  }>;
+  setSpeakConfig: (payload: {
+    enabled?: boolean;
+    engine?: "auto" | "groq" | "local";
+    voice?: string;
+    localVoice?: string;
+  }) => Promise<{ ok: boolean; message: string }>;
 }
 
 export interface LifecycleAPI {
@@ -113,7 +137,7 @@ export interface LifecycleAPI {
   quitApp: () => void;
 }
 
-export type QuipAPI = WindowAPI & ChatAPI & TaskAPI & PermissionAPI & DeviceAPI & SystemAPI & ModelSetupAPI & LifecycleAPI;
+export type QuipAPI = WindowAPI & ChatAPI & TaskAPI & PermissionAPI & DeviceAPI & SystemAPI & ModelSetupAPI & SpeechAPI & LifecycleAPI;
 
 declare global {
   interface Window {

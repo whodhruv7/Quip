@@ -29,6 +29,8 @@
     "../electron/engine/tool-registry.ts",
     "../electron/system/model-config.ts",
     "../electron/system/model-router.ts",
+    "../electron/system/model-discovery.ts",
+    "../electron/system/speech.ts",
     "../electron/system/env-store.ts",
     "../electron/system/provider-probe.ts",
     "../electron/window-geometry.ts",

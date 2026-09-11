@@ -64,6 +64,14 @@ export const IPC = {
   SET_PROVIDER_CONFIG: "quip:set-provider-config",
   TEST_MODEL_CONNECTION: "quip:test-model-connection",
   RESOLVE_PROVIDER: "quip:resolve-provider",
+  LIST_PROVIDER_MODELS: "quip:list-provider-models",
+
+  // Speech (the companion's real voice)
+  TTS_SPEAK: "quip:tts-speak",
+  TTS_STOP: "quip:tts-stop",
+  TTS_ON_AUDIO: "quip:tts-audio",
+  GET_SPEAK_CONFIG: "quip:get-speak-config",
+  SET_SPEAK_CONFIG: "quip:set-speak-config",
 
   // Companion visibility + app lifecycle (settings-controlled)
   SET_COMPANION_VISIBLE: "quip:set-companion-visible",
@@ -126,6 +134,10 @@ export interface ChatChunkPayload {
 export interface ChatDonePayload {
   requestId: string;
   full: string;
+  /** Provider that actually answered (may differ from primary after failover). */
+  provider?: string;
+  /** True when an automatic failover switch happened for this reply. */
+  switched?: boolean;
 }
 
 export interface ChatErrorPayload {
@@ -168,7 +180,7 @@ export interface TaskResultPayload {
 
 // ─── Model key setup payloads ──────────────────────────────────────────────
 
-export type ModelProviderId = "openrouter" | "groq";
+export type ModelProviderId = "openrouter" | "groq" | "cerebras" | "nvidia";
 
 export interface ModelKeySavePayload {
   provider: ModelProviderId;

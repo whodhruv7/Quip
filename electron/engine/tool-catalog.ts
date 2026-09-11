@@ -182,6 +182,52 @@ export const TOOL_CATALOG: CatalogEntry[] = [
     op: { type: "string", enum: ["new", "close", "next", "previous", "reopen", "back", "forward", "reload"], description: "Tab operation" },
   }, ["op"], "Browser tab…"),
   fn("self_check", "Run the device self-check: verify screen, clipboard, apps, browser, screenshot pipeline. Use when something seems broken.", {}, [], "Running self-check…"),
+
+  // ── Weather & knowledge (Skales skills parity) ─────────────────────────────
+  fn("weather", "Real weather for a city: current conditions + 4-day forecast (no key needed).", {
+    place: { type: "string", description: "City name, e.g. 'Delhi', 'Tokyo'" },
+  }, ["place"], "Checking the weather…"),
+  fn("summarize", "Summarize a piece of text or the last page you read into a few clear sentences.", {
+    text: { type: "string", description: "The text to summarize (omit to summarize the last thing you read)" },
+  }, [], "Summarizing…"),
+
+  // ── Documents (real files, Skales Documents/pdf-extract parity) ───────────
+  fn("pdf_read", "Extract the text from a PDF file on the laptop.", {
+    path: { type: "string", description: "Path to the PDF" },
+  }, ["path"], "Reading the PDF…"),
+  fn("docx_read", "Read the text of a .docx Word file on the laptop.", {
+    path: { type: "string", description: "Path to the .docx file" },
+  }, ["path"], "Reading the document…"),
+  fn("doc_create", "Create a REAL Word/Excel/PowerPoint file on the laptop from content you provide.", {
+    kind: { type: "string", enum: ["docx", "xlsx", "pptx"], description: "Document type" },
+    path: { type: "string", description: "Absolute path ending in .docx/.xlsx/.pptx" },
+    text: { type: "string", description: "docx: full document text (newlines = paragraphs)" },
+    rows: { type: "string", description: "xlsx: rows as a JSON array of arrays of strings, e.g. [[\"name\",\"age\"],[\"Asha\",\"7\"]]" },
+    slides: { type: "string", description: "pptx: slides as JSON [{\"title\":\"…\",\"body\":\"line\\nline\"}]" },
+  }, ["kind", "path"], "Creating the document…"),
+
+  // ── System & network (Skales System Monitor / Network parity) ─────────────
+  fn("sys_info", "Live laptop status: CPU load, memory, disks, battery, last boot.", {}, [], "Reading system status…"),
+  fn("network_info", "Network status: local IPs, Wi-Fi connection, devices on the network.", {}, [], "Checking the network…"),
+
+  // ── Speech (the companion's real voice) ─────────────────────────────────────
+  fn("speak", "Say something OUT LOUD through the speakers (neural voice, falls back to the laptop's built-in voice).", {
+    text: { type: "string", description: "Exactly what to say" },
+  }, ["text"], "Speaking…"),
+
+  // ── More Agent-Reach channels (GitHub / V2EX / Bilibili / X) ───────────────
+  fn("github_read", "Read a GitHub repo (stars, description, README) or search repos — real public API.", {
+    query_or_url: { type: "string", description: "Repo link, 'owner/repo', or search text" },
+  }, ["query_or_url"], "Reading GitHub…"),
+  fn("v2ex_read", "Read hot V2EX topics or a node's latest topics.", {
+    node: { type: "string", description: "Node name (omit for hot topics)" },
+  }, [], "Reading V2EX…"),
+  fn("bilibili_read", "Search Bilibili videos and read the results.", {
+    query: { type: "string", description: "Search text" },
+  }, ["query"], "Searching Bilibili…"),
+  fn("tweet_read", "Read a single tweet by its link (x.com/…/status/…). Searching X needs a paid API — say so if asked.", {
+    query_or_url: { type: "string", description: "The tweet URL" },
+  }, ["query_or_url"], "Reading the tweet…"),
 ];
 
 /** Schemas for the model (OpenAI tools array). */
