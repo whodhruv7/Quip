@@ -59,12 +59,15 @@ const KEY_ENV_KEYS = [
   "GROQ_TTS_VOICE",
 ];
 
-function withEnv(env, fn) {
+async function withEnv(env, fn) {
   const saved = Object.fromEntries(KEY_ENV_KEYS.map((k) => [k, process.env[k]]));
   for (const k of KEY_ENV_KEYS) delete process.env[k];
   Object.assign(process.env, env);
+  // `return await fn()` — the env must stay applied for the WHOLE async body,
+  // not just its synchronous prefix (a bare `return fn()` restored the env
+  // before the first await, silently un-keying every awaited assertion).
   try {
-    return fn();
+    return await fn();
   } finally {
     for (const k of KEY_ENV_KEYS) {
       if (saved[k] === undefined) delete process.env[k];
@@ -79,6 +82,9 @@ const ALL_KEYS = {
   NVIDIA_API_KEY: "nvapi_test_nvidia_key_12",
   OPENROUTER_API_KEY: "sk-or-test-key-1234",
 };
+
+const jsonResponse = (body, status = 200) =>
+  new Response(typeof body === "string" ? body : JSON.stringify(body), { status });
 
 function mockJsonFetch(status, body) {
   return async (url, init) => ({
@@ -124,7 +130,9 @@ test("an NVIDIA key alone makes NVIDIA the active brain", () => {
     const r = new ModelRouter();
     assert.equal(r.status().primary.provider, "nvidia");
     assert.equal(r.status().active.provider, "nvidia");
-    assert.match(r.activeVisionModel(), /llama-4-scout/);
+    // NVIDIA's live model list no longer carries llama-4-scout — the verified
+    // vision-capable default is meta/llama-3.2-90b-vision-instruct.
+    assert.match(r.activeVisionModel(), /llama-3\.2-90b-vision-instruct/);
   });
 });
 
@@ -241,17 +249,30 @@ test("discoverModels rejects unknown providers without dialing", async () => {
 
 // ─── 4. Probes for the two NEW providers + richer diagnostics ────────────────
 
-test("cerebras probe proves the key with a real models GET", async () => {
+test("cerebras probe proves key AND model id with a real 1-token chat completion", async () => {
   let called = null;
   const fetchImpl = async (url, init) => {
-    called = { url, method: init?.method, auth: init?.headers?.Authorization };
-    return { status: 200, text: async () => JSON.stringify({ data: [{ id: "llama-3.3-70b" }] }) };
+    called = { url, method: init?.method, auth: init?.headers?.Authorization, body: JSON.parse(init?.body ?? "{}") };
+    return { status: 200, text: async () => JSON.stringify({ choices: [{ message: { content: "o" } }] }) };
   };
   const r = await probeProvider("cerebras", "csk_test_key_9", "llama-3.3-70b", fetchImpl);
   assert.equal(r.ok, true);
-  assert.equal(called.url, "https://api.cerebras.ai/v1/models");
-  assert.equal(called.method, "GET");
+  assert.equal(called.url, "https://api.cerebras.ai/v1/chat/completions");
+  assert.equal(called.method, "POST");
+  assert.equal(called.body.model, "llama-3.3-70b");
+  assert.equal(called.body.max_tokens, 1);
   assert.match(called.auth, /^Bearer csk_test_key_9$/);
+});
+
+test("groq probe validates the model id — a dead model is reported honestly", async () => {
+  const fetchImpl = async () => ({
+    status: 400,
+    text: async () => JSON.stringify({ error: { message: "Model llama-3.3-70b-versatile is decommissioned and no longer available." } }),
+  });
+  const r = await probeProvider("groq", "gsk_test_key_9", "llama-3.3-70b-versatile", fetchImpl);
+  assert.equal(r.ok, false);
+  assert.match(r.message, /decommissioned/);
+  assert.match(r.message, /llama-3.3-70b-versatile/);
 });
 
 test("nvidia probe reports rate limiting distinctly (HTTP 429)", async () => {
@@ -471,4 +492,131 @@ test("upsertEnvFile replaces existing provider keys in place", () => {
   assert.match(text, /OTHER=x/);
   assert.ok(!text.includes("gsk_old_key"), "old key replaced, not duplicated");
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ─── 9. Model-id fallback + honest empty-reply failover (2026-09 round) ──────
+
+// Minimal SSE Response for stream tests (Node 18+ global Response/streams).
+function sseResponse(frames) {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      for (const f of frames) controller.enqueue(encoder.encode(f));
+      controller.close();
+    },
+  });
+  return new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+}
+
+const sseText = (text) =>
+  sseResponse(['data: {"choices":[{"delta":{"content":"' + text + '"}}]}\n\n', "data: [DONE]\n\n"]);
+
+test("a decommissioned model id retries the SAME provider with its spare model", async () => {
+  await withEnv(ALL_KEYS, async () => {
+    const r = new ModelRouter();
+    const modelsTried = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      const body = JSON.parse(init?.body ?? "{}");
+      modelsTried.push(body.model);
+      if (body.model === "openai/gpt-oss-120b") {
+        return new Response(
+          JSON.stringify({ error: { message: "Model openai/gpt-oss-120b is decommissioned and no longer available." } }),
+          { status: 400 }
+        );
+      }
+      return sseText("spare answered");
+    };
+    try {
+      const { full, provider } = await r.stream("sys", [{ role: "user", content: "hi" }], { onChunk: () => {} });
+      assert.equal(provider, "groq", "the SAME provider answers via its spare model");
+      assert.equal(full, "spare answered");
+      assert.deepEqual(modelsTried, ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("auth failures do NOT burn spare models — the router fails over instead", async () => {
+  await withEnv(ALL_KEYS, async () => {
+    const r = new ModelRouter();
+    const modelsTried = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      const body = JSON.parse(init?.body ?? "{}");
+      if (String(url).includes("groq")) {
+        modelsTried.push(body.model);
+        return jsonResponse({ error: { message: "bad key" } }, 401);
+      }
+      return sseText("cerebras caught it");
+    };
+    try {
+      const { provider, full } = await r.stream("sys", [{ role: "user", content: "hi" }], { onChunk: () => {} });
+      assert.equal(provider, "cerebras");
+      assert.equal(full, "cerebras caught it");
+      assert.deepEqual(modelsTried, ["openai/gpt-oss-120b"], "exactly one groq attempt — no spare burn");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("a 200 stream that yields NOTHING fails over instead of a silent empty bubble", async () => {
+  await withEnv(ALL_KEYS, async () => {
+    const r = new ModelRouter();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      // groq/cerebras/nvidia return empty-but-200 streams; OpenRouter answers
+      if (String(url).includes("openrouter")) return sseText("fallback brain");
+      return sseResponse(["data: [DONE]\n\n"]);
+    };
+    try {
+      const { full, provider, switched } = await r.stream("sys", [{ role: "user", content: "hi" }], { onChunk: () => {} });
+      assert.equal(provider, "openrouter");
+      assert.equal(full, "fallback brain");
+      assert.equal(switched, true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("a 200 SSE stream carrying an error frame fails over honestly", async () => {
+  await withEnv(ALL_KEYS, async () => {
+    const r = new ModelRouter();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("groq")) {
+        return sseResponse(['data: {"error":{"message":"quota exceeded mid-stream"}}\n\n']);
+      }
+      return sseText("cerebras answered");
+    };
+    try {
+      const { full, provider } = await r.stream("sys", [{ role: "user", content: "hi" }], { onChunk: () => {} });
+      assert.equal(provider, "cerebras");
+      assert.equal(full, "cerebras answered");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("when all providers fail with keys present, the message is honest (not 'no provider configured')", async () => {
+  await withEnv(ALL_KEYS, async () => {
+    const r = new ModelRouter();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => jsonResponse({ error: { message: "boom" } }, 500);
+    try {
+      await assert.rejects(
+        r.complete("sys", [{ role: "user", content: "hi" }], 1000),
+        (err) => {
+          assert.match(err.message, /couldn't get an answer from any/i);
+          return true;
+        }
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

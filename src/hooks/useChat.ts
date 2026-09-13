@@ -199,19 +199,26 @@ export function useChat(
 
       const taskId = uid();
       let taskResult: TaskResultPayload | null = null;
+      let taskEngineBroke = false;
       try {
         taskResult = await quipApiRef.current.executeTask({
           requestId: taskId,
           command: trimmed,
         });
       } catch (err: any) {
-        console.error("Task execution failed, falling back to chat:", err);
-        setError(err.message || "Task execution failed.");
-        setBusy(false);
-        return;
+        // The task engine throwing must NEVER kill the message — fall through
+        // to the chat brain so the companion still answers. (The old code
+        // returned here, so any task-engine crash made chat look "broken".)
+        console.error("Task engine unavailable — falling back to chat:", err);
+        taskEngineBroke = true;
       }
 
-      if (taskResult && taskResult.summary && !taskResult.plan?.isChat) {
+      // `answered` = the orchestrator already produced the final reply (the
+      // agent loop's chat answer). Display it directly — no second LLM call.
+      const answeredDirectly =
+        !!taskResult && !!taskResult.summary && (taskResult.answered === true || taskResult.plan?.isChat !== true);
+
+      if (!taskEngineBroke && taskResult && answeredDirectly) {
         // Honest failure reporting: plain-language reasons for what went wrong.
         const failureLines = (taskResult.failures ?? []).filter(Boolean);
         const trustNote = [...failureLines, ...taskResult.notes].filter(Boolean).join("\n");

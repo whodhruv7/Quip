@@ -52,7 +52,8 @@ export function describeError(err: unknown): { message: string; kind: ChatErrorK
   }
 }
 
-/** The default OpenRouter model — must never regress to a stale model name. */
+/** The default OpenRouter model — must never regress to a stale model name.
+ *  Verified live in OpenRouter's free list on 2026-09-13. */
 export function defaultOpenRouterModel(): string {
-  return "minimax/minimax-m3:free";
+  return "google/gemma-4-31b-it:free";
 }

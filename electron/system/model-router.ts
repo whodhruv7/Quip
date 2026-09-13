@@ -34,7 +34,15 @@ import type {
   ModelRouterStatus,
 } from "../../src/types";
 import { maskSecret, describeError as describeErrorPure } from "./model-config";
-import { PROVIDER_ORDER, PROVIDER_LABEL, PROVIDER_ENABLED_VAR, DEFAULT_MODELS } from "./env-store";
+import {
+  PROVIDER_ORDER,
+  PROVIDER_LABEL,
+  PROVIDER_ENABLED_VAR,
+  DEFAULT_MODELS,
+  FALLBACK_MODELS,
+  type ProviderId,
+} from "./env-store";
+import { providerErrorSnippet } from "./provider-probe";
 
 export { maskSecret } from "./model-config";
 
@@ -50,10 +58,14 @@ export class ModelTransportError extends Error {
   kind: ChatErrorKind;
   /** One honest line per provider that was tried/skipped, in order. */
   attempts: string[];
-  constructor(kind: ChatErrorKind, message: string, attempts: string[] = []) {
+  /** True when the provider rejected the MODEL ID (decommissioned/renamed) —
+   *  the router retries the next candidate model on the same provider. */
+  modelRejected?: boolean;
+  constructor(kind: ChatErrorKind, message: string, attempts: string[] = [], modelRejected = false) {
     super(message);
     this.kind = kind;
     this.attempts = attempts;
+    this.modelRejected = modelRejected;
   }
 }
 
@@ -120,9 +132,14 @@ export interface ChatPart {
 const REQUEST_TIMEOUT_MS = 60_000;
 
 // ---------------------------------------------------------------------------
-// Transport — Node fetch with Electron net.fetch TLS fallback.
-// Some Windows setups (AV inspection, corporate proxies) break Node's TLS.
-// Electron's net.fetch uses Chromium's network stack + OS cert store.
+// Transport — Electron net.fetch FIRST, Node fetch as automatic fallback.
+// Electron's net module runs on Chromium's network stack: system proxy,
+// OS certificate store, IPv6 happy-eyeballs. Node's undici fetch ignores the
+// Windows system proxy — on VPN/Clash/corporate setups every request dies
+// with a network error while the browser works fine. That mismatch was one
+// of the reasons "providers never connect" on the user's laptop. Trying BOTH
+// transports (and TLS-mismatch retry) covers proxy, AV-inspection and cert
+// pinning failures.
 // ---------------------------------------------------------------------------
 
 function isTlsError(err: unknown): boolean {
@@ -138,15 +155,30 @@ function isTlsError(err: unknown): boolean {
   );
 }
 
+function hasElectronNet(): boolean {
+  return !!net && typeof (net as any).fetch === "function";
+}
+
 async function modelFetch(url: string, init: RequestInit): Promise<Response> {
+  const useNet = hasElectronNet();
+  const viaNet = () => (net as any).fetch(url, init) as Promise<Response>;
+  const viaNode = () => fetch(url, init);
+  const first = useNet ? viaNet : viaNode;
+  const second = useNet ? viaNode : viaNet;
   try {
-    return await fetch(url, init);
+    return await first();
   } catch (error) {
     if (isTlsError(error)) {
-      // Electron net.fetch — uses OS trust store. Only for the TLS failure path.
-      return await net.fetch(url, init);
+      // The two stacks fail differently on TLS interception — swap stacks.
+      return await second();
     }
-    throw error;
+    // Proxy/VPN/DNS setups differ per stack too. One shot with the other
+    // stack before giving up (the signal still governs the total timeout).
+    try {
+      return await second();
+    } catch {
+      throw error; // surface the FIRST (primary transport) error
+    }
   }
 }
 
@@ -185,6 +217,18 @@ function buildBody(cfg: OpenAICompat, systemPrompt: string, history: ChatPart[],
   });
 }
 
+/** Does this provider response mean the MODEL ID itself is dead?
+ *  (decommissioned, renamed, not-found — the exact failure class that killed
+ *  the old Groq/OpenRouter defaults). Checked against status + provider's
+ *  own error words so we never mistake a bad prompt for a dead model. */
+function isModelRejection(status: number, body: string): boolean {
+  if (status !== 400 && status !== 404) return false;
+  const snippet = providerErrorSnippet(body).toLowerCase();
+  if (!snippet) return false;
+  return /\bmodel\b/.test(snippet) &&
+    /(not found|not exist|does not exist|no longer|decommission|deprecat|invalid|unknown|unsupported|retired|not available|not supported)/.test(snippet);
+}
+
 async function streamOpenAICompat(
   cfg: OpenAICompat,
   provider: string,
@@ -219,9 +263,12 @@ async function streamOpenAICompat(
 
     if (!resp.ok || !resp.body) {
       const text = await resp.text().catch(() => "");
+      const snippet = providerErrorSnippet(text);
       throw new ModelTransportError(
         classifyStatus(resp.status),
-        `${provider}-http-${resp.status}`
+        `${provider}-http-${resp.status}${snippet ? ` — ${snippet}` : ""}`,
+        [],
+        isModelRejection(resp.status, text)
       );
     }
 
@@ -264,7 +311,14 @@ async function completeOpenAICompat(
     }
 
     if (!resp.ok) {
-      throw new ModelTransportError(classifyStatus(resp.status), `${provider}-http-${resp.status}`);
+      const text = await resp.text().catch(() => "");
+      const snippet = providerErrorSnippet(text);
+      throw new ModelTransportError(
+        classifyStatus(resp.status),
+        `${provider}-http-${resp.status}${snippet ? ` — ${snippet}` : ""}`,
+        [],
+        isModelRejection(resp.status, text)
+      );
     }
 
     const data: any = await resp.json();
@@ -321,6 +375,34 @@ export function parseToolCall(raw: { id: string; name: string; arguments: string
 }
 
 // ---------------------------------------------------------------------------
+// Model-id fallback — providers retire model ids (Groq retired
+// llama-3.3-70b-versatile for free tiers on 2026-08-16; the old OpenRouter
+// default never existed). When the provider rejects the CONFIGURED id, retry
+// the same provider with verified-live spare ids before failing over.
+// ---------------------------------------------------------------------------
+
+async function withModelFallback<T>(
+  provider: ProviderId,
+  configured: string,
+  cfgFor: (model: string) => OpenAICompat,
+  run: (cfg: OpenAICompat) => Promise<T>
+): Promise<T> {
+  const spares = FALLBACK_MODELS[provider] ?? [];
+  const candidates = [configured, ...spares.filter((m) => m !== configured)];
+  let lastErr: unknown = null;
+  for (const model of candidates) {
+    try {
+      return await run(cfgFor(model));
+    } catch (err: any) {
+      lastErr = err;
+      if (err instanceof ModelTransportError && err.modelRejected) continue; // dead id → next spare
+      throw err; // auth / rate-limit / network / timeout / prompt — the router fails over
+    }
+  }
+  throw lastErr;
+}
+
+// ---------------------------------------------------------------------------
 // SSE reader — shared by all OpenAI-compatible providers.
 // ---------------------------------------------------------------------------
 
@@ -348,12 +430,25 @@ async function readSSE(
       if (data === "[DONE]") continue;
       try {
         const json = JSON.parse(data);
+        // A 200 stream can still carry an error frame (quota burst, dead
+        // model flagged mid-stream). Swallowing it used to produce a silent
+        // empty bubble — surface it so the router fails over honestly.
+        if (json && typeof json === "object" && json.error) {
+          const msg = String(json.error?.message ?? JSON.stringify(json.error)).slice(0, 160);
+          throw new ModelTransportError(
+            "http",
+            `${msg}`,
+            [],
+            /\bmodel\b/i.test(msg) && /(not found|not exist|decommission|deprecat|invalid|unknown|unsupported|retired)/i.test(msg)
+          );
+        }
         const delta: string = json?.choices?.[0]?.delta?.content ?? "";
         if (delta) {
           full += delta;
           onChunk(delta);
         }
-      } catch {
+      } catch (e: any) {
+        if (e instanceof ModelTransportError) throw e; // error frame — propagate
         /* partial JSON — ignore */
       }
     }
@@ -376,8 +471,10 @@ function realKey(value: string | undefined, placeholder: string): boolean {
 function makeGroq(): ProviderAdapter {
   const config: ModelConfig = {
     provider: "groq",
-    model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
-    label: `Groq · ${process.env.GROQ_MODEL || "Llama 3.3 70B"}`,
+    // DEFAULT_MODELS.groq — Groq decommissioned the old literal default
+    // (llama-3.3-70b-versatile) for free tiers on 2026-08-16.
+    model: process.env.GROQ_MODEL || DEFAULT_MODELS.groq,
+    label: `Groq · ${(process.env.GROQ_MODEL || DEFAULT_MODELS.groq).split("/").pop()}`,
     available: false,
   };
   const chat = (model?: string) => ({
@@ -393,12 +490,12 @@ function makeGroq(): ProviderAdapter {
     async stream(systemPrompt, history, cb) {
       const key = process.env.GROQ_API_KEY;
       if (!key) throw new ModelTransportError("no-key", "no-groq-key");
-      return streamOpenAICompat(chat(), "groq", systemPrompt, history, cb);
+      return withModelFallback("groq", config.model, chat, (cfg) => streamOpenAICompat(cfg, "groq", systemPrompt, history, cb));
     },
     async complete(systemPrompt, history, timeoutMs = 30_000) {
       const key = process.env.GROQ_API_KEY;
       if (!key) throw new ModelTransportError("no-key", "no-groq-key");
-      const { content } = await completeOpenAICompat(chat(), "groq", systemPrompt, history, timeoutMs);
+      const { content } = await withModelFallback("groq", config.model, chat, (cfg) => completeOpenAICompat(cfg, "groq", systemPrompt, history, timeoutMs));
       return content;
     },
     async completeVision(prompt, imageBase64, mimeType, timeoutMs = 30_000) {
@@ -422,7 +519,7 @@ function makeGroq(): ProviderAdapter {
     async completeWithTools(systemPrompt, history, tools, timeoutMs = 45_000, maxTokens = 2048) {
       const key = process.env.GROQ_API_KEY;
       if (!key) throw new ModelTransportError("no-key", "no-groq-key");
-      return completeOpenAICompat(chat(), "groq", systemPrompt, history, timeoutMs, maxTokens, tools);
+      return withModelFallback("groq", config.model, chat, (cfg) => completeOpenAICompat(cfg, "groq", systemPrompt, history, timeoutMs, maxTokens, tools));
     },
   };
 }
@@ -447,12 +544,12 @@ function makeCerebras(): ProviderAdapter {
     async stream(systemPrompt, history, cb) {
       const key = process.env.CEREBRAS_API_KEY;
       if (!key) throw new ModelTransportError("no-key", "no-cerebras-key");
-      return streamOpenAICompat(chat(), "cerebras", systemPrompt, history, cb);
+      return withModelFallback("cerebras", config.model, chat, (cfg) => streamOpenAICompat(cfg, "cerebras", systemPrompt, history, cb));
     },
     async complete(systemPrompt, history, timeoutMs = 30_000) {
       const key = process.env.CEREBRAS_API_KEY;
       if (!key) throw new ModelTransportError("no-key", "no-cerebras-key");
-      const { content } = await completeOpenAICompat(chat(), "cerebras", systemPrompt, history, timeoutMs);
+      const { content } = await withModelFallback("cerebras", config.model, chat, (cfg) => completeOpenAICompat(cfg, "cerebras", systemPrompt, history, timeoutMs));
       return content;
     },
     async completeVision(prompt, imageBase64, mimeType, timeoutMs = 30_000) {
@@ -476,7 +573,7 @@ function makeCerebras(): ProviderAdapter {
     async completeWithTools(systemPrompt, history, tools, timeoutMs = 45_000, maxTokens = 2048) {
       const key = process.env.CEREBRAS_API_KEY;
       if (!key) throw new ModelTransportError("no-key", "no-cerebras-key");
-      return completeOpenAICompat(chat(), "cerebras", systemPrompt, history, timeoutMs, maxTokens, tools);
+      return withModelFallback("cerebras", config.model, chat, (cfg) => completeOpenAICompat(cfg, "cerebras", systemPrompt, history, timeoutMs, maxTokens, tools));
     },
   };
 }
@@ -497,23 +594,23 @@ function makeNvidia(): ProviderAdapter {
     config,
     isConfigured: () => realKey(process.env.NVIDIA_API_KEY, "nvapi-your-key-here"),
     isEnabled: () => process.env.QUIP_NVIDIA_ENABLED !== "0",
-    visionModel: () => process.env.NVIDIA_VISION_MODEL || "meta/llama-4-scout-17b-16e-instruct",
+    visionModel: () => process.env.NVIDIA_VISION_MODEL || "meta/llama-3.2-90b-vision-instruct",
     async stream(systemPrompt, history, cb) {
       const key = process.env.NVIDIA_API_KEY;
       if (!key) throw new ModelTransportError("no-key", "no-nvidia-key");
-      return streamOpenAICompat(chat(), "nvidia", systemPrompt, history, cb);
+      return withModelFallback("nvidia", config.model, chat, (cfg) => streamOpenAICompat(cfg, "nvidia", systemPrompt, history, cb));
     },
     async complete(systemPrompt, history, timeoutMs = 30_000) {
       const key = process.env.NVIDIA_API_KEY;
       if (!key) throw new ModelTransportError("no-key", "no-nvidia-key");
-      const { content } = await completeOpenAICompat(chat(), "nvidia", systemPrompt, history, timeoutMs);
+      const { content } = await withModelFallback("nvidia", config.model, chat, (cfg) => completeOpenAICompat(cfg, "nvidia", systemPrompt, history, timeoutMs));
       return content;
     },
     async completeVision(prompt, imageBase64, mimeType, timeoutMs = 30_000) {
       const key = process.env.NVIDIA_API_KEY;
       if (!key) throw new ModelTransportError("no-key", "no-nvidia-key");
       const { content } = await completeOpenAICompat(
-        chat(process.env.NVIDIA_VISION_MODEL || "meta/llama-4-scout-17b-16e-instruct"), "nvidia",
+        chat(process.env.NVIDIA_VISION_MODEL || "meta/llama-3.2-90b-vision-instruct"), "nvidia",
         VISION_SYSTEM_PROMPT,
         [{
           role: "user",
@@ -530,7 +627,7 @@ function makeNvidia(): ProviderAdapter {
     async completeWithTools(systemPrompt, history, tools, timeoutMs = 45_000, maxTokens = 2048) {
       const key = process.env.NVIDIA_API_KEY;
       if (!key) throw new ModelTransportError("no-key", "no-nvidia-key");
-      return completeOpenAICompat(chat(), "nvidia", systemPrompt, history, timeoutMs, maxTokens, tools);
+      return withModelFallback("nvidia", config.model, chat, (cfg) => completeOpenAICompat(cfg, "nvidia", systemPrompt, history, timeoutMs, maxTokens, tools));
     },
   };
 }
@@ -538,14 +635,14 @@ function makeNvidia(): ProviderAdapter {
 function makeOpenRouter(): ProviderAdapter {
   const config: ModelConfig = {
     provider: "openrouter",
-    model: process.env.OPENROUTER_MODEL || "minimax/minimax-m3:free",
-    label: `OpenRouter · ${(process.env.OPENROUTER_MODEL || "minimax/minimax-m3:free").split("/").pop()}`,
+    model: process.env.OPENROUTER_MODEL || DEFAULT_MODELS.openrouter,
+    label: `OpenRouter · ${(process.env.OPENROUTER_MODEL || DEFAULT_MODELS.openrouter).split("/").pop()}`,
     available: false,
   };
-  const chat = () => ({
+  const chat = (model?: string) => ({
     url: "https://openrouter.ai/api/v1/chat/completions",
     key: process.env.OPENROUTER_API_KEY ?? "",
-    model: config.model,
+    model: model || config.model,
     extraHeaders: { "HTTP-Referer": "https://quip.app", "X-Title": "Quip" },
   });
   return {
@@ -556,12 +653,12 @@ function makeOpenRouter(): ProviderAdapter {
     async stream(systemPrompt, history, cb) {
       const key = process.env.OPENROUTER_API_KEY;
       if (!key) throw new ModelTransportError("no-key", "no-openrouter-key");
-      return streamOpenAICompat(chat(), "openrouter", systemPrompt, history, cb);
+      return withModelFallback("openrouter", config.model, chat, (cfg) => streamOpenAICompat(cfg, "openrouter", systemPrompt, history, cb));
     },
     async complete(systemPrompt, history, timeoutMs = 30_000) {
       const key = process.env.OPENROUTER_API_KEY;
       if (!key) throw new ModelTransportError("no-key", "no-openrouter-key");
-      const { content } = await completeOpenAICompat(chat(), "openrouter", systemPrompt, history, timeoutMs);
+      const { content } = await withModelFallback("openrouter", config.model, chat, (cfg) => completeOpenAICompat(cfg, "openrouter", systemPrompt, history, timeoutMs));
       return content;
     },
     async completeVision(prompt, imageBase64, mimeType, timeoutMs = 30_000) {
@@ -585,7 +682,7 @@ function makeOpenRouter(): ProviderAdapter {
     async completeWithTools(systemPrompt, history, tools, timeoutMs = 45_000, maxTokens = 2048) {
       const key = process.env.OPENROUTER_API_KEY;
       if (!key) throw new ModelTransportError("no-key", "no-openrouter-key");
-      return completeOpenAICompat(chat(), "openrouter", systemPrompt, history, timeoutMs, maxTokens, tools);
+      return withModelFallback("openrouter", config.model, chat, (cfg) => completeOpenAICompat(cfg, "openrouter", systemPrompt, history, timeoutMs, maxTokens, tools));
     },
   };
 }
@@ -670,6 +767,11 @@ export class ModelRouter {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
           const full = await p.stream(systemPrompt, history, cb);
+          // A 200 stream that yields NOTHING is a failure, not a success —
+          // the user used to get a silent empty bubble. Fail over honestly.
+          if (!full || !full.trim()) {
+            throw new ModelTransportError("http", `${PROVIDER_LABEL[p.config.provider]} returned an empty reply`);
+          }
           const switched = p.config.provider !== providers[0].config.provider;
           if (switched) attempts.push(`${PROVIDER_LABEL[p.config.provider]} answered after ${PROVIDER_LABEL[providers[0].config.provider]} failed.`);
           this.activeProvider = p.config.provider;
@@ -831,13 +933,16 @@ export class ModelRouter {
   }
 
   /** Wrap a chain-total failure into one error carrying the honest trail. */
-  private wrapTotalFailure(lastErr: unknown, attempts: string[], fallbackMsg = "No AI provider configured"): ModelTransportError {
+  private wrapTotalFailure(lastErr: unknown, attempts: string[], fallbackMsg?: string): ModelTransportError {
     if (lastErr instanceof ModelTransportError && lastErr.attempts.length > 0) {
       return lastErr;
     }
     const kind: ChatErrorKind = lastErr instanceof ModelTransportError ? lastErr.kind : "no-key";
     const trail = [...attempts, ...this.skipNotes()];
-    return new ModelTransportError(kind, fallbackMsg, trail);
+    const msg = fallbackMsg ?? (this.chain().length === 0
+      ? "No AI provider is configured yet — add a key in Settings → AI Brain."
+      : "I couldn't get an answer from any of your AI providers.");
+    return new ModelTransportError(kind, msg, trail);
   }
 
   /** Masked diagnostics — safe to log/show. Never includes raw keys. */

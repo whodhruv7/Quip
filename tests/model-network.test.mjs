@@ -17,11 +17,27 @@ test("missing key reports 'missing', short key reports 'present'", () => {
   assert.equal(maskSecret("short"), "present");
 });
 
-test("OpenRouter default model is not a stale model name", () => {
-  const configured = process.env.OPENROUTER_MODEL || defaultOpenRouterModel();
-  assert.notEqual(configured, "openrouter/owl-alpha");
-  assert.notEqual(configured, "google/gemma-3-27b-it:free");
-  assert.equal(defaultOpenRouterModel(), "minimax/minimax-m3:free");
+test("OpenRouter default model is a verified-live free id (never a stale name)", () => {
+  // The old default "minimax/minimax-m3:free" NEVER EXISTED on OpenRouter
+  // (only the paid "minimax/minimax-m3" does) — every chat 400'd. The
+  // current default was verified live against OpenRouter's public
+  // /api/v1/models list on 2026-09-13.
+  assert.equal(defaultOpenRouterModel(), "google/gemma-4-31b-it:free");
+  assert.notEqual(defaultOpenRouterModel(), "minimax/minimax-m3:free");
+});
+
+test("all provider defaults avoid decommissioned model ids", async () => {
+  const { DEFAULT_MODELS } = await import("../dist-test/electron/system/env-store.js");
+  // Groq decommissioned these for FREE tiers on 2026-08-16:
+  const groqDead = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+  assert.equal(groqDead.includes(DEFAULT_MODELS.groq), false);
+  // NVIDIA's live /v1/models no longer lists meta/llama-3.3-70b-instruct:
+  assert.notEqual(DEFAULT_MODELS.nvidia, "meta/llama-3.3-70b-instruct");
+  // Every provider must define at least one verified spare:
+  const { FALLBACK_MODELS } = await import("../dist-test/electron/system/env-store.js");
+  for (const p of ["groq", "cerebras", "nvidia", "openrouter"]) {
+    assert.ok(Array.isArray(FALLBACK_MODELS[p]) && FALLBACK_MODELS[p].length >= 2, `${p} has spares`);
+  }
 });
 
 test("error kinds map to calm user messages with no raw internals", () => {

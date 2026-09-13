@@ -180,31 +180,57 @@ export async function probeOpenRouter(
   );
 }
 
-/** Probe Groq with a models-list GET — cheap, real, proves the key. */
+// Chat-completions probes for EVERY provider (upgraded from /models-only:
+// a models-list probe proves the key but NOT the model id — a decommissioned
+// default like Groq's retired llama-3.3-70b-versatile used to pass "Test
+// connection" and then fail at every chat).
+
+/** Probe Groq with a 1-token completion — proves the key AND the model id. */
 export async function probeGroq(
   apiKey: string,
-  _model: string,
+  model: string,
   fetchImpl: FetchLike = fetch
 ): Promise<ProbeResult> {
-  return probeModelsList("Groq", "https://api.groq.com/openai/v1/models", apiKey, undefined, fetchImpl);
+  return probeChatCompletion(
+    "Groq",
+    "https://api.groq.com/openai/v1/chat/completions",
+    apiKey,
+    model,
+    undefined,
+    fetchImpl
+  );
 }
 
-/** Probe Cerebras with a models-list GET — cheap, real, proves the key. */
+/** Probe Cerebras with a 1-token completion — proves the key AND the model id. */
 export async function probeCerebras(
   apiKey: string,
-  _model: string,
+  model: string,
   fetchImpl: FetchLike = fetch
 ): Promise<ProbeResult> {
-  return probeModelsList("Cerebras", "https://api.cerebras.ai/v1/models", apiKey, undefined, fetchImpl);
+  return probeChatCompletion(
+    "Cerebras",
+    "https://api.cerebras.ai/v1/chat/completions",
+    apiKey,
+    model,
+    undefined,
+    fetchImpl
+  );
 }
 
-/** Probe NVIDIA NIM with a models-list GET — cheap, real, proves the key. */
+/** Probe NVIDIA NIM with a 1-token completion — proves the key AND the model id. */
 export async function probeNvidia(
   apiKey: string,
-  _model: string,
+  model: string,
   fetchImpl: FetchLike = fetch
 ): Promise<ProbeResult> {
-  return probeModelsList("NVIDIA", "https://integrate.api.nvidia.com/v1/models", apiKey, undefined, fetchImpl);
+  return probeChatCompletion(
+    "NVIDIA",
+    "https://integrate.api.nvidia.com/v1/chat/completions",
+    apiKey,
+    model,
+    undefined,
+    fetchImpl
+  );
 }
 
 export type ProbeProviderId = "openrouter" | "groq" | "cerebras" | "nvidia";

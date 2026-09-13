@@ -45,6 +45,8 @@ export interface ExecutionResult {
   failures?: string[];
   /** True when the agent loop answered without tools — treat as chat. */
   chatReply?: string;
+  /** True when `summary` already IS the final answer (no second model call). */
+  answered?: boolean;
   /** True when the user cancelled the task (Stop). */
   cancelled?: boolean;
 }
@@ -184,8 +186,12 @@ class Orchestrator {
         const agentResult = await this.runAgentFallback(command, opts, ctx, "planning");
         if (agentResult) {
           if (agentResult.chatReply) {
-            // Agent said "this is conversation" — hand back to chat.
-            return { ...agentResult, chatReply: undefined };
+            // The agent loop already produced the chat answer — hand it back
+            // as the FINAL reply ("answered") instead of discarding it. The
+            // old code threw the answer away, forcing a SECOND model call per
+            // message and burning free-tier quota (the 429s that looked like
+            // "providers are down").
+            return { ...agentResult, summary: agentResult.chatReply, chatReply: undefined, answered: true };
           }
           return agentResult;
         }

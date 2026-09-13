@@ -92,7 +92,10 @@ export async function discoverModels(
     return { ok: false, models: [], message: `Unknown provider "${provider}".` };
   }
 
-  const cacheKey = `${provider}:${apiKey ? "keyed" : "plain"}`;
+  // Cache key includes a SHORT key fingerprint — pasting a new key and
+  // browsing within the TTL must never show the OLD key's model list.
+  const keyFingerprint = apiKey ? `k${apiKey.length}:${apiKey.slice(-4)}` : "plain";
+  const cacheKey = `${provider}:${keyFingerprint}`;
   const hit = cache.get(cacheKey);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
     return hit.result;

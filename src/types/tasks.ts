@@ -42,6 +42,9 @@ export interface TaskResultPayload {
   failures?: string[];
   /** True when the user stopped the task (Stop button / cancellation). */
   cancelled?: boolean;
+  /** True when `summary` already IS the final assistant answer — the
+   *  renderer must display it directly instead of calling the LLM again. */
+  answered?: boolean;
   plan: TaskPlan;
 }
 

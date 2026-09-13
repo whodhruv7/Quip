@@ -870,22 +870,58 @@ ipcMain.on("quip:set-companion", (_e, id: "pix" | "kai" | "ren" | "bubbles" | "c
 ipcMain.handle(
   IPC.TASK_EXECUTE,
   async (_e, payload: TaskExecutePayload): Promise<TaskResultPayload> => {
-    const profile = deviceProfile ?? (await ensureProfile(app.getPath("userData")));
-    const platform = profile.platform;
-    const workspacePath = app.getAppPath();
-
-    // Set up approval callback — forwards to renderer
     const win = BrowserWindow.fromWebContents(_e.sender);
-    const companionId = win ? windowCompanionMap.get(win.id) ?? defaultCompanionId : defaultCompanionId;
+    try {
+      return await runTaskExecute(_e, payload, win);
+    } catch (err: any) {
+      // HARD GUARANTEE: the task engine must NEVER kill chat. Any unexpected
+      // throw (profile scan, orchestrator, executor bug) used to reject this
+      // invoke and the renderer showed "Task execution failed" WITHOUT ever
+      // trying the AI. Now we return an honest empty-chat result so the
+      // renderer falls through to chatSend and the companion still answers.
+      const reason = String(err?.message ?? err).slice(0, 300);
+      console.error("task-execute failed — falling back to chat:", reason);
+      return {
+        requestId: payload.requestId,
+        success: false,
+        summary: "",
+        notes: [],
+        failures: [`The task engine hit an unexpected problem: ${reason}`],
+        plan: {
+          id: payload.requestId,
+          requestId: payload.requestId,
+          intent: { type: "chat", target: null, query: null, confidence: 0.3, verbs: [], raw: payload.command },
+          subtasks: [],
+          summary: "",
+          isChat: true,
+          createdAt: Date.now(),
+        } as any,
+      };
+    }
+  }
+);
 
-    execPermissionSystem.onApprovalRequested = (request: ApprovalRequest) => {
-      sendToWindow(win, "quip:approval-request", request);
-    };
+async function runTaskExecute(
+  _e: Electron.IpcMainInvokeEvent,
+  payload: TaskExecutePayload,
+  win: Electron.BrowserWindow | null
+): Promise<TaskResultPayload> {
+  const profile = deviceProfile ?? (await ensureProfile(app.getPath("userData")));
+  const platform = profile.platform;
+  const workspacePath = app.getAppPath();
 
-    // ── Cancellation token (Stop button / stop command) ────────────────
-    const cancelSignal = { aborted: false };
-    taskCancelSignals.add(cancelSignal);
+  // Set up approval callback — forwards to renderer
+  const companionId = win ? windowCompanionMap.get(win.id) ?? defaultCompanionId : defaultCompanionId;
 
+  execPermissionSystem.onApprovalRequested = (request: ApprovalRequest) => {
+    sendToWindow(win, "quip:approval-request", request);
+  };
+
+  // ── Cancellation token (Stop button / stop command) ────────────────
+  const cancelSignal = { aborted: false };
+  taskCancelSignals.add(cancelSignal);
+
+  try {
     // PLANNING is a real phase: from this moment until the first step starts,
     // the companion honestly shows "planning" (never a fake WORKING state).
     sendToWindow(win, IPC.TASK_PROGRESS, {
@@ -917,8 +953,6 @@ ipcMain.handle(
       },
     });
 
-    taskCancelSignals.delete(cancelSignal);
-
     // Record task completion for companion evolution and timeline
     if (result.success && result.stepsTotal > 0) {
       try {
@@ -939,18 +973,21 @@ ipcMain.handle(
       summary: result.summary,
       notes: result.notes,
       ...(result.failures?.length ? { failures: result.failures } : {}),
+      ...(result.answered ? { answered: true } : {}),
       plan: {
         id: payload.requestId,
         requestId: payload.requestId,
         intent: { type: intentInfo.action, target: intentInfo.target || null, query: intentInfo.query || null, confidence: intentInfo.confidence, verbs: [], raw: payload.command },
         subtasks: [],
         summary: result.summary,
-        isChat: result.stepsTotal === 0,
+        isChat: result.stepsTotal === 0 && !result.answered,
         createdAt: Date.now(),
       } as any,
     };
+  } finally {
+    taskCancelSignals.delete(cancelSignal);
   }
-);
+}
 
 // ---------------------------------------------------------------------------
 // IPC — approval resolution (user taps Approve/Reject)

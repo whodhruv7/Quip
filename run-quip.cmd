@@ -53,7 +53,9 @@ echo ^(Close this window to stop the app^)
 echo.
 
 REM Run in foreground so closing this cmd quits the app
-cross-env NODE_ENV=production electron .
+REM (npx resolves the local node_modules binaries — a bare "electron" is NOT
+REM  on PATH when this file is double-clicked, which used to break the launch)
+call npx cross-env NODE_ENV=production electron .
 if errorlevel 1 (
   echo.
   echo [ERROR] Quip crashed. Check the output above.

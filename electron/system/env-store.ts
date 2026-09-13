@@ -38,11 +38,31 @@ export const PROVIDER_MODEL_VAR: Record<ProviderId, string> = {
   nvidia: "NVIDIA_MODEL",
 };
 
+// Defaults verified live on 2026-09-13:
+//  - Groq decommissioned llama-3.3-70b-versatile + llama-3.1-8b-instant for
+//    Free/Developer tiers on 2026-08-16 → their recommended replacement is
+//    GPT-OSS (120B flagship / 20B fast).
+//  - NVIDIA NIM no longer lists meta/llama-3.3-70b-instruct → openai/gpt-oss-20b
+//    is verified present in the live /v1/models list.
+//  - OpenRouter: minimax/minimax-m3:free does NOT exist (only the paid id);
+//    google/gemma-4-31b-it:free is verified in the live free list.
+//  - Cerebras documents llama-3.3-70b as supported (changelog verified).
 export const DEFAULT_MODELS: Record<ProviderId, string> = {
-  openrouter: "minimax/minimax-m3:free",
-  groq: "llama-3.3-70b-versatile",
+  openrouter: "google/gemma-4-31b-it:free",
+  groq: "openai/gpt-oss-120b",
   cerebras: "llama-3.3-70b",
-  nvidia: "meta/llama-3.3-70b-instruct",
+  nvidia: "openai/gpt-oss-20b",
+};
+
+/** Verified-live spare model ids per provider. When a provider rejects the
+ *  configured id (decommissioned / renamed — this EXACTLY broke the old Groq
+ *  default), the router silently retries the next candidate on the SAME
+ *  provider before failing over to the next provider. */
+export const FALLBACK_MODELS: Record<ProviderId, string[]> = {
+  groq: ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "meta-llama/llama-4-scout-17b-16e-instruct"],
+  cerebras: ["llama-3.3-70b", "gpt-oss-120b"],
+  nvidia: ["openai/gpt-oss-20b", "nvidia/llama-3.1-nemotron-70b-instruct", "moonshotai/kimi-k2.6"],
+  openrouter: ["google/gemma-4-31b-it:free", "nvidia/nemotron-3-super-120b-a12b:free", "openrouter/free"],
 };
 
 export const PROVIDER_ENABLED_VAR: Record<ProviderId, string> = {
