@@ -5,7 +5,7 @@ import { TaskResultPayload, TaskProgress } from "./tasks";
 import { DeviceProfile } from "./device";
 import { SpatialConfig, EnvironmentState, BootstrapProgress } from "./other";
 import { UserKnowledge } from "./memory";
-import { ModelRouterStatus } from "./models";
+import { ModelRouterStatus, BrainHealthReport, DoctorReport } from "./models";
 import { PermissionRule } from "./permissions";
 import { CapabilityId } from "./capabilities";
 
@@ -32,6 +32,7 @@ export interface ChatAPI {
   onChatChunk: (cb: (delta: string, requestId: string) => void) => () => void;
   onChatDone: (cb: (full: string, requestId: string, meta?: { provider?: string; switched?: boolean }) => void) => () => void;
   onChatError: (cb: (err: { message: string; kind: string; requestId: string }) => void) => () => void;
+  onChatProvider: (cb: (data: { provider: string; confirmed: boolean; requestId: string }) => void) => () => void;
   setCompanion: (id: CompanionId) => void;
 }
 
@@ -77,7 +78,7 @@ export interface SystemAPI {
   onBootstrapProgress: (cb: (p: BootstrapProgress) => void) => () => void;
 }
 
-export type ProviderIdUI = "openrouter" | "groq" | "cerebras" | "nvidia";
+export type ProviderIdUI = "openrouter" | "groq" | "cerebras" | "nvidia" | "gemini" | "ollama";
 
 export interface ModelSetupAPI {
   saveModelKeys: (payload: {
@@ -109,21 +110,35 @@ export interface ModelSetupAPI {
   }) => Promise<{ ok: boolean; message: string; active?: string }>;
 }
 
+/** Brain health + Doctor + journal + transport (V3.1 connectivity round). */
+export interface BrainHealthAPI {
+  getBrainHealth: () => Promise<BrainHealthReport | null>;
+  onBrainHealth: (cb: (health: BrainHealthReport) => void) => () => void;
+  runDoctor: () => Promise<DoctorReport | null>;
+  getConnectionJournal: () => Promise<
+    Array<{ ts: number; provider: string; model: string; ok: boolean; kind: string; latencyMs: number; note: string; switched?: boolean }>
+  >;
+  getTransportSetting: () => Promise<{ mode: "auto" | "net" | "node" }>;
+  setTransportSetting: (mode: "auto" | "net" | "node") => Promise<{ ok: boolean; message: string }>;
+}
+
 export interface SpeechAPI {
   ttsSpeak: (payload: { requestId?: string; text: string }) => Promise<{ ok: boolean; engine: string; message: string }>;
   ttsStop: () => void;
   onTtsAudio: (cb: (data: { requestId: string; engine: string; audioBase64: string; mime: string }) => void) => () => void;
   getSpeakConfig: () => Promise<{
     enabled: boolean;
-    engine: "auto" | "groq" | "local";
+    engine: "auto" | "groq" | "edge" | "local";
     voice: string;
+    edgeVoice: string;
     localVoice: string;
     platform: string;
   }>;
   setSpeakConfig: (payload: {
     enabled?: boolean;
-    engine?: "auto" | "groq" | "local";
+    engine?: "auto" | "groq" | "edge" | "local";
     voice?: string;
+    edgeVoice?: string;
     localVoice?: string;
   }) => Promise<{ ok: boolean; message: string }>;
 }
@@ -137,7 +152,7 @@ export interface LifecycleAPI {
   quitApp: () => void;
 }
 
-export type QuipAPI = WindowAPI & ChatAPI & TaskAPI & PermissionAPI & DeviceAPI & SystemAPI & ModelSetupAPI & SpeechAPI & LifecycleAPI;
+export type QuipAPI = WindowAPI & ChatAPI & TaskAPI & PermissionAPI & DeviceAPI & SystemAPI & ModelSetupAPI & BrainHealthAPI & SpeechAPI & LifecycleAPI;
 
 declare global {
   interface Window {

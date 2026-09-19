@@ -57,6 +57,16 @@ const KEY_ENV_KEYS = [
   "QUIP_SPEAK_ENABLED",
   "QUIP_SPEAK_ENGINE",
   "GROQ_TTS_VOICE",
+  "QUIP_EDGE_VOICE",
+  "QUIP_LOCAL_VOICE",
+  "GEMINI_API_KEY",
+  "GEMINI_MODEL",
+  "GEMINI_VISION_MODEL",
+  "QUIP_GEMINI_ENABLED",
+  "QUIP_OLLAMA_ENABLED",
+  "QUIP_OLLAMA_URL",
+  "QUIP_OLLAMA_MODEL",
+  "QUIP_TRANSPORT",
 ];
 
 async function withEnv(env, fn) {
@@ -305,7 +315,9 @@ test("cerebras keys must start with csk- and nvidia keys with nvapi-", () => {
 });
 
 test("PROVIDER_ORDER is the documented failover order", () => {
-  assert.deepEqual(PROVIDER_ORDER, ["groq", "cerebras", "nvidia", "openrouter"]);
+  // V3.1: Gemini joins at #2 (biggest free quota), Ollama last (offline
+  // backup, opt-in) — the four original providers keep their relative order.
+  assert.deepEqual(PROVIDER_ORDER, ["groq", "gemini", "cerebras", "nvidia", "openrouter", "ollama"]);
 });
 
 // ─── 6. Speech — the companion's real voice ──────────────────────────────────

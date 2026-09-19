@@ -43,6 +43,17 @@ function endpointFor(provider: string, apiKey: string): Endpoint | null {
       return { url: "https://api.cerebras.ai/v1/models", headers: auth(apiKey) };
     case "nvidia":
       return { url: "https://integrate.api.nvidia.com/v1/models", headers: auth(apiKey) };
+    case "gemini":
+      return {
+        url: "https://generativelanguage.googleapis.com/v1beta/openai/models",
+        headers: auth(apiKey),
+      };
+    case "ollama": {
+      // No key — the local OpenAI-compatible server lists what it has.
+      let base = (process.env.QUIP_OLLAMA_URL || "http://127.0.0.1:11434/v1").trim().replace(/\/+$/, "");
+      if (!base.endsWith("/v1")) base = `${base}/v1`;
+      return { url: `${base}/models`, headers: {} };
+    }
     case "openrouter":
       return {
         url: "https://openrouter.ai/api/v1/models",
@@ -67,9 +78,11 @@ function auth(apiKey: string): Record<string, string> {
 function labelFor(provider: string): string {
   const labels: Record<string, string> = {
     groq: "Groq",
+    gemini: "Gemini",
     cerebras: "Cerebras",
     nvidia: "NVIDIA",
     openrouter: "OpenRouter",
+    ollama: "Ollama",
   };
   return labels[provider] ?? provider;
 }

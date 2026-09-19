@@ -17,13 +17,15 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 
-export type SpeakEngine = "auto" | "groq" | "local";
+export type SpeakEngine = "auto" | "groq" | "edge" | "local";
 
 export interface SpeakConfig {
   enabled: boolean;
   engine: SpeakEngine;
   /** Groq playai-tts voice name (…-PlayAI). */
   voice: string;
+  /** Edge (free neural) voice — en-IN voices handle Hinglish best. */
+  edgeVoice: string;
   /** Optional Windows SAPI voice name. Empty = system default. */
   localVoice: string;
 }
@@ -31,8 +33,8 @@ export interface SpeakConfig {
 export interface SpeakOutcome {
   ok: boolean;
   /** Which engine actually produced (or attempted) the speech. */
-  engine: "groq" | "local" | "none";
-  /** Groq engine: wav audio for the renderer to play. */
+  engine: "groq" | "edge" | "local" | "none";
+  /** Groq/Edge engines: encoded audio for the renderer to play. */
   audioBase64?: string;
   mime?: string;
   /** Honest note — why the engine fell back or failed. */
@@ -54,12 +56,13 @@ export function getSpeakConfig(): SpeakConfig {
     enabled: process.env.QUIP_SPEAK_ENABLED !== "0",
     engine: parseEngine(process.env.QUIP_SPEAK_ENGINE),
     voice: process.env.GROQ_TTS_VOICE || "Celeste-PlayAI",
+    edgeVoice: process.env.QUIP_EDGE_VOICE || "en-IN-NeerjaNeural",
     localVoice: process.env.QUIP_LOCAL_VOICE || "",
   };
 }
 
 function parseEngine(value: string | undefined): SpeakEngine {
-  return value === "groq" || value === "local" ? value : "auto";
+  return value === "groq" || value === "edge" || value === "local" ? value : "auto";
 }
 
 export function speakConfigEnvEntries(cfg: Partial<SpeakConfig>): Record<string, string> {
@@ -67,6 +70,7 @@ export function speakConfigEnvEntries(cfg: Partial<SpeakConfig>): Record<string,
   if (cfg.enabled !== undefined) entries.QUIP_SPEAK_ENABLED = cfg.enabled ? "1" : "0";
   if (cfg.engine !== undefined) entries.QUIP_SPEAK_ENGINE = parseEngine(cfg.engine);
   if (cfg.voice !== undefined && cfg.voice.trim()) entries.GROQ_TTS_VOICE = cfg.voice.trim();
+  if (cfg.edgeVoice !== undefined && cfg.edgeVoice.trim()) entries.QUIP_EDGE_VOICE = cfg.edgeVoice.trim();
   if (cfg.localVoice !== undefined) entries.QUIP_LOCAL_VOICE = cfg.localVoice.trim();
   return entries;
 }
@@ -172,6 +176,69 @@ async function groqSpeak(
   }
 }
 
+// ─── Edge neural voice (free, no key, online) ────────────────────────────
+// msedge-tts uses the same free Microsoft Edge Read-Aloud service the
+// Edge browser ships with. en-IN-NeerjaNeural reads Hinglish naturally —
+// the Groq voices (English/Arabic only) mangle it. Loaded via dynamic
+// import so the app still runs (and falls back to SAPI) if the package
+// is missing or broken.
+
+/** True when the edge engine module can be loaded (cached, never throws). */
+let edgeAvailableCache: boolean | null = null;
+export async function edgeEngineAvailable(): Promise<boolean> {
+  if (edgeAvailableCache !== null) return edgeAvailableCache;
+  try {
+    const mod: any = await import("msedge-tts");
+    edgeAvailableCache = typeof (mod?.MsEdgeTTS ?? mod?.default?.MsEdgeTTS) === "function";
+  } catch {
+    edgeAvailableCache = false;
+  }
+  return edgeAvailableCache;
+}
+
+async function edgeSpeak(text: string, voice: string): Promise<SpeakOutcome> {
+  try {
+    const mod: any = await import("msedge-tts");
+    const MsEdgeTTS = mod?.MsEdgeTTS ?? mod?.default?.MsEdgeTTS;
+    if (typeof MsEdgeTTS !== "function") {
+      edgeAvailableCache = false;
+      return { ok: false, engine: "edge", message: "The free neural voice module is missing.", fellBack: false };
+    }
+    const tts = new MsEdgeTTS();
+    await tts.setSpeechConfig();
+    const result = await tts.toStream(text.slice(0, MAX_SPEAK_CHARS), { voice });
+    const stream = result?.audioStream ?? result;
+    if (!stream || typeof stream.on !== "function") {
+      return { ok: false, engine: "edge", message: "The free neural voice returned no audio stream.", fellBack: false };
+    }
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve, reject) => {
+      stream.on("data", (c: any) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+      stream.on("end", () => resolve());
+      stream.on("error", (e: any) => reject(e instanceof Error ? e : new Error(String(e))));
+    });
+    const buf = Buffer.concat(chunks);
+    if (buf.length < 1000) {
+      return { ok: false, engine: "edge", message: "The free neural voice returned empty audio.", fellBack: false };
+    }
+    return {
+      ok: true,
+      engine: "edge",
+      audioBase64: buf.toString("base64"),
+      mime: "audio/mpeg",
+      message: `Spoke with the free neural voice (${voice}).`,
+      fellBack: false,
+    };
+  } catch (e: any) {
+    return {
+      ok: false,
+      engine: "edge",
+      message: `Free neural voice unavailable: ${String(e?.message ?? e).slice(0, 120)}`,
+      fellBack: false,
+    };
+  }
+}
+
 // ─── Windows SAPI (local, offline, always there) ─────────────────────────────
 
 const localSpeakers = new Set<ChildProcess>();
@@ -253,9 +320,10 @@ export function localEngineAvailable(): boolean {
 // ─── The chain ───────────────────────────────────────────────────────────────
 
 /**
- * Speak text through the engine chain: Groq neural voice first (auto/groq),
- * Windows built-in voice as the automatic fallback (auto) or the forced
- * primary (local). Never throws — returns the honest outcome.
+ * Speak text through the engine chain: Groq neural voice → free Edge neural
+ * voice → Windows built-in voice. "auto" walks the whole chain; a forced
+ * engine reports its honest failure instead of silently using another.
+ * Never throws — returns the honest outcome.
  */
 export async function speakText(
   rawText: string,
@@ -268,34 +336,46 @@ export async function speakText(
     return { ok: false, engine: "none", message: "Nothing speakable in that text.", fellBack: false };
   }
 
-  // Primary engine choice.
-  const primary: "groq" | "local" =
-    cfg.engine === "auto"
-      ? process.env.GROQ_API_KEY
-        ? "groq"
-        : "local"
-      : cfg.engine;
+  // Ordered engine chain for "auto": Groq (if a key exists) → Edge (free,
+  // online) → local SAPI (offline). Forced engines run alone + local fallback
+  // where the chain semantics already allow it.
+  const chain: Array<"groq" | "edge" | "local"> =
+    cfg.engine === "groq" ? ["groq"]
+    : cfg.engine === "edge" ? ["edge"]
+    : cfg.engine === "local" ? ["local"]
+    : [
+        ...(process.env.GROQ_API_KEY ? ["groq" as const] : []),
+        "edge",
+        "local",
+      ];
 
-  if (primary === "groq") {
-    const groq = await groqSpeak(text, cfg.voice, fetchImpl);
-    if (groq.ok) return groq;
-    // auto → fall through to local; forced groq → honest failure.
-    if (cfg.engine === "groq") return groq;
-    if (!localEngineAvailable()) {
-      return { ...groq, message: `${groq.message} (No local voice on this OS.)` };
+  const notes: string[] = [];
+  let attempted = 0;
+  for (const engine of chain) {
+    if (engine === "groq" && !process.env.GROQ_API_KEY) continue;
+    if (engine === "local" && !localEngineAvailable()) continue;
+    attempted++;
+    const outcome =
+      engine === "groq"
+        ? await groqSpeak(text, cfg.voice, fetchImpl)
+        : engine === "edge"
+          ? await edgeSpeak(text, cfg.edgeVoice)
+          : await localSpeak(text, cfg.localVoice);
+    if (outcome.ok) {
+      return notes.length
+        ? { ...outcome, fellBack: true, message: `${outcome.message} — ${notes.join("; ")}` }
+        : outcome;
     }
-    const local = await localSpeak(text, cfg.localVoice);
-    return {
-      ...local,
-      message: local.ok ? `Spoke with the laptop's voice — ${groq.message}` : `${groq.message} ${local.message}`,
-    };
+    notes.push(outcome.message);
+    // A forced engine stops after its own attempt (plus the local fallback
+    // inside "auto" — which the chain already covers).
+    if (cfg.engine !== "auto") break;
   }
 
-  // primary === "local"
-  if (!localEngineAvailable()) {
-    return { ok: false, engine: "none", message: "The built-in voice only exists on Windows.", fellBack: false };
+  if (attempted === 0) {
+    return { ok: false, engine: "none", message: "No voice engine available on this machine.", fellBack: false };
   }
-  return localSpeak(text, cfg.localVoice);
+  return { ok: false, engine: "none", message: notes.join("; "), fellBack: false };
 }
 
 /** Convenience for a quick smoke test in the sandbox (not used by main). */

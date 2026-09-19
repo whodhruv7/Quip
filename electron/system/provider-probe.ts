@@ -233,7 +233,83 @@ export async function probeNvidia(
   );
 }
 
-export type ProbeProviderId = "openrouter" | "groq" | "cerebras" | "nvidia";
+/** Probe Gemini (Google's official OpenAI-compatible endpoint) with a
+ *  1-token completion — proves the key AND the model id. */
+export async function probeGemini(
+  apiKey: string,
+  model: string,
+  fetchImpl: FetchLike = fetch
+): Promise<ProbeResult> {
+  return probeChatCompletion(
+    "Gemini",
+    "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    apiKey,
+    model,
+    undefined,
+    fetchImpl
+  );
+}
+
+const OLLAMA_DEFAULT_BASE = "http://127.0.0.1:11434/v1";
+
+/** Normalize an Ollama base URL (with or without /v1, trailing slash) into
+ *  the /v1 root used by the OpenAI-compatible endpoints. */
+export function ollamaBaseUrl(raw: string | undefined): string {
+  let base = (raw ?? "").trim() || OLLAMA_DEFAULT_BASE;
+  base = base.replace(/\/+$/, "");
+  if (base.endsWith("/chat/completions")) base = base.slice(0, -"/chat/completions".length);
+  if (!base.endsWith("/v1")) base = `${base}/v1`;
+  return base;
+}
+
+/** Probe Ollama — the laptop's own OpenAI-compatible server. Needs NO key;
+ *  a short models-list check answers "is the local backup alive?". Failure
+ *  is NOT an error state for the app — it's the optional offline engine. */
+export async function probeOllama(
+  model: string,
+  fetchImpl: FetchLike = fetch,
+  baseUrl?: string
+): Promise<ProbeResult> {
+  const started = Date.now();
+  const base = ollamaBaseUrl(baseUrl ?? process.env.QUIP_OLLAMA_URL);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 3000);
+  try {
+    const res = await fetchImpl(`${base}/models`, { method: "GET", signal: controller.signal });
+    const latencyMs = Date.now() - started;
+    if (res.status >= 200 && res.status < 300) {
+      let count = "";
+      try {
+        const data = JSON.parse(typeof res.text === "function" ? await res.text() : "");
+        const n = Array.isArray(data?.data) ? data.data.length : null;
+        if (n != null) count = ` — ${n} local models`;
+      } catch {
+        /* fine without a count */
+      }
+      return { ok: true, latencyMs, kind: "none", message: `Ollama is running on this laptop${count}.` };
+    }
+    return {
+      ok: false,
+      latencyMs,
+      kind: "http",
+      message: `Ollama answered with HTTP ${res.status} — is the server fully started?`,
+    };
+  } catch (e: any) {
+    const timedOut = e?.name === "AbortError" || /abort/i.test(String(e?.message ?? ""));
+    return {
+      ok: false,
+      latencyMs: Date.now() - started,
+      kind: timedOut ? "timeout" : "network",
+      message: timedOut
+        ? `Ollama didn't answer in 3s at ${base}.`
+        : `Ollama isn't running on this laptop (that's fine — it's the optional offline backup; Quip works without it).`,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export type ProbeProviderId = "openrouter" | "groq" | "cerebras" | "nvidia" | "gemini" | "ollama";
 
 export async function probeProvider(
   provider: ProbeProviderId,
@@ -248,6 +324,10 @@ export async function probeProvider(
       return probeCerebras(apiKey, model, fetchImpl);
     case "nvidia":
       return probeNvidia(apiKey, model, fetchImpl);
+    case "gemini":
+      return probeGemini(apiKey, model, fetchImpl);
+    case "ollama":
+      return probeOllama(model, fetchImpl);
     default:
       return probeOpenRouter(apiKey, model, fetchImpl);
   }

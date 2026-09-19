@@ -5,30 +5,34 @@ import { app, BrowserWindow, ipcMain, screen, Tray, nativeImage, Menu } from "el
 import path from "node:path";
 import fs from "node:fs";
 
-// .env loader (tiny, dependency-free).
-function loadEnvFile(file: string) {
-  const full = path.resolve(file);
-  if (!fs.existsSync(full)) return;
-  const txt = fs.readFileSync(full, "utf8");
-  for (const rawLine of txt.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const eq = line.indexOf("=");
-    if (eq === -1) continue;
-    const key = line.slice(0, eq).trim();
-    let val = line.slice(eq + 1).trim();
-    if (
-      (val.startsWith('"') && val.endsWith('"')) ||
-      (val.startsWith("'") && val.endsWith("'"))
-    ) {
-      val = val.slice(1, -1);
+// .env loading (V3.1 precedence fix — see system/env-load.ts).
+// OLD BUG: first-file-wins let a stale repo/.env key permanently mask the
+// key the user pasted in Settings (userData/.env) — "test passes, chat dies,
+// forever". NEW POLICY: repo files only FILL missing keys; the Settings-
+// managed userData/.env always WINS; placeholders never occupy a slot.
+import { applyEnvText } from "./system/env-load";
+
+const ENV_FILES = [
+  path.join(process.cwd(), ".env"),
+  path.join(app.getAppPath(), ".env"),
+  path.join(app.getPath("userData"), ".env"), // Settings' file — source of truth
+];
+
+for (let i = 0; i < ENV_FILES.length; i++) {
+  try {
+    const full = path.resolve(ENV_FILES[i]);
+    if (!fs.existsSync(full)) continue;
+    const txt = fs.readFileSync(full, "utf8");
+    const isSettingsFile = i === ENV_FILES.length - 1;
+    const r = applyEnvText(process.env as Record<string, string | undefined>, txt, isSettingsFile);
+    if (isSettingsFile && r.overridden.length > 0) {
+      // The Settings key replaced a repo-file value — log the KEY NAME only.
+      console.log(`[env] userData/.env override won for: ${r.overridden.join(", ")}`);
     }
-    if (!process.env[key]) process.env[key] = val;
+  } catch {
+    /* a broken env file must never stop boot */
   }
 }
-loadEnvFile(path.join(process.cwd(), ".env"));
-loadEnvFile(path.join(app.getAppPath(), ".env"));
-loadEnvFile(path.join(app.getPath("userData"), ".env"));
 
 import { IPC } from "./shared";
 import type {
@@ -49,14 +53,21 @@ import {
   PROVIDER_ORDER,
   PROVIDER_LABEL,
   DEFAULT_MODELS,
+  FALLBACK_MODELS,
   validateApiKey,
   upsertEnvFile,
   maskKey,
+  isProviderEnabled,
   type ProviderId,
 } from "./system/env-store";
 import { probeProvider } from "./system/provider-probe";
 import { discoverModels } from "./system/model-discovery";
-import { speakText, stopSpeaking, getSpeakConfig, speakConfigEnvEntries, type SpeakConfig } from "./system/speech";
+import { speakText, stopSpeaking, getSpeakConfig, speakConfigEnvEntries, groqVoiceProbe, edgeEngineAvailable, localEngineAvailable, type SpeakConfig } from "./system/speech";
+import { connectionJournal, summarizeJournal } from "./system/connection-journal";
+import { probeNetworkPath, buildVerdict, SUGGESTION_COPY } from "./system/brain-health";
+import { autoMigrateModel, looksLikeModelRejection } from "./system/model-health";
+import { trimHistory, assembleSections, type PromptSection } from "./system/prompt-budget";
+import { findEnvConflicts } from "./system/env-load";
 import { clampRect } from "./window-geometry";
 
 import { ensureProfile, loadProfile } from "./brains/device-brain";
@@ -307,7 +318,12 @@ function setWindowMode(win: BrowserWindow, mode: WindowMode) {
  */
 function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales" = "pix"): string {
   const env = environmentBrain.get();
-  const sections: string[] = [];
+  // Token diet: free-tier providers cap TOKENS PER MINUTE (Groq free ≈ 6-8k).
+  // Every section carries a priority; the prompt is assembled under a hard
+  // budget — identity/rules always survive, nice-to-have context drops
+  // first instead of causing 429s.
+  const sections: PromptSection[] = [];
+  const push = (id: string, priority: number, text: string) => sections.push({ id, priority, text });
 
   // ─── 1. Core identity + companion (always) ──────────────────────────
   const companionPersonalities: Record<string, string> = {
@@ -318,7 +334,9 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
     capy: "Capy — unbothered, warm, steady. Cozy calm. Nothing is a crisis.",
     skales: "Skales — the original gecko: lime, curious, always mid-task. Chases goals one small step at a time.",
   };
-  sections.push(
+  push(
+    "identity",
+    1,
     "You are QUIP, a calm, concise AI companion on the user's desktop. " +
       "Warm, human, never robotic. Short answers unless asked for detail. " +
       `You are ${companionPersonalities[companionId] ?? companionPersonalities.pix}`
@@ -338,20 +356,22 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
         `Apps: ${deviceProfile.apps.slice(0, 8).map((a) => a.name).join(", ")}`
       );
     }
-    sections.push(deviceParts.join(" | "));
+    push("device", 3, deviceParts.join(" | "));
   }
 
-  // ─── 3. World model (always — prevents hallucination) ───────────────
+  // ┌─ 3. World model (capped — prevents hallucination) ───────────────
   if (worldModel) {
-    sections.push(worldModel.summary);
+    push("world", 2, worldModel.summary.slice(0, 600));
   }
 
   // ─── 4. Environment (only if actionable) ────────────────────────────
   if (env.network.online === false) {
-    sections.push("NOTE: User is OFFLINE. Web actions may fail.");
+    push("offline", 2, "NOTE: User is OFFLINE. Web actions may fail.");
   }
   if (env.battery.supported && !env.battery.charging && env.battery.level < 0.2) {
-    sections.push(
+    push(
+      "battery",
+      4,
       `NOTE: Battery low (${Math.round(env.battery.level * 100)}%). Be brief.`
     );
   }
@@ -359,7 +379,7 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
   // ─── 5. Workspace context (only if online — skip if offline) ────────
   if (env.network.online) {
     const wsSummary = workspaceContext.getPromptSummary();
-    if (wsSummary) sections.push(wsSummary);
+    if (wsSummary) push("workspace", 4, wsSummary.slice(0, 400));
   }
 
   // ─── 6. Relevant memories (RAG — filtered by user message) ──────────
@@ -387,13 +407,13 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
         })
         .filter((x) => x.score > 0 || x.m.importance === "high")
         .sort((a, b) => b.score - a.score)
-        .slice(0, 8)
+        .slice(0, 5)
         .map((x) => x.m);
     } else {
       // No user message (e.g., first load) — top by weight
       relevantMemories = mem.memories
         .sort((a, b) => b.weight - a.weight)
-        .slice(0, 8);
+        .slice(0, 5);
     }
     if (relevantMemories.length > 0) {
       const memLines = relevantMemories.map((m) => {
@@ -403,7 +423,7 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
           : `${m.key}: ${m.value}`;
         return `- ${tag}`;
       });
-      sections.push(`Known about user:\n${memLines.join("\n")}`);
+      push("memories", 2, `Known about user:\n${memLines.join("\n")}`);
     }
   }
 
@@ -411,51 +431,55 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
   if (userMessage) {
     const entities = knowledgeGraph.findEntities(userMessage);
     if (entities.length > 0) {
-      const entityLines = entities.slice(0, 5).map((e) => {
+      const entityLines = entities.slice(0, 3).map((e) => {
         const attrs = Object.entries(e.attributes)
           .filter(([k]) => k !== "isSelf")
           .map(([k, v]) => `${k}=${v}`)
           .join(", ");
         return `- ${e.name} [${e.type}]${attrs ? ` {${attrs}}` : ""}`;
       });
-      sections.push(`Relevant entities:\n${entityLines.join("\n")}`);
+      push("entities", 4, `Relevant entities:\n${entityLines.join("\n")}`);
     }
   }
 
   // ─── 8. Communication style (relationship engine) ───────────────────
   const styleGuide = relationshipEngine.getStyleGuide();
-  if (styleGuide) sections.push(styleGuide);
+  if (styleGuide) push("style", 3, styleGuide);
 
   // ─── 8.5. Short-term execution context (1 compact line) ────────────────
   // Lets chat-mode follow-ups ("play it", "now open the latest email")
   // resolve without re-sending the whole history.
   const execContextSummary = contextStore.summary();
-  if (execContextSummary) sections.push(execContextSummary);
+  if (execContextSummary) push("exec", 3, execContextSummary);
 
   // ─── 8.7. Timeline Context ─────────────────────────────────────────
   const timelineSummary = timelineBrain.getTodaySummary();
   if (timelineSummary && timelineSummary !== "No significant activity recorded today.") {
-    sections.push(`Recent Activity: ${timelineSummary}`);
+    push("timeline", 5, `Recent Activity: ${timelineSummary}`);
   }
 
   // ─── 9. Companion mood ─────────────────────────────────────────────
   const moodHint = companionMood.getPromptHint(companionId);
-  if (moodHint) sections.push(moodHint);
+  if (moodHint) push("mood", 5, moodHint);
 
   // ─── Phase 2: Communication DNA (injected after style guide) ───────
   const memState = memoryBrain.get();
   const userProfile = relationshipEngine.get();
   const dna = communicationDNA.compute(userProfile, memState);
   if (dna.promptFragment) {
-    sections.push(`Communication Style:\n${dna.promptFragment}`);
+    push("dna", 5, `Communication Style:\n${dna.promptFragment}`);
   }
 
   // ─── 10. Rules (always — short) ─────────────────────────────────────
-  sections.push(
+  push(
+    "rules",
+    1,
     "Rules: Never assume apps exist (check above). If impossible, explain + suggest. " +
       "Always explain WHY (trust layer). Match user's style. Be concise."
   );
-  sections.push(
+  push(
+    "can-control",
+    1,
     "You CAN actually control this laptop: open/close/focus/switch apps and windows, " +
       "minimize/maximize/move/resize windows, open files/folders/URLs, find/create/read/" +
       "copy/move/delete files, type, press shortcuts, click/double-click/right-click, " +
@@ -468,7 +492,9 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
   );
 
   // ─── 11. Capability introspection (know what you can and cannot do) ──
-  sections.push(
+  push(
+    "can-more",
+    2,
     "MORE things you CAN do: real weather for any city, summarize long text (or the " +
       "last page you read), extract text from PDFs, read .docx files, create real Word " +
       "(.docx), Excel (.xlsx) and PowerPoint (.pptx) files, live system status (CPU/RAM/" +
@@ -476,7 +502,9 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
       "voice), read GitHub repos, V2EX, Bilibili search, and single tweets by link, " +
       "read Reddit/YouTube/RSS/web pages directly, and run shell commands (with approval)."
   );
-  sections.push(
+  push(
+    "cannot",
+    2,
     "What you CANNOT do (say so honestly, never fake it): send Telegram/WhatsApp/Discord " +
       "messages as bots, send emails directly (you CAN open a compose window), Google " +
       "Calendar/image/video generation (no keys wired), scan files with VirusTotal, see " +
@@ -485,7 +513,9 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
       "thing you can do."
   );
 
-  return sections.join("\n\n");
+  // Token budget ≈ 3.5k chars (≈900 tokens): identity/rules always survive;
+  // everything else drops lowest-priority-first when the context is huge.
+  return assembleSections(sections, 3500).prompt;
 }
 
 // ---------------------------------------------------------------------------
@@ -767,11 +797,22 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
   workspaceContext.refresh().catch(() => {});
 
   try {
-    const { full, provider, switched } = await modelRouter.stream(systemPrompt, payload.history, {
+    // Token diet: free-tier TPM limits die on huge histories — keep the most
+    // recent window (the current message is always preserved).
+    const history = trimHistory(payload.history);
+    const { full, provider, switched } = await modelRouter.stream(systemPrompt, history, {
       onChunk: (delta: string) => {
         sendToWindow(win, IPC.CHAT_CHUNK, {
           requestId: payload.requestId,
           delta,
+        });
+      },
+      onProvider: (providerId, confirmed) => {
+        // Live provider chip — "trying X…" → "X" once headers arrive.
+        sendToWindow(win, IPC.CHAT_PROVIDER, {
+          requestId: payload.requestId,
+          provider: providerId,
+          confirmed,
         });
       },
     });
@@ -1215,7 +1256,7 @@ ipcMain.handle(IPC.GET_MODEL_STATUS, () => {
 ipcMain.handle(IPC.GET_PROVIDER_CONFIG, () => {
   const enabled: Record<string, boolean> = {};
   for (const p of PROVIDER_ORDER) {
-    enabled[p] = process.env[PROVIDER_ENABLED_VAR[p]] !== "0";
+    enabled[p] = isProviderEnabled(p);
   }
   return {
     primary: (process.env.QUIP_PRIMARY_PROVIDER as ProviderId) || "groq",
@@ -1285,11 +1326,17 @@ ipcMain.handle(
     const apiKey = (payload?.apiKey ?? "").trim();
     const entries: Record<string, string> = {};
     if (apiKey) {
-      const check = validateApiKey(provider, apiKey);
-      if (!check.ok) {
-        return { ok: false, masked: "", message: check.message };
+      // Ollama has NO key — the Settings "key" box carries the local URL
+      // (optional; empty = the default 127.0.0.1:11434).
+      if (provider === "ollama") {
+        entries.QUIP_OLLAMA_URL = apiKey;
+      } else {
+        const check = validateApiKey(provider, apiKey);
+        if (!check.ok) {
+          return { ok: false, masked: "", message: check.message };
+        }
+        entries[PROVIDER_KEY_VAR[provider]] = apiKey;
       }
-      entries[PROVIDER_KEY_VAR[provider]] = apiKey;
     }
     const model = (payload?.model ?? "").trim();
     if (model) entries[PROVIDER_MODEL_VAR[provider]] = model;
@@ -1304,7 +1351,9 @@ ipcMain.handle(
     }
 
     // Live-apply so no restart is needed.
-    if (apiKey) process.env[PROVIDER_KEY_VAR[provider]] = apiKey;
+    if (apiKey) {
+      process.env[provider === "ollama" ? "QUIP_OLLAMA_URL" : PROVIDER_KEY_VAR[provider]] = apiKey;
+    }
     if (model) process.env[PROVIDER_MODEL_VAR[provider]] = model;
     modelRouter.reload();
 
@@ -1398,10 +1447,24 @@ ipcMain.handle(IPC.RESOLVE_PROVIDER, async () => {
     model: string;
   }> = [];
   for (const provider of PROVIDER_ORDER) {
-    const keyVar = PROVIDER_KEY_VAR[provider];
     const modelVar = PROVIDER_MODEL_VAR[provider];
-    const apiKey = process.env[keyVar] || "";
     const model = process.env[modelVar] || DEFAULT_MODELS[provider];
+    // Ollama needs NO key — reachability IS the test.
+    if (provider === "ollama") {
+      const r = await probeProvider("ollama", "", model);
+      out.push({
+        provider,
+        configured: true,
+        ok: r.ok,
+        latencyMs: r.latencyMs,
+        message: r.message,
+        kind: String(r.kind),
+        model,
+      });
+      continue;
+    }
+    const keyVar = PROVIDER_KEY_VAR[provider];
+    const apiKey = process.env[keyVar] || "";
     if (!apiKey) {
       out.push({
         provider,
@@ -1427,6 +1490,195 @@ ipcMain.handle(IPC.RESOLVE_PROVIDER, async () => {
   }
   return out;
 });
+
+// ---------------------------------------------------------------------------
+// IPC — brain health, Doctor, connection journal, transport (V3.1 round)
+// One honest answer to "why can't Quip reach my providers right now?"
+// ---------------------------------------------------------------------------
+
+type ProviderHealthRow = {
+  provider: string; label: string; configured: boolean; enabled: boolean;
+  parkedForMs: number; ok: boolean; latencyMs: number; kind: string;
+  message: string; model: string;
+};
+
+let brainHealthCache: { at: number; healthy: boolean; activeProvider: string | null; providers: ProviderHealthRow[] } | null = null;
+const BRAIN_HEALTH_TTL_MS = 5 * 60_000;
+
+async function runProviderHealthCheck(): Promise<ProviderHealthRow[]> {
+  const rows: ProviderHealthRow[] = [];
+  for (const provider of PROVIDER_ORDER) {
+    const label = PROVIDER_LABEL[provider];
+    const enabled = isProviderEnabled(provider);
+    const modelVar = PROVIDER_MODEL_VAR[provider];
+    const model = process.env[modelVar] || DEFAULT_MODELS[provider];
+    const parkedForMs = modelRouter.breaker.parkedForMs(provider);
+    if (provider === "ollama") {
+      const r = await probeProvider("ollama", "", model);
+      rows.push({
+        provider, label, configured: true, enabled,
+        parkedForMs, ok: r.ok, latencyMs: r.latencyMs, kind: String(r.kind),
+        message: r.message, model,
+      });
+      continue;
+    }
+    const apiKey = process.env[PROVIDER_KEY_VAR[provider]] || "";
+    if (!apiKey) {
+      rows.push({
+        provider, label, configured: false, enabled, parkedForMs,
+        ok: false, latencyMs: 0, kind: "no-key",
+        message: "No key saved yet — paste one in Settings → AI Brain.",
+        model,
+      });
+      continue;
+    }
+    const r = await probeProvider(provider, apiKey, model);
+    rows.push({
+      provider, label, configured: true, enabled, parkedForMs,
+      ok: r.ok, latencyMs: r.latencyMs, kind: String(r.kind),
+      message: r.message, model,
+    });
+  }
+  return rows;
+}
+
+async function refreshBrainHealth(force = false) {
+  if (!force && brainHealthCache && Date.now() - brainHealthCache.at < BRAIN_HEALTH_TTL_MS) {
+    return brainHealthCache;
+  }
+  const providers = await runProviderHealthCheck();
+  const working = providers.filter((p) => p.ok && p.enabled);
+  brainHealthCache = {
+    at: Date.now(),
+    healthy: working.length > 0,
+    activeProvider: working[0]?.provider ?? null,
+    providers,
+  };
+  broadcastToRenderers(IPC.BRAIN_HEALTH_CHANGED, brainHealthCache);
+  return brainHealthCache;
+}
+
+ipcMain.handle(IPC.GET_BRAIN_HEALTH, () => {
+  return brainHealthCache ?? { at: 0, healthy: false, activeProvider: null, providers: [] };
+});
+
+ipcMain.handle(IPC.RUN_DOCTOR, async () => {
+  const [network, providers] = await Promise.all([
+    probeNetworkPath(),
+    runProviderHealthCheck(),
+  ]);
+  // Voice engines — every one reports its honest state.
+  const tts: Record<string, string> = { groq: "", edge: "", local: "" };
+  tts.groq = process.env.GROQ_API_KEY
+    ? await groqVoiceProbe(fetch)
+    : "No Groq key — the Groq voice needs one (the other voices still work).";
+  tts.edge = (await edgeEngineAvailable())
+    ? "Free neural voice ready (en-IN-NeerjaNeural reads Hinglish well)."
+    : "Free neural voice module not available — the laptop voice still works.";
+  tts.local = localEngineAvailable()
+    ? "Laptop built-in voice ready (works fully offline)."
+    : "Built-in voice only exists on Windows.";
+
+  // .env conflict detection — the classic "test passes, chat fails" trap.
+  const envFiles: Array<{ name: string; txt: string }> = [];
+  try {
+    const repoEnv = path.join(process.cwd(), ".env");
+    const userEnv = path.join(app.getPath("userData"), ".env");
+    if (fs.existsSync(repoEnv)) envFiles.push({ name: "project .env", txt: fs.readFileSync(repoEnv, "utf8") });
+    if (fs.existsSync(userEnv)) envFiles.push({ name: "Settings (.env)", txt: fs.readFileSync(userEnv, "utf8") });
+  } catch { /* best effort */ }
+  const envConflicts = findEnvConflicts(envFiles);
+
+  const suggestions: string[] = [];
+  if (!network.ok) suggestions.push("Fix the network first — with the internet blocked, NO provider can answer (VPN/proxy/firewall/antivirus).");
+  for (const p of providers) {
+    if (p.ok || !p.enabled) continue;
+    if (p.kind === "no-key") suggestions.push(`${p.label}: ${SUGGESTION_COPY.noKey}`);
+    else if (p.kind === "auth") suggestions.push(`${p.label}: ${SUGGESTION_COPY.auth}`);
+    else if (p.kind === "rate-limit") suggestions.push(`${p.label}: ${SUGGESTION_COPY["rate-limit"]}`);
+    else if (p.kind === "network") suggestions.push(`${p.label}: ${SUGGESTION_COPY.network}`);
+    else if (p.parkedForMs > 0) suggestions.push(`${p.label}: ${SUGGESTION_COPY.parked}`);
+  }
+  if (envConflicts.length > 0) suggestions.push(SUGGESTION_COPY.envConflict);
+
+  const verdict = buildVerdict(network, providers, suggestions);
+  const report = {
+    at: Date.now(),
+    network,
+    providers,
+    tts,
+    journal: connectionJournal.tail(12).map((e) => ({
+      ts: e.ts, provider: e.provider, ok: e.ok, latencyMs: e.latencyMs, note: e.note,
+    })),
+    envConflicts,
+    verdict,
+    suggestions,
+  };
+  // Doctor results double as the live health snapshot.
+  brainHealthCache = {
+    at: Date.now(),
+    healthy: providers.some((p) => p.ok && p.enabled),
+    activeProvider: providers.find((p) => p.ok && p.enabled)?.provider ?? null,
+    providers,
+  };
+  broadcastToRenderers(IPC.BRAIN_HEALTH_CHANGED, brainHealthCache);
+  return report;
+});
+
+ipcMain.handle(IPC.GET_CONNECTION_JOURNAL, () => connectionJournal.all());
+
+ipcMain.handle(IPC.GET_TRANSPORT_SETTING, () => ({
+  mode: ((): "auto" | "net" | "node" => {
+    const t = (process.env.QUIP_TRANSPORT || "auto").toLowerCase();
+    return t === "net" || t === "node" ? t : "auto";
+  })(),
+}));
+
+ipcMain.handle(IPC.SET_TRANSPORT_SETTING, (_e, payload: { mode?: string }) => {
+  const mode = payload?.mode === "net" || payload?.mode === "node" ? payload.mode : "auto";
+  const res = upsertEnvFile(path.join(app.getPath("userData"), ".env"), { QUIP_TRANSPORT: mode });
+  if (!res.ok) return { ok: false, message: `I couldn't save that: ${res.error}` };
+  process.env.QUIP_TRANSPORT = mode;
+  return {
+    ok: true,
+    message: mode === "auto"
+      ? "Transport: automatic (tries both network stacks)."
+      : `Transport pinned to ${mode === "net" ? "Electron net (system proxy)" : "Node fetch (direct)"} — switch back to Auto if providers start failing.`,
+  };
+});
+
+/** Model auto-health: when a provider rejects its configured MODEL id,
+ *  migrate to the first live spare and save it — no user action needed. */
+async function runModelAutoHealth(): Promise<void> {
+  for (const provider of PROVIDER_ORDER) {
+    if (provider === "ollama") continue; // local server — no decommission drama
+    const enabled = isProviderEnabled(provider);
+    if (!enabled) continue;
+    const apiKey = process.env[PROVIDER_KEY_VAR[provider]] || "";
+    if (!apiKey) continue;
+    const modelVar = PROVIDER_MODEL_VAR[provider];
+    const configured = process.env[modelVar] || DEFAULT_MODELS[provider];
+    const decision = await autoMigrateModel({
+      configured,
+      spares: FALLBACK_MODELS[provider] ?? [],
+      probe: async (model) => {
+        const r = await probeProvider(provider, apiKey, model);
+        return { ok: r.ok, message: r.message };
+      },
+    });
+    if (decision.migrated && decision.model) {
+      process.env[modelVar] = decision.model;
+      upsertEnvFile(path.join(app.getPath("userData"), ".env"), { [modelVar]: decision.model });
+      modelRouter.reload();
+      connectionJournal.record({
+        provider, model: decision.model, ok: true, kind: "migrate", latencyMs: 0,
+        note: decision.reason,
+      });
+      brainHealthCache = null; // force a fresh health read
+      console.log(`[model-health] ${provider}: ${decision.reason}`);
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // IPC — speech (the companion's REAL voice)
@@ -1616,6 +1868,32 @@ if (!app.requestSingleInstanceLock()) {
     companionVisible = readCompanionVisible();
     createWindow(defaultCompanionId);
     createTray();
+
+    // ── V3.1 connectivity round ─────────────────────────────────────────
+    // Connection journal persists (debounced) so the Doctor can show
+    // EVIDENCE of what happened, even across restarts.
+    const journalFile = path.join(app.getPath("userData"), "quip-connections.json");
+    try {
+      if (fs.existsSync(journalFile)) {
+        connectionJournal.load(JSON.parse(fs.readFileSync(journalFile, "utf8")));
+      }
+    } catch { /* best effort */ }
+    connectionJournal.configurePersist((entries) => {
+      try {
+        fs.writeFileSync(journalFile, JSON.stringify(entries.slice(-80)));
+      } catch { /* best effort */ }
+    });
+
+    // Boot health probe (TTL-cached): the top-bar pill knows the truth
+    // BEFORE the user's first message, and any provider that retired its
+    // model id auto-migrates to a live spare. Weekly re-check afterwards.
+    setTimeout(() => {
+      refreshBrainHealth(true).catch(() => {});
+      runModelAutoHealth().catch(() => {});
+    }, 2500);
+    setInterval(() => {
+      runModelAutoHealth().catch(() => {});
+    }, 7 * 24 * 60 * 60 * 1000);
 
     // ── Self-heal: the companion must never silently vanish ──────────
     // If the window exists but is hidden while the user still wants the

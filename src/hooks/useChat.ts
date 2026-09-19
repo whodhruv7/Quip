@@ -48,12 +48,18 @@ export function useChat(
   } | null>(null);
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequestUI | null>(null);
   const [taskProgress, setTaskProgress] = useState<TaskProgress | null>(null);
+  /** Live provider chip — which brain is answering (or being tried). */
+  const [streamingProvider, setStreamingProvider] = useState<{ provider: string; confirmed: boolean } | null>(null);
+  /** True while the companion's voice is playing. */
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const activeRequestId = useRef<string | null>(null);
   const quipApiRef = useRef(quipApi);
   quipApiRef.current = quipApi;
   const messagesRef = useRef<ChatMessage[]>(messages);
   /** Current spoken audio element — new reply replaces the old voice. */
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  /** Last user text — powers the "Try again" chip on error bubbles. */
+  const lastUserTextRef = useRef<string | null>(null);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -87,6 +93,12 @@ export function useChat(
       );
     });
 
+    // Live provider chip: "trying Groq…" → "Groq" once its headers arrive.
+    const offProvider = quipApiRef.current.onChatProvider((data) => {
+      if (data.requestId !== activeRequestId.current) return;
+      setStreamingProvider({ provider: data.provider, confirmed: data.confirmed });
+    });
+
     const offDone = quipApiRef.current.onChatDone((_full, requestId, meta) => {
       if (requestId !== activeRequestId.current) return;
       setMessages((prev) =>
@@ -102,6 +114,7 @@ export function useChat(
       );
       activeRequestId.current = null;
       setBusy(false);
+      setStreamingProvider(null);
     });
 
     const offErr = quipApiRef.current.onChatError((err) => {
@@ -117,6 +130,7 @@ export function useChat(
       setError(err.message);
       setErrorKind(err.kind ?? null);
       setBusy(false);
+      setStreamingProvider(null);
     });
 
     const offConfirm = quipApiRef.current.onApprovalRequest((req: ApprovalRequestUI) => {
@@ -153,30 +167,56 @@ export function useChat(
       });
     });
 
-    // ─── The companion's VOICE — play wav audio sent by the main process ──
-    // (Groq playai-tts engine; the local Windows engine speaks in main and
-    // needs no renderer audio.)
+    // ─── The companion's VOICE — play wav/mp3 audio sent by the main process ──
+    // (Groq playai-tts / free Edge neural engines ship audio here; the local
+    // Windows engine speaks in main and needs no renderer audio.)
     const offTts = quipApiRef.current.onTtsAudio((data) => {
       try {
         if (audioRef.current && !audioRef.current.paused) audioRef.current.pause();
         const el = new Audio(`data:${data.mime || "audio/wav"};base64,${data.audioBase64}`);
         audioRef.current = el;
+        setIsSpeaking(true);
+        window.dispatchEvent(new CustomEvent("quip-speaking", { detail: true }));
+        const done = () => {
+          setIsSpeaking(false);
+          window.dispatchEvent(new CustomEvent("quip-speaking", { detail: false }));
+        };
+        el.onended = done;
+        el.onerror = done;
         el.play().catch(() => {
           /* autoplay blocked until first interaction — harmless, text is shown */
+          done();
         });
       } catch {
         /* speech is best-effort */
       }
     });
 
+    // ─── Autoplay unlock — Electron blocks audio before the first user
+    // gesture. One silent play on the first pointerdown unlocks the
+    // <audio> element so the companion's voice ALWAYS comes through.
+    const unlock = () => {
+      try {
+        const silent = new Audio(
+          "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA="
+        );
+        silent.volume = 0;
+        silent.play().catch(() => {});
+      } catch { /* best effort */ }
+      window.removeEventListener("pointerdown", unlock);
+    };
+    window.addEventListener("pointerdown", unlock);
+
     return () => {
       offChunk();
+      offProvider();
       offDone();
       offErr();
       offConfirm();
       offProgress();
       offProactive();
       offTts();
+      window.removeEventListener("pointerdown", unlock);
     };
   }, [companionId]);
 
@@ -186,6 +226,7 @@ export function useChat(
       if (!trimmed || busy) return;
       setError(null);
       setErrorKind(null);
+      lastUserTextRef.current = trimmed;
       const userMsg: ChatMessage = {
         id: uid(),
         role: "user",
@@ -361,10 +402,16 @@ export function useChat(
     }
   }, []);
 
+  /** "Try again" chip on an error bubble — re-sends the last user text. */
+  const retryLast = useCallback(() => {
+    const last = lastUserTextRef.current;
+    if (last && !busy) void send(last);
+  }, [busy, send]);
+
   const resolveApproval = useCallback((id: string, approved: boolean) => {
     quipApiRef.current.resolveApproval(id, approved);
     setApprovalRequest(null);
   }, []);
 
-  return { messages, busy, error, errorKind, taskOutcome, send, clear, addNotice, sessions, newChat, openSession, clearError, approvalRequest, resolveApproval, taskProgress, cancelTask };
+  return { messages, busy, error, errorKind, taskOutcome, send, clear, addNotice, sessions, newChat, openSession, clearError, approvalRequest, resolveApproval, taskProgress, cancelTask, streamingProvider, isSpeaking, retryLast };
 }

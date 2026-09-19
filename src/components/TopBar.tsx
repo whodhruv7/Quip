@@ -1,11 +1,14 @@
 // Quip V2 — Top bar (SIMPLE).
 //
-// Companion dots (left) + square expand button + new chat + settings + close.
-// The square expand button grows the small panel into the full Quip app
-// (and shrinks it back). No model badge (was clutter). Clean, minimal.
+// Companion dots (left) + brain health pill + square expand button + new chat
+// + settings + close. The health pill shows the REAL state of the AI brain
+// (boot-probed, live-updated): green = a provider answers, red = none do,
+// gray = not checked yet. The amber dot pulses while the companion speaks.
 
+import { useEffect, useState } from "react";
 import type { WindowMode } from "../../electron/shared";
 import type { CompanionId } from "@/types";
+import type { BrainHealthReport } from "@/types/models";
 import { getCompanion } from "@/lib/companion-config";
 
 interface TopBarProps {
@@ -19,11 +22,48 @@ interface TopBarProps {
   /** Current layout mode — the square button swaps between expand/shrink */
   mode?: "panel" | "full";
   onToggleExpand?: () => void;
+  /** Opens Settings straight on the AI tab (health pill click). */
+  onBrainClick?: () => void;
 }
 
-export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onReflectionToggle, onNewChat, onClose, onHideChat, mode = "panel", onToggleExpand }: TopBarProps) {
+export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onReflectionToggle, onNewChat, onClose, onHideChat, mode = "panel", onToggleExpand, onBrainClick }: TopBarProps) {
   const handleClose = onClose ?? onHideChat;
   const accent = getCompanion(companionId);
+
+  // Live brain health — pushed by the main process after its boot probe
+  // and every Doctor run. No polling, no guessing.
+  const [health, setHealth] = useState<BrainHealthReport | null>(null);
+  const [speaking, setSpeaking] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    try {
+      window.quip.getBrainHealth().then((h) => {
+        if (alive && h && h.at > 0) setHealth(h);
+      }).catch(() => {});
+      const off = window.quip.onBrainHealth((h) => {
+        if (alive && h) setHealth(h);
+      });
+      const offSpeak = (() => {
+        const handler = (e: Event) => setSpeaking((e as CustomEvent).detail === true);
+        window.addEventListener("quip-speaking", handler);
+        return () => window.removeEventListener("quip-speaking", handler);
+      })();
+      return () => {
+        alive = false;
+        off();
+        offSpeak();
+      };
+    } catch {
+      return () => {};
+    }
+  }, []);
+
+  const pillColor = !health || health.at === 0 ? "rgba(0,0,0,0.18)" : health.healthy ? "#22c55e" : "#ef4444";
+  const pillTitle = !health || health.at === 0
+    ? "Brain: not checked yet"
+    : health.healthy
+      ? `Brain: ${health.activeProvider ?? "provider"} is answering`
+      : "Brain: no provider answering — tap to run the Doctor";
 
   return (
     <div
@@ -67,6 +107,35 @@ export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onRef
 
       {/* Spacer */}
       <div className="flex-1" />
+
+      {/* Speaking indicator — the companion's voice is audible RIGHT NOW */}
+      {speaking && (
+        <div
+          className="flex h-5 items-center gap-[2px] rounded-full px-2"
+          style={{ background: "rgba(245,158,11,0.12)" }}
+          title="Quip is speaking"
+        >
+          {[0, 1, 2].map((i) => (
+            <span
+              key={i}
+              className="inline-block w-[2.5px] animate-bounce rounded-full"
+              style={{ background: "#f59e0b", height: 4 + i * 3, animationDelay: `${i * 0.12}s`, animationDuration: "0.8s" }}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Brain health pill — real probe result, one glance */}
+      <button
+        onClick={onBrainClick ?? onSettingsToggle}
+        className="flex h-6 items-center gap-1.5 rounded-full px-2 transition-all hover:scale-[1.05]"
+        style={{ background: "rgba(0,0,0,0.03)", border: "1px solid rgba(0,0,0,0.05)" }}
+        title={pillTitle}
+        aria-label={pillTitle}
+      >
+        <span className="h-2 w-2 rounded-full" style={{ background: pillColor }} />
+        <span style={{ fontSize: 9, fontWeight: 600, color: "#6b7280" }}>AI</span>
+      </button>
 
       {/* Square expand button — panel ⇄ full app */}
       <button

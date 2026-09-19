@@ -16,6 +16,8 @@ export const IPC = {
   CHAT_CHUNK: "quip:chat-chunk",
   CHAT_DONE: "quip:chat-done",
   CHAT_ERROR: "quip:chat-error",
+  /** Live provider chip — which brain is answering (or being tried). */
+  CHAT_PROVIDER: "quip:chat-provider",
 
   // Task execution
   TASK_EXECUTE: "quip:task-execute",
@@ -65,6 +67,14 @@ export const IPC = {
   TEST_MODEL_CONNECTION: "quip:test-model-connection",
   RESOLVE_PROVIDER: "quip:resolve-provider",
   LIST_PROVIDER_MODELS: "quip:list-provider-models",
+
+  // Brain health + Doctor + connection journal (V3.1 connectivity round)
+  GET_BRAIN_HEALTH: "quip:get-brain-health",
+  BRAIN_HEALTH_CHANGED: "quip:brain-health-changed",
+  RUN_DOCTOR: "quip:run-doctor",
+  GET_CONNECTION_JOURNAL: "quip:get-connection-journal",
+  GET_TRANSPORT_SETTING: "quip:get-transport-setting",
+  SET_TRANSPORT_SETTING: "quip:set-transport-setting",
 
   // Speech (the companion's real voice)
   TTS_SPEAK: "quip:tts-speak",
@@ -146,6 +156,14 @@ export interface ChatErrorPayload {
   kind: "no-key" | "http" | "network" | "parse";
 }
 
+/** Live provider chip — emitted when an attempt starts (confirmed=false)
+ *  and when its headers arrive (confirmed=true). */
+export interface ChatProviderPayload {
+  requestId: string;
+  provider: string;
+  confirmed: boolean;
+}
+
 // ─── Task payloads ─────────────────────────────────────────────────────────
 export interface TaskExecutePayload {
   requestId: string;
@@ -180,7 +198,7 @@ export interface TaskResultPayload {
 
 // ─── Model key setup payloads ──────────────────────────────────────────────
 
-export type ModelProviderId = "openrouter" | "groq" | "cerebras" | "nvidia";
+export type ModelProviderId = "openrouter" | "groq" | "cerebras" | "nvidia" | "gemini" | "ollama";
 
 export interface ModelKeySavePayload {
   provider: ModelProviderId;

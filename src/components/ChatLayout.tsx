@@ -16,6 +16,8 @@ import { ChatMessageView } from "./ChatMessage";
 interface ChatLayoutProps {
   messages: ChatMessage[];
   busy: boolean;
+  /** Re-sends the last user message after a failed reply ("Try again"). */
+  onRetry?: () => void;
 }
 
 const TIME_SEPARATOR_GAP_MS = 5 * 60 * 1000; // 5 minutes
@@ -38,7 +40,7 @@ function shouldShowSeparator(prev: ChatMessage, curr: ChatMessage): boolean {
   return curr.ts - prev.ts > TIME_SEPARATOR_GAP_MS;
 }
 
-export function ChatLayout({ messages, busy }: ChatLayoutProps) {
+export function ChatLayout({ messages, busy, onRetry }: ChatLayoutProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const isAtBottom = useRef(true);
@@ -133,6 +135,7 @@ export function ChatLayout({ messages, busy }: ChatLayoutProps) {
                 key={item.id}
                 message={item.message}
                 index={item.index}
+                onRetry={onRetry}
               />
             );
           })}

@@ -20,6 +20,11 @@ interface ChatWelcomeProps {
 export function ChatWelcome({ companionId, onSuggestionClick, onOpenKeySetup }: ChatWelcomeProps) {
   const theme = getCompanion(companionId);
   const [modelStatus, setModelStatus] = useState<ModelRouterStatus | null>(null);
+  // 30-second inline setup: paste the Groq key right here — no settings dig.
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardKey, setWizardKey] = useState("");
+  const [wizardState, setWizardState] = useState<"idle" | "saving" | "ok" | "fail">("idle");
+  const [wizardNote, setWizardNote] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -35,6 +40,35 @@ export function ChatWelcome({ companionId, onSuggestionClick, onOpenKeySetup }: 
   }, []);
 
   const connected = !!modelStatus?.healthy;
+
+  /** Save the key from the inline wizard → real probe → live status. */
+  const handleWizardSave = async () => {
+    const key = wizardKey.trim();
+    if (!key) return;
+    setWizardState("saving");
+    setWizardNote(null);
+    try {
+      const save = await window.quip.saveModelKeys({ provider: "groq", apiKey: key });
+      if (!save.ok) {
+        setWizardState("fail");
+        setWizardNote(save.message);
+        return;
+      }
+      const probe = await window.quip.testModelConnection({ provider: "groq" });
+      if (probe.ok) {
+        setWizardState("ok");
+        setWizardNote(`Connected! (${Math.round(probe.latencyMs)}ms) — say something and I'll answer.`);
+        const s = await window.quip.getModelStatus();
+        setModelStatus(s);
+      } else {
+        setWizardState("fail");
+        setWizardNote(probe.message);
+      }
+    } catch {
+      setWizardState("fail");
+      setWizardNote("The setup couldn't run — try again.");
+    }
+  };
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-6 py-8">
@@ -126,28 +160,76 @@ export function ChatWelcome({ companionId, onSuggestionClick, onOpenKeySetup }: 
             Brain connected{modelStatus?.active?.label ? ` · ${modelStatus.active.label}` : ""}
           </div>
         ) : (
-          <button
-            onClick={onOpenKeySetup}
-            className="flex items-center gap-1.5 rounded-full px-3 py-1.5 transition-all hover:scale-[1.03]"
-            style={{
-              fontSize: 10.5,
-              fontWeight: 600,
-              color: "#b45309",
-              background: "rgba(245,158,11,0.09)",
-              border: "1px solid rgba(245,158,11,0.28)",
-              cursor: "pointer",
-            }}
-          >
-            <span
+          <div className="flex flex-col items-center gap-2">
+            <button
+              onClick={() => (wizardOpen ? setWizardOpen(false) : setWizardOpen(true))}
+              className="flex items-center gap-1.5 rounded-full px-3 py-1.5 transition-all hover:scale-[1.03]"
               style={{
-                width: 6,
-                height: 6,
-                borderRadius: "50%",
-                background: "#f59e0b",
+                fontSize: 10.5,
+                fontWeight: 600,
+                color: "#b45309",
+                background: "rgba(245,158,11,0.09)",
+                border: "1px solid rgba(245,158,11,0.28)",
+                cursor: "pointer",
               }}
-            />
-            Not connected — add your free AI key →
-          </button>
+            >
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  background: "#f59e0b",
+                }}
+              />
+              Not connected — connect in 30 seconds →
+            </button>
+            {wizardOpen && (
+              <div
+                className="flex w-full max-w-[280px] flex-col gap-2 rounded-xl px-3 py-3"
+                style={{ border: "1px solid rgba(245,158,11,0.3)", background: "rgba(255,255,255,0.9)" }}
+              >
+                <span style={{ fontSize: 10.5, color: "#374151" }}>
+                  1. Get a free key at <b>console.groq.com/keys</b> (30s) · 2. Paste it below:
+                </span>
+                <input
+                  type="password"
+                  value={wizardKey}
+                  onChange={(e) => setWizardKey(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleWizardSave()}
+                  placeholder="gsk_…"
+                  spellCheck={false}
+                  autoComplete="off"
+                  className="w-full rounded-lg px-2.5 py-2 outline-none"
+                  style={{ fontSize: 11.5, border: "1px solid rgba(0,0,0,0.1)", color: "#111" }}
+                />
+                <button
+                  onClick={handleWizardSave}
+                  disabled={wizardState === "saving" || !wizardKey.trim()}
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    color: "#fff",
+                    background: wizardState === "saving" ? "rgba(0,0,0,0.25)" : "#0c6b8f",
+                    border: "none",
+                    borderRadius: 8,
+                    padding: "6px 0",
+                    cursor: wizardState === "saving" || !wizardKey.trim() ? "default" : "pointer",
+                  }}
+                >
+                  {wizardState === "saving" ? "Connecting…" : "Connect my companion"}
+                </button>
+                {wizardNote && (
+                  <span style={{ fontSize: 9.5, color: wizardState === "ok" ? "#15803d" : "#b45309" }}>{wizardNote}</span>
+                )}
+                <button
+                  onClick={onOpenKeySetup}
+                  style={{ fontSize: 9.5, color: "#6b7280", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}
+                >
+                  More providers (Gemini, NVIDIA…) in Settings
+                </button>
+              </div>
+            )}
+          </div>
         )}
       </motion.div>
 

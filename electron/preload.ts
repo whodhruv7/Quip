@@ -61,6 +61,12 @@ const api = {
     ipcRenderer.on(IPC.CHAT_ERROR, handler as any);
     return () => ipcRenderer.removeListener(IPC.CHAT_ERROR, handler as any);
   },
+  onChatProvider: (cb: (data: { provider: string; confirmed: boolean; requestId: string }) => void) => {
+    const handler = (_e: unknown, data: { requestId: string; provider: string; confirmed: boolean }) =>
+      cb({ provider: data.provider, confirmed: data.confirmed, requestId: data.requestId });
+    ipcRenderer.on(IPC.CHAT_PROVIDER, handler as any);
+    return () => ipcRenderer.removeListener(IPC.CHAT_PROVIDER, handler as any);
+  },
 
   // ─── Task execution ──────────────────────────────────────────────────
   executeTask: (payload: TaskExecutePayload) =>
@@ -157,13 +163,13 @@ const api = {
   // ─── Model router ────────────────────────────────────────────────────
   getModelStatus: () =>
     ipcRenderer.invoke(IPC.GET_MODEL_STATUS),
-  saveModelKeys: (payload: { provider: "openrouter" | "groq" | "cerebras" | "nvidia"; apiKey?: string; model?: string }) =>
+  saveModelKeys: (payload: { provider: "openrouter" | "groq" | "cerebras" | "nvidia" | "gemini" | "ollama"; apiKey?: string; model?: string }) =>
     ipcRenderer.invoke(IPC.SAVE_MODEL_KEYS, payload) as Promise<{
       ok: boolean;
       masked: string;
       message: string;
     }>,
-  testModelConnection: (payload: { provider: "openrouter" | "groq" | "cerebras" | "nvidia"; apiKey?: string; model?: string }) =>
+  testModelConnection: (payload: { provider: "openrouter" | "groq" | "cerebras" | "nvidia" | "gemini" | "ollama"; apiKey?: string; model?: string }) =>
     ipcRenderer.invoke(IPC.TEST_MODEL_CONNECTION, payload) as Promise<{
       ok: boolean;
       latencyMs: number;
@@ -174,7 +180,7 @@ const api = {
     ipcRenderer.invoke(IPC.RESOLVE_PROVIDER) as Promise<
       Array<{ provider: string; configured: boolean; ok: boolean; latencyMs: number; message: string; kind: string; model: string }>
     >,
-  listProviderModels: (payload: { provider: "openrouter" | "groq" | "cerebras" | "nvidia"; apiKey?: string }) =>
+  listProviderModels: (payload: { provider: "openrouter" | "groq" | "cerebras" | "nvidia" | "gemini" | "ollama"; apiKey?: string }) =>
     ipcRenderer.invoke(IPC.LIST_PROVIDER_MODELS, payload) as Promise<{
       ok: boolean;
       models: Array<{ id: string; ownedBy?: string }>;
@@ -182,17 +188,36 @@ const api = {
     }>,
   getProviderConfig: () =>
     ipcRenderer.invoke(IPC.GET_PROVIDER_CONFIG) as Promise<{
-      primary: "groq" | "openrouter" | "cerebras" | "nvidia";
+      primary: "groq" | "openrouter" | "cerebras" | "nvidia" | "gemini" | "ollama";
       enabled: Record<string, boolean>;
       visionModel: string | null;
       chain: string[];
     }>,
-  setProviderConfig: (payload: { primary: "groq" | "openrouter" | "cerebras" | "nvidia"; enabled: Record<string, boolean> }) =>
+  setProviderConfig: (payload: { primary: "groq" | "openrouter" | "cerebras" | "nvidia" | "gemini" | "ollama"; enabled: Record<string, boolean> }) =>
     ipcRenderer.invoke(IPC.SET_PROVIDER_CONFIG, payload) as Promise<{
       ok: boolean;
       message: string;
       active?: string;
     }>,
+
+  // ─── Brain health + Doctor + journal + transport (V3.1) ─────────────
+  getBrainHealth: () =>
+    ipcRenderer.invoke(IPC.GET_BRAIN_HEALTH) as Promise<any>,
+  onBrainHealth: (cb: (health: any) => void) => {
+    const handler = (_e: unknown, data: any) => cb(data);
+    ipcRenderer.on(IPC.BRAIN_HEALTH_CHANGED, handler as any);
+    return () => ipcRenderer.removeListener(IPC.BRAIN_HEALTH_CHANGED, handler as any);
+  },
+  runDoctor: () =>
+    ipcRenderer.invoke(IPC.RUN_DOCTOR) as Promise<any>,
+  getConnectionJournal: () =>
+    ipcRenderer.invoke(IPC.GET_CONNECTION_JOURNAL) as Promise<
+      Array<{ ts: number; provider: string; model: string; ok: boolean; kind: string; latencyMs: number; note: string; switched?: boolean }>
+    >,
+  getTransportSetting: () =>
+    ipcRenderer.invoke(IPC.GET_TRANSPORT_SETTING) as Promise<{ mode: "auto" | "net" | "node" }>,
+  setTransportSetting: (mode: "auto" | "net" | "node") =>
+    ipcRenderer.invoke(IPC.SET_TRANSPORT_SETTING, { mode }) as Promise<{ ok: boolean; message: string }>,
 
   // ─── Speech (the companion's real voice) ─────────────────────────────
   ttsSpeak: (payload: { requestId?: string; text: string }) =>
@@ -210,12 +235,13 @@ const api = {
   getSpeakConfig: () =>
     ipcRenderer.invoke(IPC.GET_SPEAK_CONFIG) as Promise<{
       enabled: boolean;
-      engine: "auto" | "groq" | "local";
+      engine: "auto" | "groq" | "edge" | "local";
       voice: string;
+      edgeVoice: string;
       localVoice: string;
       platform: string;
     }>,
-  setSpeakConfig: (payload: { enabled?: boolean; engine?: "auto" | "groq" | "local"; voice?: string; localVoice?: string }) =>
+  setSpeakConfig: (payload: { enabled?: boolean; engine?: "auto" | "groq" | "edge" | "local"; voice?: string; edgeVoice?: string; localVoice?: string }) =>
     ipcRenderer.invoke(IPC.SET_SPEAK_CONFIG, payload) as Promise<{
       ok: boolean;
       message: string;

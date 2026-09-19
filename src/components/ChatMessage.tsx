@@ -16,7 +16,7 @@ import remarkGfm from "remark-gfm";
 import type { ChatMessage as ChatMessageType } from "@/types";
 import { getCompanion } from "@/lib/companion-config";
 
-function MessageBase({ message, index = 0 }: { message: ChatMessageType; index?: number }) {
+function MessageBase({ message, index = 0, onRetry }: { message: ChatMessageType; index?: number; onRetry?: () => void }) {
   const isUser = message.role === "user";
   const empty = message.content.length === 0 && message.streaming;
   const theme = getCompanion(message.companionId ?? "pix");
@@ -127,6 +127,24 @@ function MessageBase({ message, index = 0 }: { message: ChatMessageType; index?:
             <span className="trust-note-dot" style={{ background: theme.primary }} />
             <span>{message.contextNote}</span>
           </motion.div>
+        )}
+
+        {/* Failed reply → one-tap retry (the failure trail is in the bubble) */}
+        {message.error && onRetry && (
+          <button
+            onClick={onRetry}
+            className="mt-0.5 flex w-fit items-center gap-1.5 rounded-full px-2.5 py-1 transition-all hover:scale-[1.04]"
+            style={{
+              fontSize: 10,
+              fontWeight: 600,
+              color: "#0c6b8f",
+              background: "rgba(111,214,255,0.12)",
+              border: "1px solid rgba(111,214,255,0.4)",
+              cursor: "pointer",
+            }}
+          >
+            ↻ Try again
+          </button>
         )}
 
         {message.action && (

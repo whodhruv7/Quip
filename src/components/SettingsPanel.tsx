@@ -26,7 +26,7 @@ interface SettingsPanelProps {
 
 type Tab = "ai" | "general" | "desktop" | "device" | "memory" | "dna" | "progression";
 
-type ProviderId = "openrouter" | "groq" | "cerebras" | "nvidia";
+type ProviderId = "openrouter" | "groq" | "cerebras" | "nvidia" | "gemini" | "ollama";
 
 const AI_PROVIDERS: Array<{
   id: ProviderId;
@@ -35,6 +35,8 @@ const AI_PROVIDERS: Array<{
   keyUrl: string;
   keyPrefix: string;
   modelPlaceholder: string;
+  /** No API key — the key box carries the local server URL instead. */
+  localOnly?: boolean;
 }> = [
   {
     id: "groq",
@@ -42,7 +44,15 @@ const AI_PROVIDERS: Array<{
     hint: "Free key · fastest voice + chat",
     keyUrl: "https://console.groq.com/keys",
     keyPrefix: "gsk_",
-    modelPlaceholder: "llama-3.3-70b-versatile",
+    modelPlaceholder: "openai/gpt-oss-120b",
+  },
+  {
+    id: "gemini",
+    name: "Gemini",
+    hint: "Free key · biggest free daily quota",
+    keyUrl: "https://aistudio.google.com/apikey",
+    keyPrefix: "AIza",
+    modelPlaceholder: "gemini-2.5-flash",
   },
   {
     id: "cerebras",
@@ -58,7 +68,7 @@ const AI_PROVIDERS: Array<{
     hint: "Free key · many models",
     keyUrl: "https://build.nvidia.com",
     keyPrefix: "nvapi-",
-    modelPlaceholder: "meta/llama-3.3-70b-instruct",
+    modelPlaceholder: "openai/gpt-oss-20b",
   },
   {
     id: "openrouter",
@@ -66,7 +76,16 @@ const AI_PROVIDERS: Array<{
     hint: "Free key · widest model choice",
     keyUrl: "https://openrouter.ai/keys",
     keyPrefix: "sk-or-",
-    modelPlaceholder: "minimax/minimax-m3:free",
+    modelPlaceholder: "google/gemma-4-31b-it:free",
+  },
+  {
+    id: "ollama",
+    name: "Ollama",
+    hint: "Offline backup · needs the Ollama app",
+    keyUrl: "https://ollama.com",
+    keyPrefix: "",
+    modelPlaceholder: "llama3.2:3b",
+    localOnly: true,
   },
 ];
 
@@ -119,9 +138,15 @@ export function SettingsPanel({
 
   // Speech state — the companion's real voice.
   const [speakEnabled, setSpeakEnabled] = useState(true);
-  const [speakEngine, setSpeakEngine] = useState<"auto" | "groq" | "local">("auto");
+  const [speakEngine, setSpeakEngine] = useState<"auto" | "groq" | "edge" | "local">("auto");
   const [speakVoice, setSpeakVoice] = useState("Celeste-PlayAI");
+  const [edgeVoice, setEdgeVoice] = useState("en-IN-NeerjaNeural");
   const [speakNote, setSpeakNote] = useState<string | null>(null);
+
+  // Doctor + transport state (V3.1 connectivity round)
+  const [doctorRunning, setDoctorRunning] = useState(false);
+  const [doctorReport, setDoctorReport] = useState<any>(null);
+  const [transport, setTransport] = useState<"auto" | "net" | "node">("auto");
 
   // Desktop tab state
   const [companionVisible, setCompanionVisible] = useState(true);
@@ -143,7 +168,9 @@ export function SettingsPanel({
       setSpeakEnabled(c.enabled);
       setSpeakEngine(c.engine);
       setSpeakVoice(c.voice);
+      if ((c as any).edgeVoice) setEdgeVoice((c as any).edgeVoice);
     }).catch(() => {});
+    window.quip.getTransportSetting?.().then((t) => setTransport(t.mode)).catch(() => {});
     // Auto-check which provider actually works (real probes, honest badges).
     handleResolveProviders();
     window.quip
@@ -243,22 +270,47 @@ export function SettingsPanel({
   };
 
   /** Voice settings — save live to .env. */
-  const handleSetSpeak = async (patch: { enabled?: boolean; engine?: "auto" | "groq" | "local"; voice?: string }) => {
+  const handleSetSpeak = async (patch: { enabled?: boolean; engine?: "auto" | "groq" | "edge" | "local"; voice?: string; edgeVoice?: string }) => {
     if (patch.enabled !== undefined) setSpeakEnabled(patch.enabled);
     if (patch.engine !== undefined) setSpeakEngine(patch.engine);
     if (patch.voice !== undefined) setSpeakVoice(patch.voice);
+    if (patch.edgeVoice !== undefined) setEdgeVoice(patch.edgeVoice);
     setSpeakNote(null);
     try {
       const r = await window.quip.setSpeakConfig(patch);
       setSpeakNote(r.ok ? "Voice updated." : r.message);
       if (!r.ok) return;
       if (patch.enabled === false) window.quip.ttsStop();
-      if (patch.enabled === true && patch.voice === undefined) {
+      if (patch.enabled === true && patch.voice === undefined && patch.edgeVoice === undefined) {
         // Tiny confirmation so the user KNOWS the voice works.
         window.quip.ttsSpeak({ text: "Hi! I can speak now." });
       }
     } catch {
       setSpeakNote("I couldn't save the voice settings — try again.");
+    }
+  };
+
+  /** FULL checkup — network + every provider + voices + journal + env conflicts. */
+  const handleRunDoctor = async () => {
+    setDoctorRunning(true);
+    try {
+      const report = await window.quip.runDoctor();
+      setDoctorReport(report);
+      const fresh = await window.quip.getModelStatus();
+      setModelStatus(fresh);
+    } catch {
+      setDoctorReport({ verdict: "The checkup couldn't run — try again.", providers: [], suggestions: [], journal: [], network: { ok: false, message: "" }, tts: {}, envConflicts: [] });
+    } finally {
+      setDoctorRunning(false);
+    }
+  };
+
+  const handleSetTransport = async (mode: "auto" | "net" | "node") => {
+    setTransport(mode);
+    try {
+      await window.quip.setTransportSetting(mode);
+    } catch {
+      /* non-fatal */
     }
   };
 
@@ -451,6 +503,74 @@ export function SettingsPanel({
               Paste a free API key below — Quip saves it for you. No file editing needed.
             </div>
 
+            {/* ONE-CLICK CHECKUP — real probes of network + every provider + voices */}
+            <div
+              className="rounded-xl px-3 py-2.5"
+              style={{ border: "1px solid rgba(0,0,0,0.06)", background: "rgba(0,0,0,0.015)" }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-col" style={{ minWidth: 0 }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 600, color: "#111" }}>Full checkup</span>
+                  <span style={{ fontSize: 9.5, color: "#6b7280" }}>
+                    Tests the network path, every provider's key AND model, the voice engines — and tells you exactly what's wrong.
+                  </span>
+                </div>
+                <button
+                  onClick={handleRunDoctor}
+                  disabled={doctorRunning}
+                  style={{
+                    fontSize: 10.5,
+                    fontWeight: 700,
+                    color: "#fff",
+                    background: doctorRunning ? "rgba(0,0,0,0.25)" : "#0c6b8f",
+                    border: "none",
+                    borderRadius: 8,
+                    padding: "6px 12px",
+                    cursor: doctorRunning ? "default" : "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {doctorRunning ? "Checking…" : "Run checkup"}
+                </button>
+              </div>
+              {doctorReport && (
+                <div className="mt-2 flex flex-col gap-1.5">
+                  <div
+                    className="rounded-lg px-2.5 py-1.5"
+                    style={{
+                      fontSize: 10.5,
+                      fontWeight: 600,
+                      color: doctorReport.network?.ok === false ? "#b91c1c" : "#111",
+                      background: "rgba(0,0,0,0.03)",
+                    }}
+                  >
+                    {doctorReport.verdict}
+                  </div>
+                  {doctorReport.network?.ok === false && doctorReport.network?.message && (
+                    <div style={{ fontSize: 9.5, color: "#b91c1c" }}>{doctorReport.network.message}</div>
+                  )}
+                  {(doctorReport.envConflicts ?? []).length > 0 && (
+                    <div style={{ fontSize: 9.5, color: "#b45309" }}>
+                      ⚠ Two different keys found for: {doctorReport.envConflicts.map((c: any) => c.key).join(", ")} — the Settings key now always wins.
+                    </div>
+                  )}
+                  {(doctorReport.suggestions ?? []).slice(0, 6).map((s: string, i: number) => (
+                    <div key={i} style={{ fontSize: 9.5, color: "#374151" }}>• {s}</div>
+                  ))}
+                  {(doctorReport.journal ?? []).length > 0 && (
+                    <details>
+                      <summary style={{ fontSize: 9.5, color: "#6b7280", cursor: "pointer" }}>Recent connection attempts</summary>
+                      <div style={{ fontSize: 9, color: "#6b7280", whiteSpace: "pre-wrap", fontFamily: "monospace", marginTop: 4 }}>
+                        {doctorReport.journal
+                          .map((e: any) => `${e.ok ? "✓" : "✗"} ${new Date(e.ts).toLocaleTimeString()} ${e.provider} (${Math.round(e.latencyMs)}ms)${e.note ? ` — ${e.note}` : ""}`)
+                          .join("\n")}
+                      </div>
+                    </details>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* Auto-resolve: REAL probes of both providers, honest badges */}
             <div
               className="rounded-xl px-3 py-2.5"
@@ -602,11 +722,11 @@ export function SettingsPanel({
               </div>
             </div>
 
-            {/* Key input */}
+            {/* Key input (Ollama: local URL instead — no key needed) */}
             <div>
               <div className="mb-2 flex items-center justify-between">
                 <label className="text-[11px] font-semibold uppercase tracking-wide text-quip-gray">
-                  API key
+                  {AI_PROVIDERS.find((p) => p.id === provider)!.localOnly ? "Local server URL (optional)" : "API key"}
                 </label>
                 <a
                   href={AI_PROVIDERS.find((p) => p.id === provider)!.keyUrl}
@@ -614,18 +734,22 @@ export function SettingsPanel({
                   rel="noreferrer"
                   style={{ fontSize: 10.5, color: "#0c6b8f", textDecoration: "underline" }}
                 >
-                  Get a free key ↗
+                  {AI_PROVIDERS.find((p) => p.id === provider)!.localOnly ? "Get Ollama ↗" : "Get a free key ↗"}
                 </a>
               </div>
               <input
-                type="password"
+                type={AI_PROVIDERS.find((p) => p.id === provider)!.localOnly ? "text" : "password"}
                 value={apiKey}
                 onChange={(e) => {
                   setApiKey(e.target.value);
                   setSaveResult(null);
                   setTestResult(null);
                 }}
-                placeholder={`${AI_PROVIDERS.find((p) => p.id === provider)!.keyPrefix}…`}
+                placeholder={
+                  AI_PROVIDERS.find((p) => p.id === provider)!.localOnly
+                    ? "http://127.0.0.1:11434/v1 (leave empty for the default)"
+                    : `${AI_PROVIDERS.find((p) => p.id === provider)!.keyPrefix}…`
+                }
                 spellCheck={false}
                 autoComplete="off"
                 className="w-full rounded-xl px-3 py-2.5 outline-none transition-all focus:ring-2"
@@ -797,7 +921,7 @@ export function SettingsPanel({
               {speakEnabled && (
                 <div className="mt-2 flex flex-col gap-1.5">
                   <div className="flex items-center gap-1.5">
-                    {(["auto", "groq", "local"] as const).map((e) => (
+                    {(["auto", "groq", "edge", "local"] as const).map((e) => (
                       <button
                         key={e}
                         onClick={() => handleSetSpeak({ engine: e })}
@@ -812,12 +936,12 @@ export function SettingsPanel({
                           cursor: "pointer",
                         }}
                       >
-                        {e === "auto" ? "Auto" : e === "groq" ? "Groq voice" : "Laptop voice"}
+                        {e === "auto" ? "Auto" : e === "groq" ? "Groq voice" : e === "edge" ? "Free neural" : "Laptop voice"}
                       </button>
                     ))}
                   </div>
                   <div className="flex items-center gap-1.5">
-                    {["Celeste-PlayAI", "Fritz-PlayAI", "Nera-PlayAI", "Gail-PlayAI"].map((v) => (
+                    {[["Celeste-PlayAI", "Celeste"], ["Fritz-PlayAI", "Fritz"], ["Nera-PlayAI", "Nera"], ["Gail-PlayAI", "Gail"]].map(([v, label]) => (
                       <button
                         key={v}
                         onClick={() => handleSetSpeak({ voice: v })}
@@ -832,13 +956,72 @@ export function SettingsPanel({
                           cursor: "pointer",
                         }}
                       >
-                        {v.replace("-PlayAI", "")}
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Free Edge neural voices — Hinglish reads naturally here */}
+                  <div className="flex items-center gap-1.5">
+                    <span style={{ fontSize: 9, color: "#9ca3af", whiteSpace: "nowrap" }}>Free:</span>
+                    {[["en-IN-NeerjaNeural", "Neerja (Hinglish)"], ["en-US-AriaNeural", "Aria"], ["en-US-GuyNeural", "Guy"]].map(([v, label]) => (
+                      <button
+                        key={v}
+                        onClick={() => handleSetSpeak({ edgeVoice: v })}
+                        style={{
+                          fontSize: 9,
+                          fontWeight: 600,
+                          color: edgeVoice === v ? "#0c6b8f" : "#9ca3af",
+                          background: edgeVoice === v ? "rgba(111,214,255,0.14)" : "transparent",
+                          border: `1px solid ${edgeVoice === v ? "rgba(111,214,255,0.5)" : "rgba(0,0,0,0.06)"}`,
+                          borderRadius: 6,
+                          padding: "2px 7px",
+                          cursor: "pointer",
+                        }}
+                      >
+                        {label}
                       </button>
                     ))}
                   </div>
                 </div>
               )}
               {speakNote && <div style={{ fontSize: 9.5, color: "#374151", marginTop: 4 }}>{speakNote}</div>}
+            </div>
+
+            {/* Network transport — the escape hatch when a VPN/AV breaks ONE
+                network stack (the other one usually still works). */}
+            <div
+              className="rounded-xl px-3 py-2.5"
+              style={{ border: "1px solid rgba(0,0,0,0.06)", background: "rgba(0,0,0,0.015)" }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-col" style={{ minWidth: 0 }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 600, color: "#111" }}>Network route</span>
+                  <span style={{ fontSize: 9.5, color: "#6b7280" }}>
+                    Auto tries both stacks. Behind a VPN/proxy/antivirus, pinning the other one often fixes "can't connect".
+                  </span>
+                </div>
+                <div className="flex gap-1">
+                  {(["auto", "net", "node"] as const).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => handleSetTransport(m)}
+                      style={{
+                        fontSize: 9.5,
+                        fontWeight: 600,
+                        color: transport === m ? "#0c6b8f" : "#6b7280",
+                        background: transport === m ? "rgba(111,214,255,0.14)" : "rgba(0,0,0,0.03)",
+                        border: "none",
+                        borderRadius: 6,
+                        padding: "3px 8px",
+                        cursor: "pointer",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {m === "auto" ? "Auto" : m === "net" ? "System" : "Direct"}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
 
             {/* Actions */}

@@ -61,7 +61,7 @@ export default function App() {
   );
   const [quipSay, setQuipSay] = useState<string | null>(null);
 
-  const { messages, busy: chatBusy, error, errorKind, taskOutcome, send, newChat, clearError, approvalRequest, resolveApproval, taskProgress, cancelTask } =
+  const { messages, busy: chatBusy, error, errorKind, taskOutcome, send, newChat, clearError, approvalRequest, resolveApproval, taskProgress, cancelTask, streamingProvider, retryLast } =
     useChat(companionId, restoredMessages);
 
   // Settings can open straight to a tab (e.g. "ai" from the no-key banner).
@@ -350,7 +350,7 @@ export default function App() {
             onOpenKeySetup={() => openSettings("ai")}
           />
         ) : (
-          <ChatLayout messages={messages} busy={chatBusy} />
+          <ChatLayout messages={messages} busy={chatBusy} onRetry={retryLast} />
         )}
       </div>
 
@@ -436,6 +436,40 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Live provider chip — which brain is answering (or being tried).
+          Makes failover VISIBLE instead of looking like a hang. */}
+      <AnimatePresence>
+        {streamingProvider && chatBusy && (
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 6 }}
+            style={{
+              margin: "0 12px 6px",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 10.5,
+              fontWeight: 600,
+              color: streamingProvider.confirmed ? "#0c6b8f" : "#9ca3af",
+            }}
+          >
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: streamingProvider.confirmed ? "#22c55e" : "#d1d5db",
+                animation: streamingProvider.confirmed ? "none" : "quipPulse 1s ease-in-out infinite",
+              }}
+            />
+            {streamingProvider.confirmed
+              ? `${streamingProvider.provider} is answering`
+              : `trying ${streamingProvider.provider}…`}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <ChatInput onSend={send} busy={chatBusy} companionId={companionId} />
     </>
   );
@@ -450,6 +484,7 @@ export default function App() {
       onClose={handleClose}
       mode={viewMode === "full" ? "full" : "panel"}
       onToggleExpand={() => enterMode(viewMode === "full" ? "panel" : "full")}
+      onBrainClick={() => openSettings("ai")}
     />
   );
 

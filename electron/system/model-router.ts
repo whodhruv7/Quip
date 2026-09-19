@@ -40,15 +40,23 @@ import {
   PROVIDER_ENABLED_VAR,
   DEFAULT_MODELS,
   FALLBACK_MODELS,
+  isProviderEnabled,
   type ProviderId,
 } from "./env-store";
 import { providerErrorSnippet } from "./provider-probe";
+import { ollamaBaseUrl } from "./provider-probe";
+import { CircuitBreaker, parseRetryAfterMs } from "./circuit-breaker";
+import { connectionJournal } from "./connection-journal";
 
 export { maskSecret } from "./model-config";
 
 export interface StreamCallbacks {
   onChunk: (delta: string) => void;
   signal?: AbortSignal;
+  /** Announced at the START of each provider attempt (confirmed=false,
+   *  "trying X…") and again once its headers arrived (confirmed=true, the
+   *  chip the user sees becomes "X"). Powers the live provider chip. */
+  onProvider?: (provider: string, confirmed: boolean) => void;
 }
 
 export type ChatErrorKind = "no-key" | "auth" | "rate-limit" | "http" | "network" | "timeout";
@@ -61,11 +69,22 @@ export class ModelTransportError extends Error {
   /** True when the provider rejected the MODEL ID (decommissioned/renamed) —
    *  the router retries the next candidate model on the same provider. */
   modelRejected?: boolean;
-  constructor(kind: ChatErrorKind, message: string, attempts: string[] = [], modelRejected = false) {
+  /** Milliseconds the provider asked us to wait (HTTP 429 Retry-After).
+   *  Feeds the circuit breaker so a rate-limited provider rests exactly as
+   *  long as it asked — not a blind fixed retry that burns more 429s. */
+  retryAfterMs?: number | null;
+  constructor(
+    kind: ChatErrorKind,
+    message: string,
+    attempts: string[] = [],
+    modelRejected = false,
+    retryAfterMs: number | null = null
+  ) {
     super(message);
     this.kind = kind;
     this.attempts = attempts;
     this.modelRejected = modelRejected;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -130,6 +149,13 @@ export interface ChatPart {
 }
 
 const REQUEST_TIMEOUT_MS = 60_000;
+/** Connect + headers deadline. A provider that cannot even answer within
+ *  12s will rarely produce a snappy chat — fail over FAST instead of letting
+ *  one dead endpoint hold the reply hostage for a full minute. */
+const CONNECT_TIMEOUT_MS = 12_000;
+/** SSE stall watchdog — no bytes for this long mid-stream = dead proxy/broken
+ *  connection; abort and fail over instead of waiting forever. */
+const SSE_STALL_TIMEOUT_MS = 25_000;
 
 // ---------------------------------------------------------------------------
 // Transport — Electron net.fetch FIRST, Node fetch as automatic fallback.
@@ -140,7 +166,15 @@ const REQUEST_TIMEOUT_MS = 60_000;
 // of the reasons "providers never connect" on the user's laptop. Trying BOTH
 // transports (and TLS-mismatch retry) covers proxy, AV-inspection and cert
 // pinning failures.
+// QUIP_TRANSPORT=net|node pins ONE stack — the escape hatch for machines
+// where a specific stack is broken (VSCode hit the same class of bug with
+// Electron fetch behind proxies). Set from Settings → AI Brain.
 // ---------------------------------------------------------------------------
+
+function transportMode(): "auto" | "net" | "node" {
+  const t = (process.env.QUIP_TRANSPORT || "auto").toLowerCase();
+  return t === "net" || t === "node" ? t : "auto";
+}
 
 function isTlsError(err: unknown): boolean {
   const msg = String((err as Error)?.message ?? err);
@@ -160,11 +194,17 @@ function hasElectronNet(): boolean {
 }
 
 async function modelFetch(url: string, init: RequestInit): Promise<Response> {
-  const useNet = hasElectronNet();
+  const mode = transportMode();
+  const useNet = mode === "node" ? false : mode === "net" ? true : hasElectronNet();
   const viaNet = () => (net as any).fetch(url, init) as Promise<Response>;
   const viaNode = () => fetch(url, init);
   const first = useNet ? viaNet : viaNode;
   const second = useNet ? viaNode : viaNet;
+  if (mode !== "auto") {
+    // Pinned transport: ONE stack, no silent swapping (the user chose it
+    // precisely because the other stack misbehaves on their machine).
+    return await first();
+  }
   try {
     return await first();
   } catch (error) {
@@ -237,7 +277,11 @@ async function streamOpenAICompat(
   cb: StreamCallbacks
 ): Promise<string> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const overall = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let connectTimer: ReturnType<typeof setTimeout> | null = setTimeout(
+    () => controller.abort(),
+    CONNECT_TIMEOUT_MS
+  );
   if (cb.signal) cb.signal.addEventListener("abort", () => controller.abort());
 
   try {
@@ -261,20 +305,33 @@ async function streamOpenAICompat(
       throw new ModelTransportError("network", `${provider} unreachable: ${(err as Error)?.message ?? err}`);
     }
 
+    // Headers arrived — the connect deadline is served; switch to the
+    // overall + stall watchdogs.
+    if (connectTimer) {
+      clearTimeout(connectTimer);
+      connectTimer = null;
+    }
+    cb.onProvider?.(provider, true); // confirmed — this provider is answering
+
     if (!resp.ok || !resp.body) {
       const text = await resp.text().catch(() => "");
       const snippet = providerErrorSnippet(text);
+      const retryAfter = parseRetryAfterMs(
+        (resp.headers as any)?.get?.("retry-after") ?? null
+      );
       throw new ModelTransportError(
         classifyStatus(resp.status),
         `${provider}-http-${resp.status}${snippet ? ` — ${snippet}` : ""}`,
         [],
-        isModelRejection(resp.status, text)
+        isModelRejection(resp.status, text),
+        retryAfter
       );
     }
 
-    return await readSSE(resp.body, cb.onChunk);
+    return await readSSE(resp.body, cb.onChunk, controller);
   } finally {
-    clearTimeout(timeout);
+    clearTimeout(overall);
+    if (connectTimer) clearTimeout(connectTimer);
   }
 }
 
@@ -313,11 +370,15 @@ async function completeOpenAICompat(
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
       const snippet = providerErrorSnippet(text);
+      const retryAfter = parseRetryAfterMs(
+        (resp.headers as any)?.get?.("retry-after") ?? null
+      );
       throw new ModelTransportError(
         classifyStatus(resp.status),
         `${provider}-http-${resp.status}${snippet ? ` — ${snippet}` : ""}`,
         [],
-        isModelRejection(resp.status, text)
+        isModelRejection(resp.status, text),
+        retryAfter
       );
     }
 
@@ -408,50 +469,67 @@ async function withModelFallback<T>(
 
 async function readSSE(
   body: ReadableStream<Uint8Array>,
-  onChunk: (delta: string) => void
+  onChunk: (delta: string) => void,
+  controller?: AbortController
 ): Promise<string> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let full = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+  // Stall watchdog: no bytes at all for SSE_STALL_TIMEOUT_MS = the connection
+  // is silently dead (proxies love to do this). Abort → the router fails over.
+  let stallTimer: ReturnType<typeof setTimeout> | null = controller
+    ? setTimeout(() => controller.abort(), SSE_STALL_TIMEOUT_MS)
+    : null;
+  const bump = () => {
+    if (!controller) return;
+    if (stallTimer) clearTimeout(stallTimer);
+    stallTimer = setTimeout(() => controller.abort(), SSE_STALL_TIMEOUT_MS);
+  };
 
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() ?? "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bump();
+      buffer += decoder.decode(value, { stream: true });
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith("data:")) continue;
-      const data = trimmed.slice(5).trim();
-      if (data === "[DONE]") continue;
-      try {
-        const json = JSON.parse(data);
-        // A 200 stream can still carry an error frame (quota burst, dead
-        // model flagged mid-stream). Swallowing it used to produce a silent
-        // empty bubble — surface it so the router fails over honestly.
-        if (json && typeof json === "object" && json.error) {
-          const msg = String(json.error?.message ?? JSON.stringify(json.error)).slice(0, 160);
-          throw new ModelTransportError(
-            "http",
-            `${msg}`,
-            [],
-            /\bmodel\b/i.test(msg) && /(not found|not exist|decommission|deprecat|invalid|unknown|unsupported|retired)/i.test(msg)
-          );
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith("data:")) continue;
+        const data = trimmed.slice(5).trim();
+        if (data === "[DONE]") continue;
+        try {
+          const json = JSON.parse(data);
+          // A 200 stream can still carry an error frame (quota burst, dead
+          // model flagged mid-stream). Swallowing it used to produce a silent
+          // empty bubble — surface it so the router fails over honestly.
+          if (json && typeof json === "object" && json.error) {
+            const msg = String(json.error?.message ?? JSON.stringify(json.error)).slice(0, 160);
+            throw new ModelTransportError(
+              "http",
+              `${msg}`,
+              [],
+              /\bmodel\b/i.test(msg) && /(not found|not exist|decommission|deprecat|invalid|unknown|unsupported|retired)/i.test(msg)
+            );
+          }
+          const delta: string = json?.choices?.[0]?.delta?.content ?? "";
+          if (delta) {
+            full += delta;
+            onChunk(delta);
+          }
+        } catch (e: any) {
+          if (e instanceof ModelTransportError) throw e; // error frame — propagate
+          /* partial JSON — ignore */
         }
-        const delta: string = json?.choices?.[0]?.delta?.content ?? "";
-        if (delta) {
-          full += delta;
-          onChunk(delta);
-        }
-      } catch (e: any) {
-        if (e instanceof ModelTransportError) throw e; // error frame — propagate
-        /* partial JSON — ignore */
       }
     }
+  } finally {
+    if (stallTimer) clearTimeout(stallTimer);
   }
   return full;
 }
@@ -485,7 +563,7 @@ function makeGroq(): ProviderAdapter {
   return {
     config,
     isConfigured: () => realKey(process.env.GROQ_API_KEY, "your-groq-key-here"),
-    isEnabled: () => process.env.QUIP_GROQ_ENABLED !== "0",
+    isEnabled: () => isProviderEnabled("groq"),
     visionModel: () => process.env.GROQ_VISION_MODEL || "meta-llama/llama-4-scout-17b-16e-instruct",
     async stream(systemPrompt, history, cb) {
       const key = process.env.GROQ_API_KEY;
@@ -539,7 +617,7 @@ function makeCerebras(): ProviderAdapter {
   return {
     config,
     isConfigured: () => realKey(process.env.CEREBRAS_API_KEY, "your-cerebras-key-here"),
-    isEnabled: () => process.env.QUIP_CEREBRAS_ENABLED !== "0",
+    isEnabled: () => isProviderEnabled("cerebras"),
     visionModel: () => process.env.CEREBRAS_VISION_MODEL || "llama-4-scout-17b-16e-instruct",
     async stream(systemPrompt, history, cb) {
       const key = process.env.CEREBRAS_API_KEY;
@@ -593,7 +671,7 @@ function makeNvidia(): ProviderAdapter {
   return {
     config,
     isConfigured: () => realKey(process.env.NVIDIA_API_KEY, "nvapi-your-key-here"),
-    isEnabled: () => process.env.QUIP_NVIDIA_ENABLED !== "0",
+    isEnabled: () => isProviderEnabled("nvidia"),
     visionModel: () => process.env.NVIDIA_VISION_MODEL || "meta/llama-3.2-90b-vision-instruct",
     async stream(systemPrompt, history, cb) {
       const key = process.env.NVIDIA_API_KEY;
@@ -632,6 +710,100 @@ function makeNvidia(): ProviderAdapter {
   };
 }
 
+function makeGemini(): ProviderAdapter {
+  const config: ModelConfig = {
+    provider: "gemini",
+    model: process.env.GEMINI_MODEL || DEFAULT_MODELS.gemini,
+    label: `Gemini · ${(process.env.GEMINI_MODEL || DEFAULT_MODELS.gemini).split("/").pop()}`,
+    available: false,
+  };
+  const chat = (model?: string) => ({
+    // Google's OFFICIAL OpenAI-compatible endpoint — same request shapes as
+    // every other adapter, billed against Gemini's generous free tier.
+    url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    key: process.env.GEMINI_API_KEY ?? "",
+    model: model || config.model,
+  });
+  return {
+    config,
+    isConfigured: () => realKey(process.env.GEMINI_API_KEY, "your-gemini-key-here"),
+    isEnabled: () => isProviderEnabled("gemini"),
+    visionModel: () => process.env.GEMINI_VISION_MODEL || "gemini-2.5-flash",
+    async stream(systemPrompt, history, cb) {
+      const key = process.env.GEMINI_API_KEY;
+      if (!key) throw new ModelTransportError("no-key", "no-gemini-key");
+      return withModelFallback("gemini", config.model, chat, (cfg) => streamOpenAICompat(cfg, "gemini", systemPrompt, history, cb));
+    },
+    async complete(systemPrompt, history, timeoutMs = 30_000) {
+      const key = process.env.GEMINI_API_KEY;
+      if (!key) throw new ModelTransportError("no-key", "no-gemini-key");
+      const { content } = await withModelFallback("gemini", config.model, chat, (cfg) => completeOpenAICompat(cfg, "gemini", systemPrompt, history, timeoutMs));
+      return content;
+    },
+    async completeVision(prompt, imageBase64, mimeType, timeoutMs = 30_000) {
+      const key = process.env.GEMINI_API_KEY;
+      if (!key) throw new ModelTransportError("no-key", "no-gemini-key");
+      const { content } = await completeOpenAICompat(
+        chat(process.env.GEMINI_VISION_MODEL || "gemini-2.5-flash"), "gemini",
+        VISION_SYSTEM_PROMPT,
+        [{
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: `data:${mimeType};base64,${imageBase64}` } },
+          ],
+        }],
+        timeoutMs,
+        600
+      );
+      return content;
+    },
+    async completeWithTools(systemPrompt, history, tools, timeoutMs = 45_000, maxTokens = 2048) {
+      const key = process.env.GEMINI_API_KEY;
+      if (!key) throw new ModelTransportError("no-key", "no-gemini-key");
+      return withModelFallback("gemini", config.model, chat, (cfg) => completeOpenAICompat(cfg, "gemini", systemPrompt, history, timeoutMs, maxTokens, tools));
+    },
+  };
+}
+
+function makeOllama(): ProviderAdapter {
+  const config: ModelConfig = {
+    provider: "ollama",
+    model: process.env.QUIP_OLLAMA_MODEL || DEFAULT_MODELS.ollama,
+    label: `Ollama · ${(process.env.QUIP_OLLAMA_MODEL || DEFAULT_MODELS.ollama)}`,
+    available: false,
+  };
+  const chat = (model?: string) => ({
+    // The laptop's own OpenAI-compatible server (Ollama app). No key, no
+    // internet — the reason chat can survive a total outage.
+    url: `${ollamaBaseUrl(process.env.QUIP_OLLAMA_URL)}/chat/completions`,
+    key: "",
+    model: model || config.model,
+  });
+  return {
+    config,
+    // No key to configure — reachability is the real test, and the circuit
+    // breaker parks it fast (localhost connection-refused is instant) when
+    // the Ollama app isn't running.
+    isConfigured: () => true,
+    isEnabled: () => isProviderEnabled("ollama"),
+    visionModel: () => null,
+    async stream(systemPrompt, history, cb) {
+      return withModelFallback("ollama", config.model, chat, (cfg) => streamOpenAICompat(cfg, "ollama", systemPrompt, history, cb));
+    },
+    async complete(systemPrompt, history, timeoutMs = 30_000) {
+      const { content } = await withModelFallback("ollama", config.model, chat, (cfg) => completeOpenAICompat(cfg, "ollama", systemPrompt, history, timeoutMs));
+      return content;
+    },
+    async completeVision() {
+      throw new ModelTransportError("no-key", "Ollama has no vision model configured in Quip");
+    },
+    async completeWithTools(systemPrompt, history, tools, timeoutMs = 45_000, maxTokens = 2048) {
+      return withModelFallback("ollama", config.model, chat, (cfg) => completeOpenAICompat(cfg, "ollama", systemPrompt, history, timeoutMs, maxTokens, tools));
+    },
+  };
+}
+
 function makeOpenRouter(): ProviderAdapter {
   const config: ModelConfig = {
     provider: "openrouter",
@@ -648,7 +820,7 @@ function makeOpenRouter(): ProviderAdapter {
   return {
     config,
     isConfigured: () => realKey(process.env.OPENROUTER_API_KEY, "sk-or-v1-your-key-here"),
-    isEnabled: () => process.env.QUIP_OPENROUTER_ENABLED !== "0",
+    isEnabled: () => isProviderEnabled("openrouter"),
     visionModel: () => process.env.OPENROUTER_VISION_MODEL || "qwen/qwen-2.5-vl-72b-instruct:free",
     async stream(systemPrompt, history, cb) {
       const key = process.env.OPENROUTER_API_KEY;
@@ -694,9 +866,11 @@ function makeOpenRouter(): ProviderAdapter {
 function makeAdapters(): Record<string, ProviderAdapter> {
   return {
     groq: makeGroq(),
+    gemini: makeGemini(),
     cerebras: makeCerebras(),
     nvidia: makeNvidia(),
     openrouter: makeOpenRouter(),
+    ollama: makeOllama(),
   };
 }
 
@@ -704,6 +878,9 @@ export class ModelRouter {
   private adapters: Record<string, ProviderAdapter> = {};
   private order: ProviderAdapter[] = []; // priority order (may include unconfigured)
   private activeProvider: ModelProvider = "groq";
+  /** Circuit breaker — parks repeatedly-failing providers so every new
+   *  message stops paying their timeout. Reset when ALL providers park. */
+  readonly breaker = new CircuitBreaker();
 
   constructor() {
     this.rebuild();
@@ -732,24 +909,48 @@ export class ModelRouter {
       : (this.order[0]?.config.provider ?? "groq");
   }
 
-  /** Ordered, configured+enabled providers — the live failover chain. */
+  /** Ordered, configured+enabled providers — the live failover chain with
+   *  circuit-broken (parked) providers filtered out. NO side effects — safe
+   *  for status() and failure wrapping. */
   chain(): ProviderAdapter[] {
-    return this.order.filter((p) => p.isEnabled() && p.isConfigured());
+    return this.order
+      .filter((p) => p.isEnabled() && p.isConfigured())
+      .filter((p) => this.breaker.isAvailable(p.config.provider));
+  }
+
+  /** The chain for a NEW request: when EVERY usable provider is parked,
+   *  all parks are cleared first — a fresh user message must always get at
+   *  least one real attempt from the whole chain. */
+  private requestChain(): ProviderAdapter[] {
+    const raw = this.order.filter((p) => p.isEnabled() && p.isConfigured());
+    const usable = raw.filter((p) => this.breaker.isAvailable(p.config.provider));
+    if (raw.length > 0 && usable.length === 0) {
+      this.breaker.resetAll();
+      return raw;
+    }
+    return usable;
   }
 
   /**
    * Honest per-provider status lines for the failure trail — WHY each
    * provider was skipped. Only enabled providers appear (disabled ones are
-   * a user choice, not a failure).
+   * a user choice, not a failure). Ollama needs no key — reachability is
+   * reported instead of a missing key.
    */
   private skipNotes(): string[] {
     return this.order
       .filter((p) => p.isEnabled())
-      .map((p) =>
-        p.isConfigured()
-          ? null
-          : `${PROVIDER_LABEL[p.config.provider]}: ${keyMissingNote(PROVIDER_KEY_VAR_FOR(p.config.provider))}`
-      )
+      .map((p) => {
+        if (p.config.provider === "ollama") return null; // no key needed — silently skipped when off
+        if (!p.isConfigured()) {
+          return `${PROVIDER_LABEL[p.config.provider]}: ${keyMissingNote(PROVIDER_KEY_VAR_FOR(p.config.provider))}`;
+        }
+        const parkedFor = this.breaker.parkedForMs(p.config.provider);
+        if (parkedFor > 0) {
+          return `${PROVIDER_LABEL[p.config.provider]}: resting ${Math.ceil(parkedFor / 1000)}s after repeated failures (circuit breaker) — it rejoins automatically`;
+        }
+        return null;
+      })
       .filter((s): s is string => !!s);
   }
 
@@ -759,28 +960,53 @@ export class ModelRouter {
     history: { role: "user" | "assistant"; content: string }[],
     cb: StreamCallbacks
   ): Promise<{ full: string; provider: ModelProvider; switched: boolean }> {
-    const providers = this.chain();
+    const providers = this.requestChain();
     const attempts: string[] = [];
     let lastErr: unknown = null;
 
     for (const p of providers) {
+      const providerId = p.config.provider;
+      cb.onProvider?.(providerId, false); // "trying X…"
       for (let attempt = 0; attempt < 2; attempt++) {
+        const started = Date.now();
         try {
           const full = await p.stream(systemPrompt, history, cb);
           // A 200 stream that yields NOTHING is a failure, not a success —
           // the user used to get a silent empty bubble. Fail over honestly.
           if (!full || !full.trim()) {
-            throw new ModelTransportError("http", `${PROVIDER_LABEL[p.config.provider]} returned an empty reply`);
+            throw new ModelTransportError("http", `${PROVIDER_LABEL[providerId]} returned an empty reply`);
           }
           const switched = p.config.provider !== providers[0].config.provider;
-          if (switched) attempts.push(`${PROVIDER_LABEL[p.config.provider]} answered after ${PROVIDER_LABEL[providers[0].config.provider]} failed.`);
-          this.activeProvider = p.config.provider;
-          return { full, provider: p.config.provider, switched };
+          if (switched) attempts.push(`${PROVIDER_LABEL[providerId]} answered after ${PROVIDER_LABEL[providers[0].config.provider]} failed.`);
+          this.activeProvider = providerId;
+          this.breaker.recordSuccess(providerId);
+          connectionJournal.record({
+            provider: providerId,
+            model: p.config.model,
+            ok: true,
+            kind: "none",
+            latencyMs: Date.now() - started,
+            note: switched ? `answered after ${PROVIDER_LABEL[providers[0].config.provider]} failed` : "",
+            switched,
+          });
+          return { full, provider: providerId, switched };
         } catch (err: any) {
           lastErr = err;
           if (cb.signal?.aborted) throw err;
           const kind: ChatErrorKind = err instanceof ModelTransportError ? err.kind : "network";
-          attempts.push(`${PROVIDER_LABEL[p.config.provider]}: ${err?.message ?? err}`);
+          attempts.push(`${PROVIDER_LABEL[providerId]}: ${err?.message ?? err}`);
+          connectionJournal.record({
+            provider: providerId,
+            model: p.config.model,
+            ok: false,
+            kind,
+            latencyMs: Date.now() - started,
+            note: String(err?.message ?? err).slice(0, 180),
+          });
+          this.breaker.recordFailure(providerId, {
+            retryAfterMs: err instanceof ModelTransportError ? err.retryAfterMs ?? null : null,
+            lastError: String(err?.message ?? err),
+          });
           // Retry only transient network failures; auth/rate-limit/http move on.
           if (kind === "network" && attempt === 0) continue;
           break;
@@ -816,27 +1042,37 @@ export class ModelRouter {
     history: { role: "user" | "assistant"; content: string }[],
     timeoutMs?: number
   ): Promise<string> {
-    const providers = this.chain();
+    const providers = this.requestChain();
     const attempts: string[] = this.skipNotes();
     let lastErr: unknown = null;
     for (const p of providers) {
+      const started = Date.now();
       try {
         const result = await p.complete(systemPrompt, history, timeoutMs);
         this.activeProvider = p.config.provider;
+        this.breaker.recordSuccess(p.config.provider);
+        connectionJournal.record({ provider: p.config.provider, model: p.config.model, ok: true, kind: "none", latencyMs: Date.now() - started, note: "complete" });
         return result;
       } catch (err: any) {
         lastErr = err;
         attempts.push(`${PROVIDER_LABEL[p.config.provider]}: ${err?.message ?? err}`);
+        connectionJournal.record({ provider: p.config.provider, model: p.config.model, ok: false, kind: err instanceof ModelTransportError ? err.kind : "network", latencyMs: Date.now() - started, note: String(err?.message ?? err).slice(0, 180) });
+        this.breaker.recordFailure(p.config.provider, {
+          retryAfterMs: err instanceof ModelTransportError ? err.retryAfterMs ?? null : null,
+          lastError: String(err?.message ?? err),
+        });
         const kind: ChatErrorKind = err instanceof ModelTransportError ? err.kind : "network";
         if (kind === "auth" || kind === "no-key") continue; // try next provider
         // rate-limit / network / timeout: brief single retry on same provider
         try {
           const result = await p.complete(systemPrompt, history, timeoutMs);
           this.activeProvider = p.config.provider;
+          this.breaker.recordSuccess(p.config.provider);
           return result;
         } catch (err2) {
           lastErr = err2;
           attempts.push(`${PROVIDER_LABEL[p.config.provider]} retry: ${(err2 as Error)?.message ?? err2}`);
+          this.breaker.recordFailure(p.config.provider, { lastError: String((err2 as Error)?.message ?? err2) });
         }
       }
     }
@@ -856,27 +1092,37 @@ export class ModelRouter {
     timeoutMs = 45_000,
     maxTokens = 2048
   ): Promise<{ content: string; toolCalls: ToolCall[]; provider: ModelProvider }> {
-    const providers = this.chain();
+    const providers = this.requestChain();
     const attempts: string[] = this.skipNotes();
     let lastErr: unknown = null;
     for (const p of providers) {
+      const started = Date.now();
       try {
         const { content, toolCalls } = await p.completeWithTools(systemPrompt, history, tools, timeoutMs, maxTokens);
         this.activeProvider = p.config.provider;
+        this.breaker.recordSuccess(p.config.provider);
+        connectionJournal.record({ provider: p.config.provider, model: p.config.model, ok: true, kind: "none", latencyMs: Date.now() - started, note: "tools" });
         return { content, toolCalls, provider: p.config.provider };
       } catch (err: any) {
         lastErr = err;
         attempts.push(`${PROVIDER_LABEL[p.config.provider]}: ${err?.message ?? err}`);
+        connectionJournal.record({ provider: p.config.provider, model: p.config.model, ok: false, kind: err instanceof ModelTransportError ? err.kind : "network", latencyMs: Date.now() - started, note: String(err?.message ?? err).slice(0, 180) });
+        this.breaker.recordFailure(p.config.provider, {
+          retryAfterMs: err instanceof ModelTransportError ? err.retryAfterMs ?? null : null,
+          lastError: String(err?.message ?? err),
+        });
         const kind: ChatErrorKind = err instanceof ModelTransportError ? err.kind : "network";
         if (kind === "auth" || kind === "no-key") continue;
         // one transient retry on the same provider, then move on
         try {
           const { content, toolCalls } = await p.completeWithTools(systemPrompt, history, tools, timeoutMs, maxTokens);
           this.activeProvider = p.config.provider;
+          this.breaker.recordSuccess(p.config.provider);
           return { content, toolCalls, provider: p.config.provider };
         } catch (err2) {
           lastErr = err2;
           attempts.push(`${PROVIDER_LABEL[p.config.provider]} retry: ${(err2 as Error)?.message ?? err2}`);
+          this.breaker.recordFailure(p.config.provider, { lastError: String((err2 as Error)?.message ?? err2) });
         }
       }
     }
@@ -894,28 +1140,38 @@ export class ModelRouter {
     mimeType = "image/png",
     timeoutMs = 30_000
   ): Promise<{ text: string; provider: ModelProvider }> {
-    const providers = this.chain();
+    const providers = this.requestChain();
     const attempts: string[] = this.skipNotes();
     let lastErr: unknown = null;
     for (const p of providers) {
       const vModel = p.visionModel();
       if (!vModel) continue;
+      const started = Date.now();
       try {
         const text = await p.completeVision(prompt, imageBase64, mimeType, timeoutMs);
         this.activeProvider = p.config.provider;
+        this.breaker.recordSuccess(p.config.provider);
+        connectionJournal.record({ provider: p.config.provider, model: vModel, ok: true, kind: "none", latencyMs: Date.now() - started, note: "vision" });
         return { text, provider: p.config.provider };
       } catch (err: any) {
         lastErr = err;
         attempts.push(`${PROVIDER_LABEL[p.config.provider]} vision: ${err?.message ?? err}`);
+        connectionJournal.record({ provider: p.config.provider, model: vModel, ok: false, kind: err instanceof ModelTransportError ? err.kind : "network", latencyMs: Date.now() - started, note: String(err?.message ?? err).slice(0, 180) });
+        this.breaker.recordFailure(p.config.provider, {
+          retryAfterMs: err instanceof ModelTransportError ? err.retryAfterMs ?? null : null,
+          lastError: String(err?.message ?? err),
+        });
         const kind: ChatErrorKind = err instanceof ModelTransportError ? err.kind : "network";
         if (kind === "auth" || kind === "no-key") continue;
         // one transient retry, then next provider
         try {
           const text = await p.completeVision(prompt, imageBase64, mimeType, timeoutMs);
           this.activeProvider = p.config.provider;
+          this.breaker.recordSuccess(p.config.provider);
           return { text, provider: p.config.provider };
         } catch (err2) {
           lastErr = err2;
+          this.breaker.recordFailure(p.config.provider, { lastError: String((err2 as Error)?.message ?? err2) });
         }
       }
     }
@@ -938,11 +1194,19 @@ export class ModelRouter {
       return lastErr;
     }
     const kind: ChatErrorKind = lastErr instanceof ModelTransportError ? lastErr.kind : "no-key";
+    const retryAfter = lastErr instanceof ModelTransportError ? lastErr.retryAfterMs ?? null : null;
     const trail = [...attempts, ...this.skipNotes()];
-    const msg = fallbackMsg ?? (this.chain().length === 0
+    // "Configured" means a key exists and the provider is enabled — circuit
+    // breaker parks do NOT change that (they clear on the next request).
+    const configuredCount = this.order.filter((p) => p.isEnabled() && p.isConfigured()).length;
+    const msg = fallbackMsg ?? (configuredCount === 0
       ? "No AI provider is configured yet — add a key in Settings → AI Brain."
       : "I couldn't get an answer from any of your AI providers.");
-    return new ModelTransportError(kind, msg, trail);
+    const wrapped = new ModelTransportError(kind, msg, trail);
+    // Preserve the provider's own 429 wait instruction — the breaker and the
+    // chat error UI both need it even after the trail is wrapped.
+    wrapped.retryAfterMs = retryAfter;
+    return wrapped;
   }
 
   /** Masked diagnostics — safe to log/show. Never includes raw keys. */
@@ -952,9 +1216,13 @@ export class ModelRouter {
       `provider=${s.active.provider}`,
       `model=${s.active.model}`,
       `groqKey=${maskSecret(process.env.GROQ_API_KEY)}`,
+      `geminiKey=${maskSecret(process.env.GEMINI_API_KEY)}`,
       `cerebrasKey=${maskSecret(process.env.CEREBRAS_API_KEY)}`,
       `nvidiaKey=${maskSecret(process.env.NVIDIA_API_KEY)}`,
       `openrouterKey=${maskSecret(process.env.OPENROUTER_API_KEY)}`,
+      `ollama=${process.env.QUIP_OLLAMA_ENABLED === "1" ? "on" : "off"}`,
+      `transport=${transportMode()}`,
+      `breaker=${JSON.stringify(this.breaker.snapshot())}`,
     ].join(" ");
   }
 }
@@ -963,6 +1231,7 @@ export class ModelRouter {
 function PROVIDER_KEY_VAR_FOR(provider: ModelProvider): string {
   switch (provider) {
     case "groq": return "GROQ_API_KEY";
+    case "gemini": return "GEMINI_API_KEY";
     case "cerebras": return "CEREBRAS_API_KEY";
     case "nvidia": return "NVIDIA_API_KEY";
     case "openrouter": return "OPENROUTER_API_KEY";
