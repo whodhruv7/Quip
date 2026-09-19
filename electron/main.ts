@@ -110,6 +110,11 @@ import { invalidateAppIndex } from "./engine/tool-registry";
 import { parseIntentV2 } from "./engine/intent-parser-v2";
 import { contextStore } from "./engine/context-store";
 
+// Head Brain — the permanent understanding layer (spec Phase 1/2).
+// Every command becomes a structured Understanding BEFORE anything runs.
+import { processCommand as brainProcessCommand, type HubExecOptions } from "./brain/hub";
+import { deviceLookup, initDeviceIndex } from "./brain/device-index";
+
 // The orchestrator uses the model ONLY for ambiguous intent (compact schema,
 // one small call) — deterministic tools handle the obvious actions.
 orchestrator.setModelRouter(modelRouter);
@@ -117,6 +122,27 @@ orchestrator.setModelRouter(modelRouter);
 // key powers both the brain (tool calling) and the eyes (llama-4 vision).
 bindAgentBrain(modelRouter);
 bindVisionBrain(modelRouter);
+
+// The Head Brain is provider-independent: it never calls the model itself.
+// The orchestrator (the hands) remains the ONLY component that talks to LLMs.
+const brainHub = {
+  processCommand: (raw: string, opts: HubExecOptions) =>
+    brainProcessCommand(
+      raw,
+      {
+        deviceIndex: deviceLookup(),
+        execContext: () => contextStore.get(),
+        execute: (cmd, exOpts) =>
+          orchestrator.execute(cmd, {
+            platform: process.platform,
+            signal: exOpts.signal,
+            onProgress: exOpts.onProgress,
+          }),
+        log: (line) => console.log(line),
+      },
+      opts
+    ),
+};
 
 import type {
   DeviceProfile,
@@ -974,13 +1000,11 @@ async function runTaskExecute(
       status: "running",
     } as TaskProgressPayload);
 
-    // Parse intent once for plan metadata (orchestrator re-parses internally;
-    // this is a pure regex parse — no model call, negligible cost).
-    const intentInfo = parseIntentV2(payload.command);
-
-    const result = await orchestrator.execute(payload.command, {
-      platform,
-      workspacePath,
+    // ── Head Brain: understanding → plan → route (spec Phase 1/2) ──────
+    // The orchestrator still executes, but now on the REFERENCE-RESOLVED
+    // command, behind a clarification gate (never act on a guess), with the
+    // lifecycle trace + structured telemetry the spec requires.
+    const hubOutcome = await brainHub.processCommand(payload.command, {
       signal: cancelSignal,
       onProgress: (update) => {
         sendToWindow(win, IPC.TASK_PROGRESS, {
@@ -993,6 +1017,41 @@ async function runTaskExecute(
         } as TaskProgressPayload);
       },
     });
+    const brainU = hubOutcome.understanding;
+    const intentInfo = brainU?.parsed ?? parseIntentV2(payload.command);
+
+    // Clarification: the brain needs ONE detail before acting — answer
+    // honestly instead of guessing (spec: zero random execution).
+    if (hubOutcome.route === "clarify") {
+      return {
+        requestId: payload.requestId,
+        success: true,
+        summary: hubOutcome.clarifyQuestion ?? "Which one do you mean?",
+        notes: ["I need one detail before acting — I don't guess."],
+        answered: true,
+        stepsCompleted: 0,
+        stepsTotal: 0,
+        failures: [],
+        plan: planMetaFromBrain(payload.requestId, brainU, "", true),
+      } as unknown as TaskResultPayload;
+    }
+
+    // Pure conversation → fall through to the companion chat (existing
+    // contract: stepsTotal === 0 && !answered makes the UI call chatSend).
+    if (hubOutcome.route === "chat" || !hubOutcome.result) {
+      return {
+        requestId: payload.requestId,
+        success: true,
+        summary: "",
+        notes: [],
+        stepsCompleted: 0,
+        stepsTotal: 0,
+        failures: [],
+        plan: planMetaFromBrain(payload.requestId, brainU, "", true),
+      } as unknown as TaskResultPayload;
+    }
+
+    const result = hubOutcome.result;
 
     // Record task completion for companion evolution and timeline
     if (result.success && result.stepsTotal > 0) {
@@ -1015,19 +1074,51 @@ async function runTaskExecute(
       notes: result.notes,
       ...(result.failures?.length ? { failures: result.failures } : {}),
       ...(result.answered ? { answered: true } : {}),
-      plan: {
-        id: payload.requestId,
-        requestId: payload.requestId,
-        intent: { type: intentInfo.action, target: intentInfo.target || null, query: intentInfo.query || null, confidence: intentInfo.confidence, verbs: [], raw: payload.command },
-        subtasks: [],
-        summary: result.summary,
-        isChat: result.stepsTotal === 0 && !result.answered,
-        createdAt: Date.now(),
-      } as any,
+      plan: planMetaFromBrain(payload.requestId, brainU, result.summary, result.stepsTotal === 0 && !result.answered),
     };
   } finally {
     taskCancelSignals.delete(cancelSignal);
   }
+}
+
+/**
+ * Plan metadata from the Head Brain's understanding (richer than the raw
+ * parse: primary intent kind, resolved target, verbs, per-step subtasks).
+ */
+function planMetaFromBrain(
+  requestId: string,
+  u: ReturnType<typeof import("./brain/understanding").buildUnderstanding> | undefined | null,
+  summary: string,
+  isChat: boolean
+) {
+  if (!u) {
+    const fallback = parseIntentV2("");
+    return {
+      id: requestId,
+      requestId,
+      intent: { type: fallback.action, target: null, query: null, confidence: 0.3, verbs: [], raw: "" },
+      subtasks: [],
+      summary,
+      isChat: true,
+      createdAt: Date.now(),
+    } as any;
+  }
+  return {
+    id: requestId,
+    requestId,
+    intent: {
+      type: u.intents.primary.kind,
+      target: u.objects[0]?.name ?? u.parsed.target ?? null,
+      query: u.parsed.query ?? null,
+      confidence: u.parsed.confidence,
+      verbs: [u.intents.primary.kind, ...u.intents.secondary.map((s) => s.kind)],
+      raw: u.literal,
+    },
+    subtasks: u.parsed.steps.map((s) => ({ description: s.description })),
+    summary,
+    isChat,
+    createdAt: Date.now(),
+  } as any;
 }
 
 // ---------------------------------------------------------------------------
@@ -1755,6 +1846,10 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.whenReady().then(async () => {
+    // Device Knowledge Layer — load the cached index instantly, then rescan
+    // in the background and merge only the diff. Never blocks the boot.
+    initDeviceIndex(app.getPath("userData")).catch(() => {});
+
     // Run the full bootstrap pipeline.
     let bootResult: BootstrapResult;
     try {

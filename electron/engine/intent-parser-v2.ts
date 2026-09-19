@@ -79,7 +79,8 @@ export interface ParseOptions {
 
 // ─── Alias tables ────────────────────────────────────────────────────────────
 
-const APP_HINTS: Record<string, string> = {
+/** Exported for the Head Brain's object detection (single source of truth). */
+export const APP_HINTS: Record<string, string> = {
   "vs code": "Visual Studio Code",
   vscode: "Visual Studio Code",
   "visual studio code": "Visual Studio Code",
@@ -122,7 +123,8 @@ const APP_HINTS: Record<string, string> = {
   photoshop: "Adobe Photoshop",
 };
 
-const SITE_HINTS: Record<string, { url: string; label: string }> = {
+/** Exported for the Head Brain's object detection (single source of truth). */
+export const SITE_HINTS: Record<string, { url: string; label: string }> = {
   youtube: { url: "https://www.youtube.com", label: "YouTube" },
   yt: { url: "https://www.youtube.com", label: "YouTube" },
   "youtube music": { url: "https://music.youtube.com", label: "YouTube Music" },

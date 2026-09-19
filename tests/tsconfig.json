@@ -17,6 +17,13 @@
     "paths": { "@/*": ["src/*"] }
   },
   "include": [
+    "../electron/brain/understanding.ts",
+    "../electron/brain/references.ts",
+    "../electron/brain/conversation-memory.ts",
+    "../electron/brain/device-index.ts",
+    "../electron/brain/planner.ts",
+    "../electron/brain/task-state.ts",
+    "../electron/brain/hub.ts",
     "../electron/engine/intent-parser-v2.ts",
     "../electron/engine/context-store.ts",
     "../electron/engine/permission-modes.ts",
