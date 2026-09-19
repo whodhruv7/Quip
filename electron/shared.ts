@@ -73,6 +73,7 @@ export const IPC = {
   BRAIN_HEALTH_CHANGED: "quip:brain-health-changed",
   RUN_DOCTOR: "quip:run-doctor",
   GET_CONNECTION_JOURNAL: "quip:get-connection-journal",
+  GET_ACTION_LOG: "quip:get-action-log",
   GET_TRANSPORT_SETTING: "quip:get-transport-setting",
   SET_TRANSPORT_SETTING: "quip:set-transport-setting",
 
@@ -177,7 +178,7 @@ export interface TaskProgressPayload {
   description: string;
   /** What the agent is actually doing — drives the companion's honest
    *  state animations (planning → executing → observing/verifying). */
-  phase?: "planning" | "executing" | "observing" | "verifying";
+  phase?: "planning" | "executing" | "observing" | "verifying" | "waiting_permission" | "recovering";
   status?: "running" | "done" | "failed" | "skipped";
 }
 

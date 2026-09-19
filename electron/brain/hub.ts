@@ -17,8 +17,9 @@
 
 import { buildUnderstanding, type DeviceLookup, type Understanding } from "./understanding";
 import { buildExecutionPlan, type ExecutionPlan } from "./planner";
-import { createTaskLifecycle, terminalFromResult, TaskLifecycle } from "./task-state";
+import { createTaskLifecycle, terminalFromResult, TaskLifecycle, type TaskState } from "./task-state";
 import { rememberInteraction, conversationMemoryGet } from "./conversation-memory";
+import type { ActionEngineResult, EnginePhase } from "../actions/engine";
 
 export interface ExecContext {
   lastOpenedPath?: string;
@@ -34,7 +35,7 @@ export interface HubExecOptions {
     total: number;
     description: string;
     status: "running" | "done" | "failed" | "skipped";
-    phase?: "planning" | "executing" | "observing" | "verifying";
+    phase?: "planning" | "executing" | "observing" | "verifying" | "waiting_permission" | "recovering";
   }) => void;
 }
 
@@ -56,6 +57,14 @@ export interface HubDeps {
     answered?: boolean;
     chatReply?: string;
   }>;
+  /** The Action Engine — executes DIRECT plans step-by-step with the
+   *  permission gate, per-step verification and recovery (spec Phase 2).
+   *  Injected by main.ts; when absent, direct plans fall back to the
+   *  orchestrator's resolved-command path (agent tier always uses `execute`). */
+  executePlan?: (
+    plan: ExecutionPlan,
+    opts: { taskId: string; signal?: { aborted: boolean }; onProgress?: HubExecOptions["onProgress"] }
+  ) => Promise<ActionEngineResult>;
   /** Structured observability sink (console in production). */
   log?: (line: string) => void;
 }
@@ -120,14 +129,33 @@ export async function processCommand(raw: string, deps: HubDeps, opts: HubExecOp
       return finish();
     }
 
-    // ── EXECUTING (via the Action Engine) ────────────────────────────────
-    lifecycle.to("EXECUTING", plan.path === "agent" ? "agent tier" : `${plan.steps.length} deterministic step(s)`);
-    result = await deps.execute(understanding.resolved, {
-      signal: opts.signal,
-      onProgress: opts.onProgress,
-    });
+    // ── EXECUTING (via the Action Engine or the orchestrator) ──────────
+    if (
+      plan.path === "direct" &&
+      plan.steps.length > 0 &&
+      typeof deps.executePlan === "function"
+    ) {
+      // The Action Engine path: permission gate → validate → execute →
+      // verify → recover, one structured-log entry per attempt. The
+      // lifecycle follows REAL engine events (spec §22 states), never guesses.
+      const observe = makeLifecycleObserver(lifecycle);
+      result = await deps.executePlan(plan, {
+        taskId: `task-${t0.toString(36)}`,
+        signal: opts.signal,
+        onProgress: (update) => {
+          observe(update.phase);
+          opts.onProgress?.(update);
+        },
+      });
+    } else {
+      lifecycle.to("EXECUTING", plan.path === "agent" ? "agent tier" : `${plan.steps.length} deterministic step(s)`);
+      result = await deps.execute(understanding.resolved, {
+        signal: opts.signal,
+        onProgress: opts.onProgress,
+      });
+    }
     const terminal = terminalFromResult(result);
-    lifecycle.to(terminal, `steps ${result.stepsCompleted}/${result.stepsTotal}${result.cancelled ? " (cancelled)" : ""}`);
+    settleTerminal(lifecycle, terminal, `steps ${result.stepsCompleted}/${result.stepsTotal}${result.cancelled ? " (cancelled)" : ""}`);
     return finish();
   } catch (err: any) {
     // The brain must never crash the task engine (hard guarantee).
@@ -176,5 +204,70 @@ export async function processCommand(raw: string, deps: HubDeps, opts: HubExecOp
       ...(result ? { result } : {}),
       durationMs: Date.now() - t0,
     };
+  }
+}
+
+/**
+ * Map real engine progress phases onto the strict §22 state machine.
+ * Only LEGAL transitions are taken (illegal ones are ignored — the table is
+ * the authority). This is how WAITING_FOR_PERMISSION and RECOVERING appear
+ * in the trace exactly when they really happen, and never otherwise.
+ */
+function makeLifecycleObserver(lifecycle: TaskLifecycle) {
+  return (phase: EnginePhase | undefined): void => {
+    if (!phase) return;
+    try {
+      switch (phase) {
+        case "waiting_permission":
+          if (lifecycle.can("WAITING_FOR_PERMISSION")) lifecycle.to("WAITING_FOR_PERMISSION", "permission gate");
+          break;
+        case "executing":
+          if (lifecycle.state === "WAITING_FOR_PERMISSION" && lifecycle.can("EXECUTING")) {
+            lifecycle.to("EXECUTING", "approved — executing");
+          } else if (lifecycle.can("EXECUTING")) {
+            lifecycle.to("EXECUTING");
+          }
+          break;
+        case "observing":
+          if (lifecycle.can("OBSERVING")) lifecycle.to("OBSERVING");
+          break;
+        case "verifying":
+          if (lifecycle.can("VERIFYING")) lifecycle.to("VERIFYING");
+          break;
+        case "recovering":
+          if (lifecycle.can("RECOVERING")) lifecycle.to("RECOVERING", "bounded recovery");
+          break;
+        default:
+          break;
+      }
+    } catch {
+      /* the transition table is the authority — never crash on a state */
+    }
+  };
+}
+
+/** Reach a terminal state through the strict table without ever throwing. */
+function settleTerminal(lifecycle: TaskLifecycle, terminal: TaskState, note: string): void {
+  try {
+    lifecycle.to(terminal, note);
+    return;
+  } catch {
+    /* route through a legal intermediate below */
+  }
+  for (const mid of ["VERIFYING", "RECOVERING", "EXECUTING"] as const) {
+    try {
+      if (lifecycle.can(mid)) lifecycle.to(mid, "settling");
+      if (lifecycle.can(terminal)) {
+        lifecycle.to(terminal, note);
+        return;
+      }
+    } catch {
+      /* try the next intermediate */
+    }
+  }
+  try {
+    lifecycle.finish(terminal === "COMPLETED", note);
+  } catch {
+    /* already terminal */
   }
 }

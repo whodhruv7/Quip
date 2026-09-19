@@ -54,6 +54,6 @@ export interface TaskProgress {
   total: number;
   description: string;
   /** What the agent is actually doing — drives honest companion states. */
-  phase?: "planning" | "executing" | "observing" | "verifying";
+  phase?: "planning" | "executing" | "observing" | "verifying" | "waiting_permission" | "recovering";
   status?: "running" | "done" | "failed" | "skipped";
 }

@@ -212,7 +212,7 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
           onClick={() => submit()}
           disabled={busy || !value.trim()}
           aria-label="Send message"
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl text-white transition-all active:scale-90"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] text-white transition-all active:scale-90"
           style={
             busy || !value.trim()
               ? { background: "rgba(0,0,0,0.08)", cursor: "not-allowed" }

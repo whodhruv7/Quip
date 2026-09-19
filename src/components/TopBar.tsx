@@ -111,7 +111,7 @@ export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onRef
       {/* Speaking indicator — the companion's voice is audible RIGHT NOW */}
       {speaking && (
         <div
-          className="flex h-5 items-center gap-[2px] rounded-full px-2"
+          className="flex h-5 items-center gap-[2px] rounded-[6px] px-2"
           style={{ background: "rgba(245,158,11,0.12)" }}
           title="Quip is speaking"
         >
@@ -128,7 +128,7 @@ export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onRef
       {/* Brain health pill — real probe result, one glance */}
       <button
         onClick={onBrainClick ?? onSettingsToggle}
-        className="flex h-6 items-center gap-1.5 rounded-full px-2 transition-all hover:scale-[1.05]"
+        className="flex h-6 items-center gap-1.5 rounded-[7px] px-2 transition-all hover:scale-[1.05]"
         style={{ background: "rgba(0,0,0,0.03)", border: "1px solid rgba(0,0,0,0.05)" }}
         title={pillTitle}
         aria-label={pillTitle}

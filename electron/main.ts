@@ -34,6 +34,14 @@ for (let i = 0; i < ENV_FILES.length; i++) {
   }
 }
 
+// §29 — restore the user's persisted permission mode (survives restarts).
+{
+  const savedMode = (process.env.QUIP_PERMISSION_MODE || "").trim().toLowerCase();
+  if (savedMode === "ask_every_time" || savedMode === "approve_task" || savedMode === "full_access") {
+    execPermissionSystem.setMode(savedMode);
+  }
+}
+
 import { IPC } from "./shared";
 import type {
   ChatSendPayload,
@@ -114,6 +122,9 @@ import { contextStore } from "./engine/context-store";
 // Every command becomes a structured Understanding BEFORE anything runs.
 import { processCommand as brainProcessCommand, type HubExecOptions } from "./brain/hub";
 import { deviceLookup, initDeviceIndex } from "./brain/device-index";
+// Action Engine — the ONLY executor of direct plans (spec Phase 2).
+import { createActionEngine } from "./actions/engine";
+import { executionLog } from "./actions/execution-log";
 
 // The orchestrator uses the model ONLY for ambiguous intent (compact schema,
 // one small call) — deterministic tools handle the obvious actions.
@@ -138,6 +149,14 @@ const brainHub = {
             signal: exOpts.signal,
             onProgress: exOpts.onProgress,
           }),
+        // Direct plans run through the Action Engine: permission gate →
+        // contract validation → timeout-wrapped executors → bounded recovery
+        // → structured log per attempt (spec Phase 2 + §14/15/19/20).
+        executePlan: (plan, planOpts) =>
+          createActionEngine({ platform: process.platform }, (l) => console.log(l)).executePlan(
+            plan,
+            planOpts
+          ),
         log: (line) => console.log(line),
       },
       opts
@@ -1138,12 +1157,20 @@ ipcMain.handle("quip:get-permission-mode", () => {
 ipcMain.handle("quip:set-permission-mode", (_e, mode: string) => {
   if (mode === "ask_every_time" || mode === "approve_task" || mode === "full_access") {
     execPermissionSystem.setMode(mode);
+    // §29 — a setting the user chose must survive restarts (env upsert,
+    // the same store the Settings panel writes keys into).
+    upsertEnvFile(path.join(app.getPath("userData"), ".env"), { QUIP_PERMISSION_MODE: mode });
+    process.env.QUIP_PERMISSION_MODE = mode;
   }
   return { mode: execPermissionSystem.getMode(), label: execPermissionSystem.getModeLabel() };
 });
 
 ipcMain.handle("quip:cycle-permission-mode", () => {
   execPermissionSystem.cycleMode();
+  upsertEnvFile(path.join(app.getPath("userData"), ".env"), {
+    QUIP_PERMISSION_MODE: execPermissionSystem.getMode(),
+  });
+  process.env.QUIP_PERMISSION_MODE = execPermissionSystem.getMode();
   return { mode: execPermissionSystem.getMode(), label: execPermissionSystem.getModeLabel() };
 });
 
@@ -1718,6 +1745,9 @@ ipcMain.handle(IPC.RUN_DOCTOR, async () => {
 
 ipcMain.handle(IPC.GET_CONNECTION_JOURNAL, () => connectionJournal.all());
 
+// Structured execution log — the per-action evidence trail (spec Phase 2).
+ipcMain.handle(IPC.GET_ACTION_LOG, () => executionLog.recent(60));
+
 ipcMain.handle(IPC.GET_TRANSPORT_SETTING, () => ({
   mode: ((): "auto" | "net" | "node" => {
     const t = (process.env.QUIP_TRANSPORT || "auto").toLowerCase();
@@ -1849,6 +1879,9 @@ if (!app.requestSingleInstanceLock()) {
     // Device Knowledge Layer — load the cached index instantly, then rescan
     // in the background and merge only the diff. Never blocks the boot.
     initDeviceIndex(app.getPath("userData")).catch(() => {});
+
+    // Structured execution log persists (debounced) for post-mortems.
+    executionLog.setPersistPath(path.join(app.getPath("userData"), "quip-actions.json"));
 
     // Run the full bootstrap pipeline.
     let bootResult: BootstrapResult;

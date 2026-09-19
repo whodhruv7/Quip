@@ -214,6 +214,10 @@ const api = {
     ipcRenderer.invoke(IPC.GET_CONNECTION_JOURNAL) as Promise<
       Array<{ ts: number; provider: string; model: string; ok: boolean; kind: string; latencyMs: number; note: string; switched?: boolean }>
     >,
+  getActionLog: () =>
+    ipcRenderer.invoke(IPC.GET_ACTION_LOG) as Promise<
+      Array<{ ts: number; action: string; target: string; ok: boolean; attempt: number; durationMs: number; summary: string; failureKind?: string }>
+    >,
   getTransportSetting: () =>
     ipcRenderer.invoke(IPC.GET_TRANSPORT_SETTING) as Promise<{ mode: "auto" | "net" | "node" }>,
   setTransportSetting: (mode: "auto" | "net" | "node") =>

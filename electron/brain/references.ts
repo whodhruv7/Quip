@@ -38,12 +38,13 @@ export interface ResolutionResult {
 }
 
 const PRONOUN = String.raw`(it|that|this|wahi|usko|usse|us\s+wale|the\s+same\s+one|same\s+one)`;
-/** Command-shaped endings where a trailing pronoun is a TARGET, not filler. */
+/** Command-shaped endings where a trailing pronoun is a TARGET, not filler.
+ *  A trailing "again" is allowed after the pronoun ("play it again"). */
 const PRONOUN_TARGET = new RegExp(
   String.raw`^(open|close|launch|start|run|kill|focus|quit|play|pause|find|show|reveal|goto|go\s+to|minimize|maximize|restore|kholo|khol\s+do|band\s+karo|chalao|bajao|dekho|dikhao|dhundo|dhoondo)\b[^.!?;]{0,32}?` +
     String.raw`\b` +
     PRONOUN +
-    String.raw`\s*[.!?]?\s*$`,
+    String.raw`(\s+(again|phir\s+se))?\s*[.!?]?\s*$`,
   "i"
 );
 

@@ -250,7 +250,11 @@ export default function App() {
             ? "observing"
             : taskProgress.phase === "verifying"
               ? "verifying"
-              : "working"
+              : taskProgress.phase === "waiting_permission"
+                ? "waiting"
+                : taskProgress.phase === "recovering"
+                  ? "observing"
+                  : "working"
         : chatBusy
           ? isResponding
             ? "responding"
