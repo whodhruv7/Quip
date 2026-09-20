@@ -17,6 +17,11 @@
   --quip-line: 10, 11, 15;           /* borders (with alpha) */
   --quip-accent: 111, 214, 255;      /* aqua */
   --quip-accent-2: 255, 159, 239;    /* pink */
+  --quip-accent-3: 138, 180, 255;    /* periwinkle — tri-color gradients */
+  --quip-accent-deep: 12, 107, 143;  /* readable accent text on light bg */
+  --quip-ok: 34, 197, 94;
+  --quip-warn: 245, 158, 11;
+  --quip-bad: 239, 68, 68;
   --quip-glow: 111, 214, 255;
   --quip-radius: 28px;
 
@@ -67,6 +72,8 @@
   --quip-text: 12, 30, 48;
   --quip-accent: 63, 184, 239;
   --quip-accent-2: 111, 214, 255;
+  --quip-accent-3: 125, 211, 252;
+  --quip-accent-deep: 7, 89, 133;
 }
 
 [data-theme="pink"] {
@@ -75,6 +82,73 @@
   --quip-text: 48, 12, 36;
   --quip-accent: 244, 114, 214;
   --quip-accent-2: 255, 159, 239;
+  --quip-accent-3: 249, 168, 212;
+  --quip-accent-deep: 162, 41, 132;
+}
+
+[data-theme="violet"] {
+  --quip-bg: 250, 248, 255;
+  --quip-bg-soft: 241, 237, 252;
+  --quip-text: 30, 20, 60;
+  --quip-accent: 139, 124, 246;
+  --quip-accent-2: 196, 181, 253;
+  --quip-accent-3: 167, 139, 250;
+  --quip-accent-deep: 109, 88, 217;
+}
+
+[data-theme="mint"] {
+  --quip-bg: 244, 253, 250;
+  --quip-bg-soft: 231, 250, 243;
+  --quip-text: 6, 44, 32;
+  --quip-accent: 52, 211, 153;
+  --quip-accent-2: 167, 243, 208;
+  --quip-accent-3: 110, 231, 183;
+  --quip-accent-deep: 5, 130, 92;
+}
+
+[data-theme="sunset"] {
+  --quip-bg: 255, 250, 245;
+  --quip-bg-soft: 255, 241, 235;
+  --quip-text: 60, 22, 12;
+  --quip-accent: 251, 146, 60;
+  --quip-accent-2: 244, 114, 182;
+  --quip-accent-3: 253, 186, 116;
+  --quip-accent-deep: 194, 88, 18;
+}
+
+[data-theme="ocean"] {
+  --quip-bg: 242, 250, 255;
+  --quip-bg-soft: 228, 243, 252;
+  --quip-text: 8, 36, 58;
+  --quip-accent: 56, 189, 248;
+  --quip-accent-2: 14, 165, 233;
+  --quip-accent-3: 125, 211, 252;
+  --quip-accent-deep: 3, 105, 161;
+}
+
+[data-theme="forest"] {
+  --quip-bg: 245, 253, 247;
+  --quip-bg-soft: 234, 248, 238;
+  --quip-text: 10, 40, 22;
+  --quip-accent: 74, 222, 128;
+  --quip-accent-2: 22, 101, 52;
+  --quip-accent-3: 134, 239, 172;
+  --quip-accent-deep: 21, 128, 61;
+}
+
+[data-theme="midnight"] {
+  --quip-bg: 22, 24, 38;
+  --quip-bg-soft: 30, 33, 50;
+  --quip-text: 233, 236, 248;
+  --quip-text-soft: 156, 164, 196;
+  --quip-line: 255, 255, 255;
+  --quip-accent: 129, 140, 248;
+  --quip-accent-2: 56, 189, 248;
+  --quip-accent-3: 167, 139, 250;
+  --quip-accent-deep: 165, 180, 252;
+  --quip-ok: 74, 222, 128;
+  --quip-bad: 248, 113, 113;
+  --quip-glow: 129, 140, 248;
 }
 
 [data-theme="black"] {
@@ -85,6 +159,10 @@
   --quip-line: 255, 255, 255;
   --quip-accent: 111, 214, 255;
   --quip-accent-2: 255, 159, 239;
+  --quip-accent-3: 138, 180, 255;
+  --quip-accent-deep: 111, 214, 255;
+  --quip-ok: 74, 222, 128;
+  --quip-bad: 248, 113, 113;
   --quip-glow: 111, 214, 255;
 }
 
@@ -279,3 +357,104 @@ body {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.45; transform: scale(0.82); }
 }
+
+/* ═══ Settings V3 — theme-aware primitives ═══════════════════════════
+   Every surface in Settings uses these so the whole panel follows the
+   active palette (no more light-only hardcoded grays). */
+.quip-settings-surface {
+  background: rgba(var(--quip-bg), 0.94);
+  color: rgb(var(--quip-text));
+  backdrop-filter: blur(24px) saturate(170%);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+}
+.quip-settings-surface [data-tone="soft"] {
+  color: rgba(var(--quip-text-soft), 0.95);
+}
+.quip-card {
+  border: 1px solid rgba(var(--quip-line), 0.08);
+  background: rgba(var(--quip-line), 0.025);
+  border-radius: 14px;
+}
+.quip-card-quiet {
+  border: 1px solid rgba(var(--quip-line), 0.06);
+  background: rgba(var(--quip-line), 0.018);
+  border-radius: 14px;
+}
+.quip-input {
+  width: 100%;
+  border-radius: 12px;
+  border: 1.5px solid rgba(var(--quip-line), 0.1);
+  background: rgba(var(--quip-line), 0.03);
+  color: rgb(var(--quip-text));
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.quip-input::placeholder {
+  color: rgba(var(--quip-text-soft), 0.7);
+}
+.quip-input:focus {
+  border-color: rgba(var(--quip-accent), 0.65);
+  box-shadow: 0 0 0 3px rgba(var(--quip-accent), 0.18);
+}
+.quip-accent-text {
+  color: rgb(var(--quip-accent-deep));
+}
+.dark-theme .quip-accent-text,
+[data-theme="midnight"] .quip-accent-text,
+[data-theme="black"] .quip-accent-text {
+  color: rgb(var(--quip-accent));
+}
+.quip-btn-accent {
+  color: #fff;
+  background: linear-gradient(135deg,
+    rgb(var(--quip-accent)) 0%,
+    rgb(var(--quip-accent-3)) 55%,
+    rgb(var(--quip-accent-2)) 100%);
+  border: none;
+  cursor: pointer;
+  transition: filter 0.15s ease, transform 0.08s ease;
+}
+.quip-btn-accent:hover:not(:disabled) { filter: brightness(1.06); }
+.quip-btn-accent:active:not(:disabled) { transform: translateY(1px); }
+.quip-btn-accent:disabled { filter: saturate(0); opacity: 0.45; cursor: default; }
+.quip-chip {
+  border-radius: 7px;
+  padding: 2px 8px;
+  font-size: 9.5px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  background: rgba(var(--quip-line), 0.05);
+  color: rgba(var(--quip-text-soft), 1);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.quip-chip[data-active="true"] {
+  background: rgba(var(--quip-accent), 0.16);
+  color: rgb(var(--quip-accent-deep));
+}
+[data-theme="midnight"] .quip-chip[data-active="true"],
+[data-theme="black"] .quip-chip[data-active="true"] {
+  color: rgb(var(--quip-accent));
+}
+.quip-row-btn {
+  text-align: left;
+  border-radius: 10px;
+  padding: 6px 9px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  cursor: pointer;
+}
+.quip-row-btn:hover { background: rgba(var(--quip-line), 0.045); }
+.quip-tab {
+  position: relative;
+  border-radius: 10px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: rgba(var(--quip-text-soft), 1);
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  transition: color 0.15s ease;
+}
+.quip-tab[data-active="true"] { color: rgb(var(--quip-text)); font-weight: 600; }

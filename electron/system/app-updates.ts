@@ -16,6 +16,8 @@ export interface UpdateResult {
   behind: number;
   /** True when a pull actually brought new code. */
   pulled: boolean;
+  /** True only when commits actually landed — drives the Restart-now button. */
+  needsRestart: boolean;
   message: string;
 }
 
@@ -71,6 +73,7 @@ export async function fetchUpdates(repoPath: string): Promise<UpdateResult> {
       ok: false,
       behind: 0,
       pulled: false,
+      needsRestart: false,
       message:
         "Updates only work when Quip runs from its project folder (that one isn't a git repo). Run Quip via run-quip.cmd.",
     };
@@ -85,6 +88,7 @@ export async function fetchUpdates(repoPath: string): Promise<UpdateResult> {
       ok: false,
       behind: 0,
       pulled: false,
+      needsRestart: false,
       message: `I couldn't reach GitHub to check for updates — ${fetch.err.split("\n")[0]?.slice(0, 140) || "network failed"}.`,
     };
   }
@@ -95,34 +99,63 @@ export async function fetchUpdates(repoPath: string): Promise<UpdateResult> {
       ok: false,
       behind: 0,
       pulled: false,
+      needsRestart: false,
       message: `I fetched the repo but couldn't compare versions — ${behindOut.err.split("\n")[0]?.slice(0, 140) || "git failed"}.`,
     };
   }
   const behind = parseBehindCount(behindOut.out);
   if (behind === 0) {
-    return { ok: true, behind: 0, pulled: false, message: updateMessage(0, false) };
+    return { ok: true, behind: 0, pulled: false, needsRestart: false, message: updateMessage(0, false) };
   }
 
-  // Local changes would block a fast-forward — report them instead of failing mysteriously.
+  // Local changes would block a fast-forward — protect them with a stash,
+  // pull, then bring them right back. If any step refuses, say exactly what.
   const dirty = await git(repoPath, ["status", "--porcelain"], 15_000);
+  let stashed = false;
   if (dirty.out.trim().length > 0) {
-    const files = dirty.out.trim().split("\n").slice(0, 3).map((l) => l.slice(3).trim());
-    return {
-      ok: false,
-      behind,
-      pulled: false,
-      message: `Found ${behind} new commit${behind === 1 ? "" : "s"}, but local changes block the update: ${files.join(", ")}. Save or revert them, then try again.`,
-    };
+    const stash = await git(
+      repoPath,
+      ["stash", "push", "--include-untracked", "--quiet", "--message", "Quip Fetch Updates auto-stash"],
+      30_000
+    );
+    if (!stash.ok) {
+      const files = dirty.out.trim().split("\n").slice(0, 3).map((l) => l.slice(3).trim());
+      return {
+        ok: false,
+        behind,
+        pulled: false,
+        needsRestart: false,
+        message: `Found ${behind} new commit${behind === 1 ? "" : "s"}, but local changes (${files.join(", ")}) block the update and I couldn't stash them — ${stash.err.split("\n")[0]?.slice(0, 120) || "git refused"}. Save or revert them, then try again.`,
+      };
+    }
+    stashed = true;
   }
 
   const pull = await git(repoPath, ["pull", "--ff-only", "origin", head, "--quiet"]);
   if (!pull.ok) {
+    if (stashed) {
+      await git(repoPath, ["stash", "pop"], 30_000); // restore what's yours — best effort
+    }
     return {
       ok: false,
       behind,
       pulled: false,
+      needsRestart: false,
       message: `Found ${behind} new commit${behind === 1 ? "" : "s"} but the pull failed — ${pull.err.split("\n")[0]?.slice(0, 140) || "git refused"}.`,
     };
   }
-  return { ok: true, behind, pulled: true, message: updateMessage(behind, true) };
+
+  if (stashed) {
+    const pop = await git(repoPath, ["stash", "pop"], 30_000);
+    if (!pop.ok) {
+      return {
+        ok: true,
+        behind,
+        pulled: true,
+        needsRestart: true,
+        message: `Updated — ${behind} new commit${behind === 1 ? "" : "s"}. Your saved changes are safe in git stash (I couldn't re-apply them cleanly). Restart Quip, then run: git stash pop.`,
+      };
+    }
+  }
+  return { ok: true, behind, pulled: true, needsRestart: true, message: updateMessage(behind, true) };
 }

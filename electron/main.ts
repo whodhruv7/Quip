@@ -389,7 +389,10 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
   const sections: PromptSection[] = [];
   const push = (id: string, priority: number, text: string) => sections.push({ id, priority, text });
 
-  // ─── 1. Core identity + companion (always) ──────────────────────────
+  // ─── 1. Core identity + companion (always) — HEAVY DELIBERATE PROMPT ─
+  // The user asked for a heavy, deliberate, detail-rich prompt: Quip must
+  // KNOW what it is, what it can really do, HOW to take on a task
+  // (break it down, resolve specifics, verify) and HOW to report failure.
   const companionPersonalities: Record<string, string> = {
     pix: "Pix — playful, energetic, creative. Light humor. Social + creative tasks.",
     kai: "Kai — calm, analytical, wise. Clear explanations. Planning + research.",
@@ -401,9 +404,30 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
   push(
     "identity",
     1,
-    "You are QUIP, a calm, concise AI companion on the user's desktop. " +
-      "Warm, human, never robotic. Short answers unless asked for detail. " +
-      `You are ${companionPersonalities[companionId] ?? companionPersonalities.pix}`
+    "You are QUIP, a real AI companion living on the user's desktop — part friend, " +
+      "part capable operator. You are NOT a chatbot pretending to control a computer: " +
+      "you genuinely act on this laptop through a real execution layer, you observe the " +
+      "result, and you verify it before you claim anything worked.\n" +
+      `Your personality: ${companionPersonalities[companionId] ?? companionPersonalities.pix}\n` +
+      "HOW YOU HANDLE ANY REQUEST:\n" +
+      "1. UNDERSTAND it fully — including pronouns (it/that/the other one) from earlier " +
+      "in the conversation, and SPECIFICS. If the user names an account or target " +
+      "(e.g. 'open my Google Calendar of dhruvsharma4944@gmail.com'), carry that exact " +
+      "address into the task — never drop a named detail.\n" +
+      "2. BREAK IT DOWN — for multi-step goals ('open ChatGPT, copy the answer, make " +
+      "a file with it'), do every step in order and finish the whole chain, not just " +
+      "the first move.\n" +
+      "3. ACT with the right tool — deterministic quick actions need no reasoning " +
+      "theater; ambiguous or screen-level goals get planned step by step. When a " +
+      "screen target matters, look (screenshot / read the page) BEFORE clicking.\n" +
+      "4. VERIFY — 'I clicked' is not 'it worked'. Confirm the result (window open, " +
+      "song playing, file exists) before saying done.\n" +
+      "5. REPORT honestly — if something failed, say exactly what failed and the " +
+      "basic reason in plain words ('VS Code isn't installed on this laptop'), then " +
+      "offer the nearest alternative. NEVER fake success, never say 'Done' unless it " +
+      "is verifiably done.\n" +
+      "Tone: warm, human, concise. Short answers unless detail is asked for. Match " +
+      "the user's language — Hinglish in, Hinglish out."
   );
 
   // ─── 2. Device context (compressed) ─────────────────────────────────
@@ -539,20 +563,33 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
     "rules",
     1,
     "Rules: Never assume apps exist (check above). If impossible, explain + suggest. " +
-      "Always explain WHY (trust layer). Match user's style. Be concise."
+      "Always explain WHY (trust layer). Match user's style. Be concise. " +
+      "Addressing: when the user names an account (an email) or a specific target, " +
+      "that exact detail drives the action — e.g. 'calendar of dhruvsharma4944@gmail.com' " +
+      "means THAT account's calendar, not a generic page. Specifics beat defaults, always."
   );
   push(
     "can-control",
     1,
-    "You CAN actually control this laptop: open/close/focus/switch apps and windows, " +
-      "minimize/maximize/move/resize windows, open files/folders/URLs, find/create/read/" +
-      "copy/move/delete files, type, press shortcuts, click/double-click/right-click, " +
-      "scroll, drag, clipboard, screenshots, search/read YouTube, Reddit, X and GitHub, " +
-      "list and force-close processes (never system ones), control volume (up/down/mute/" +
-      "set 0-100), send media keys (play/pause/next/previous), and control browser tabs " +
-      "(new/close/switch/back/forward/reload — browser must be focused). " +
-      "Never say you cannot access the device — you can. Never claim an action succeeded " +
-      "unless the execution layer reports it did."
+    "You CAN actually control this laptop — this is a REAL, verified capability list:\n" +
+      "APPS & WINDOWS: open/close/focus/switch any installed app; minimize/maximize/" +
+      "restore/move/resize windows; list open windows and installed apps.\n" +
+      "FILES: find files/folders, open files/folders/projects, create files, read and " +
+      "write them, copy/move/rename/delete (delete needs permission), open Downloads/" +
+      "Desktop/Documents.\n" +
+      "INPUT: type real keystrokes, press any shortcut (ctrl+c, alt+tab…), click / " +
+      "double-click / right-click anywhere on screen (with x,y or at cursor), scroll, " +
+      "drag, read and write the clipboard.\n" +
+      "SCREEN: take real screenshots and USE them — look at the screen, find a target, " +
+      "act on it, then verify the result. You can see the user's screen when asked.\n" +
+      "BROWSER: open the user's real default browser, any URL, new/close/switch tabs, " +
+      "back/forward/reload, search Google or YouTube, read the visible page.\n" +
+      "MEDIA: control volume (up/down/mute/set 0-100), media keys (play/pause/next/" +
+      "previous), play songs on YouTube with playback verification.\n" +
+      "SYSTEM: list and force-close processes (never system ones), shell commands " +
+      "(with approval), CPU/RAM/disk/battery/network/Wi-Fi status.\n" +
+      "Never say you cannot access the device — you can. Never claim an action " +
+      "succeeded unless the execution layer reports it did."
   );
 
   // ─── 11. Capability introspection (know what you can and cannot do) ──
@@ -561,13 +598,14 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
     2,
     "MORE things you CAN do: real weather for any city, summarize long text (or the " +
       "last page you read), extract text from PDFs, read .docx files, create real Word " +
-      "(.docx), Excel (.xlsx) and PowerPoint (.pptx) files, live system status (CPU/RAM/" +
-      "disk/battery), network + Wi-Fi status, speak replies OUT LOUD (you have a real " +
-      "voice), read GitHub repos, V2EX, Bilibili search, and single tweets by link, " +
-      "read Reddit/YouTube/RSS/web pages directly, run shell commands (with approval), " +
-      "and open any named website — Gmail, Google Calendar, Drive, ChatGPT, Gemini, " +
-      "YouTube, Instagram and more — for a specific account if the user names one " +
-      "(e.g. 'open my google calendar of gmail dhruv@gmail.com')."
+      "(.docx), Excel (.xlsx) and PowerPoint (.pptx) files, speak replies OUT LOUD in a " +
+      "real voice, read web pages / RSS / Reddit / GitHub repos / V2EX / Bilibili / " +
+      "single tweets, and READ YOUTUBE — a video's title, channel and metadata " +
+      "(youtube_read), or what a YouTube search returns — without even opening the " +
+      "browser. Run shell commands (with approval) and open any named website — Gmail, " +
+      "Google Calendar, Drive, ChatGPT, Gemini, YouTube, Instagram and more — for a " +
+      "specific account if the user names one (e.g. 'open my google calendar of gmail " +
+      "dhruv@gmail.com'). The user's own log-in state comes from their browser profile."
   );
   push(
     "cannot",
@@ -581,9 +619,10 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
       "say exactly what's missing and offer the nearest thing you can do."
   );
 
-  // Token budget ≈ 3.5k chars (≈900 tokens): identity/rules always survive;
-  // everything else drops lowest-priority-first when the context is huge.
-  return assembleSections(sections, 3500).prompt;
+  // Token budget ≈ 5.5k chars (≈1.4k tokens): the heavy deliberate identity,
+  // rules and capability sections are priority 1-2 and always survive;
+  // nice-to-have context drops first instead of causing 429s.
+  return assembleSections(sections, 5500).prompt;
 }
 
 // ---------------------------------------------------------------------------
@@ -623,7 +662,7 @@ function createWindow(companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | 
     alwaysOnTop: true,
     show: true,
     backgroundColor: "#00000000",
-    icon: quipWindowIcon(),
+    icon: windowIcon(),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -752,26 +791,74 @@ function sendToWindow(win: BrowserWindow | null, channel: string, data: unknown)
 // ---------------------------------------------------------------------------
 // Tray
 // ---------------------------------------------------------------------------
-function showFromTray() {
-  // Tray = the user explicitly wants to see Quip → re-enable visibility.
+/** The full logo files ship with the app; fall back to the tiny embedded
+ *  square so the tray NEVER breaks (empty tray icon = invisible entry). */
+function appIconPath(name: string): string | null {
+  try {
+    const p = path.join(app.getAppPath(), "build", name);
+    if (fs.existsSync(p)) return p;
+    // Belt & braces: the mascot mark is also bundled with the renderer assets.
+    const alt = path.join(app.getAppPath(), "src", "assets", "quip-mark.png");
+    if (name.startsWith("tray") && fs.existsSync(alt)) return alt;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function windowIcon(): Electron.NativeImage {
+  const mine = appIconPath("icon.png");
+  if (mine) {
+    const img = nativeImage.createFromPath(mine);
+    if (!img.isEmpty()) return img;
+  }
+  return quipWindowIcon();
+}
+
+/** Bring Quip onto the desktop the way the user asked for it:
+ *  the companion appears (with the Quip logo look), and the FULL APP page
+ *  opens — never a terminal, never a bare sprite the user must find. */
+function showQuipDesktop(): void {
   if (!companionVisible) applyCompanionVisible(true);
   if (windows.size === 0) {
     const win = createWindow(defaultCompanionId);
-    setWindowMode(win, "panel");
+    setWindowMode(win, "full");
+    win.focus();
     return;
   }
+  let first = true;
   for (const win of windows.values()) {
     if (win.isDestroyed()) continue;
     win.showInactive();
     win.moveTop();
     clampWindowIntoView(win);
+    // "Always should open the page that of like my app" — the primary window
+    // opens the full app experience, not the compact sprite.
+    if (first && windowModes.get(win.id) !== "full") {
+      setWindowMode(win, "full");
+      win.focus();
+    }
+    first = false;
   }
 }
 
+function showFromTray() {
+  // Tray = the user explicitly wants to see Quip → re-enable visibility.
+  // Same experience as the Settings "Quip Appearance" button: the app page.
+  showQuipDesktop();
+}
+
 function createTray() {
-  // The real Quip logo (rounded-cut 256px PNG) — falls back to a calm dot if
-  // the asset is somehow missing so the tray ALWAYS exists.
-  let icon = quipWindowIcon();
+  // Tray hierarchy: the circular-cut mascot head (crisp at 16px) → the full
+  // brand logo → the embedded calm dot. The tray entry can NEVER vanish.
+  let icon = nativeImage.createEmpty();
+  const trayPath = appIconPath("tray@2x.png") ?? appIconPath("tray.png");
+  if (trayPath) {
+    icon = nativeImage.createFromPath(trayPath);
+  }
+  if (icon.isEmpty()) {
+    icon = quipWindowIcon();
+  }
   if (icon.isEmpty()) {
     icon = nativeImage.createFromBuffer(
       Buffer.from(
@@ -1559,6 +1646,16 @@ ipcMain.on(IPC.QUIT_APP, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Quip Appearance — the Settings button that brings Quip onto the desktop
+// with its logo look. No terminal, no hunting for the sprite: the companion
+// shows up AND the full app page opens (spec: "click kru toh open my
+// companion… always should open the page that of like my app").
+// ---------------------------------------------------------------------------
+ipcMain.handle(IPC.SHOW_QUIP_DESKTOP, () => {
+  showQuipDesktop();
+  return { ok: true, visible: companionVisible };
+});
+
 // Task cancellation — the Stop button. One task runs at a time per window;
 // a single broadcast flag flips every live token.
 // ---------------------------------------------------------------------------

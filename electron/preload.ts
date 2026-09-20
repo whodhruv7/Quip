@@ -223,6 +223,7 @@ const api = {
       ok: boolean;
       behind: number;
       pulled: boolean;
+      needsRestart?: boolean;
       message: string;
     }>,
   getTransportSetting: () =>
@@ -269,6 +270,10 @@ const api = {
     return () => ipcRenderer.removeListener(IPC.COMPANION_VISIBLE_CHANGED, handler as any);
   },
   quitApp: () => ipcRenderer.send(IPC.QUIT_APP),
+
+  // ─── Quip Appearance (Settings → Appearance tab button) ──────────────
+  showQuipDesktop: () =>
+    ipcRenderer.invoke(IPC.SHOW_QUIP_DESKTOP) as Promise<{ ok: boolean; visible: boolean }>,
 
   // ─── Proactive check-ins toggle (Settings → Desktop) ─────────────────
   getCheckInsEnabled: () =>

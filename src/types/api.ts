@@ -77,7 +77,7 @@ export interface SystemAPI {
   getModelStatus: () => Promise<ModelRouterStatus | null>;
   onBootstrapProgress: (cb: (p: BootstrapProgress) => void) => () => void;
   /** Settings → Appearance → Fetch Updates (in-app repo updater). */
-  fetchUpdates: () => Promise<{ ok: boolean; behind: number; pulled: boolean; message: string }>;
+  fetchUpdates: () => Promise<{ ok: boolean; behind: number; pulled: boolean; needsRestart?: boolean; message: string }>;
 }
 
 export type ProviderIdUI = "openrouter" | "groq" | "cerebras" | "nvidia" | "gemini" | "ollama";
@@ -152,6 +152,8 @@ export interface LifecycleAPI {
   getCheckInsEnabled: () => Promise<boolean>;
   setCheckInsEnabled: (enabled: boolean) => Promise<boolean>;
   quitApp: () => void;
+  /** Quip Appearance button — bring the companion + full app page to the desktop. */
+  showQuipDesktop: () => Promise<{ ok: boolean; visible: boolean }>;
 }
 
 export type QuipAPI = WindowAPI & ChatAPI & TaskAPI & PermissionAPI & DeviceAPI & SystemAPI & ModelSetupAPI & BrainHealthAPI & SpeechAPI & LifecycleAPI;

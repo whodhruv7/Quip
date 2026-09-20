@@ -127,23 +127,11 @@ export const APP_HINTS: Record<string, string> = {
 export const SITE_HINTS: Record<string, { url: string; label: string }> = {
   youtube: { url: "https://www.youtube.com", label: "YouTube" },
   yt: { url: "https://www.youtube.com", label: "YouTube" },
-  "youtube studio": { url: "https://studio.youtube.com", label: "YouTube Studio" },
   "youtube music": { url: "https://music.youtube.com", label: "YouTube Music" },
+  "youtube studio": { url: "https://studio.youtube.com", label: "YouTube Studio" },
   gmail: { url: "https://mail.google.com", label: "Gmail" },
   mail: { url: "https://mail.google.com", label: "Gmail" },
   email: { url: "https://mail.google.com", label: "Gmail" },
-  "google calendar": { url: "https://calendar.google.com", label: "Google Calendar" },
-  calendar: { url: "https://calendar.google.com", label: "Google Calendar" },
-  gcal: { url: "https://calendar.google.com", label: "Google Calendar" },
-  gemini: { url: "https://gemini.google.com", label: "Gemini" },
-  meet: { url: "https://meet.google.com", label: "Google Meet" },
-  "google meet": { url: "https://meet.google.com", label: "Google Meet" },
-  sheets: { url: "https://sheets.google.com", label: "Google Sheets" },
-  slides: { url: "https://slides.google.com", label: "Google Slides" },
-  keep: { url: "https://keep.google.com", label: "Google Keep" },
-  photos: { url: "https://photos.google.com", label: "Google Photos" },
-  "google photos": { url: "https://photos.google.com", label: "Google Photos" },
-  "google account": { url: "https://myaccount.google.com", label: "Google Account" },
   google: { url: "https://www.google.com", label: "Google" },
   github: { url: "https://github.com", label: "GitHub" },
   chatgpt: { url: "https://chatgpt.com", label: "ChatGPT" },
@@ -163,58 +151,14 @@ export const SITE_HINTS: Record<string, { url: string; label: string }> = {
   "google drive": { url: "https://drive.google.com", label: "Google Drive" },
   docs: { url: "https://docs.google.com", label: "Google Docs" },
   "google docs": { url: "https://docs.google.com", label: "Google Docs" },
+  calendar: { url: "https://calendar.google.com", label: "Google Calendar" },
+  "google calendar": { url: "https://calendar.google.com", label: "Google Calendar" },
+  gemini: { url: "https://gemini.google.com", label: "Gemini" },
+  spotify: { url: "https://open.spotify.com", label: "Spotify" },
+  flipkart: { url: "https://www.flipkart.com", label: "Flipkart" },
   maps: { url: "https://www.google.com/maps", label: "Maps" },
   perplexity: { url: "https://www.perplexity.ai", label: "Perplexity" },
-  spotify: { url: "https://open.spotify.com", label: "Spotify" },
-  canva: { url: "https://www.canva.com", label: "Canva" },
-  amazon: { url: "https://www.amazon.in", label: "Amazon" },
-  flipkart: { url: "https://www.flipkart.com", label: "Flipkart" },
-  "stack overflow": { url: "https://stackoverflow.com", label: "Stack Overflow" },
 };
-
-/** Google properties that accept an account switch (authuser / /u/<email>) —
- *  "open my google calendar of gmail dhruv@gmail.com" opens THAT account. */
-export const ACCOUNT_SITE_KEYS = new Set([
-  "gmail",
-  "mail",
-  "email",
-  "calendar",
-  "google calendar",
-  "gcal",
-  "drive",
-  "google drive",
-  "docs",
-  "google docs",
-  "sheets",
-  "slides",
-  "keep",
-  "photos",
-  "google photos",
-  "meet",
-  "google meet",
-  "gemini",
-  "google account",
-]);
-
-const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i;
-
-/** Pure: pull the FIRST email address out of a clause (or null). */
-export function extractEmail(text: string): string | null {
-  const m = text.match(EMAIL_RE);
-  return m ? m[0].toLowerCase() : null;
-}
-
-/** Pure: a Google-site URL that opens under the given account.
- *  mail.google.com uses the /mail/u/<email>/ route; everything else takes
- *  the ?authuser=<email> parameter. No email → the URL is returned as-is.
- *  The email goes in raw ('@' is legal in URLs and Google handles both). */
-export function accountSiteUrl(url: string, email: string | null): string {
-  if (!email) return url;
-  if (/^https:\/\/mail\.google\.com/i.test(url)) {
-    return `https://mail.google.com/mail/u/${email}/`;
-  }
-  return url + (url.includes("?") ? "&" : "?") + `authuser=${email}`;
-}
 
 const FOLDER_HINTS: Record<string, string> = {
   downloads: "downloads",
@@ -227,6 +171,48 @@ const FOLDER_HINTS: Record<string, string> = {
   music: "music",
   videos: "videos",
 };
+
+// ─── Account addressing (specific-target commands) ───────────────────────────
+// "open my google calendar of gmail dhruvsharma4944@gmail.com" must open THAT
+// account's calendar — not a generic page. Extract a named email and scope the
+// Google properties to it (Gmail's /u/<email>/ path, authuser elsewhere).
+
+const EMAIL_RE = /([\w.+-]+)@([\w-]+(?:\.[\w-]+)+)/;
+
+/** The first email address mentioned in the command, if any. */
+export function extractAccountEmail(text: string): string | null {
+  const m = text.match(EMAIL_RE);
+  return m ? m[0] : null;
+}
+
+/** True for Google properties that accept per-account scoping. */
+function isAccountScopedSite(url: string): boolean {
+  return /(^https:\/\/(?:mail|calendar|drive|docs|sheets|meet|gemini)\.google\.com|www\.youtube\.com)/.test(url);
+}
+
+/** Rewrite a site URL so it opens THE NAMED ACCOUNT's view. Returns the
+ *  original URL when no account was named or the site isn't account-scoped. */
+export function accountAwareUrl(url: string, email: string | null): string {
+  if (!email || !isAccountScopedSite(url)) return url;
+  const enc = encodeURIComponent(email);
+  if (url.startsWith("https://mail.google.com")) {
+    return `https://mail.google.com/mail/u/${enc}/`;
+  }
+  if (url.startsWith("https://calendar.google.com")) {
+    return `https://calendar.google.com/calendar/r?authuser=${enc}`;
+  }
+  if (url.startsWith("https://drive.google.com")) {
+    return `https://drive.google.com/drive/u/${enc}/my-drive`;
+  }
+  if (url.startsWith("https://docs.google.com")) {
+    return `https://docs.google.com/document/u/${enc}/`;
+  }
+  if (url.startsWith("https://www.youtube.com")) {
+    return `https://www.youtube.com/?authuser=${enc}`;
+  }
+  // Every other Google property (Gemini, Sheets, Meet, …) takes ?authuser=.
+  return url.includes("?") ? `${url}&authuser=${enc}` : `${url}?authuser=${enc}`;
+}
 
 // ─── Word-boundary matching (fixes substring false positives) ────────────────
 
@@ -246,6 +232,25 @@ function matchHint(
     if (table[word]) return { key: word, value: table[word] };
   }
   return null;
+}
+
+/** Specificity-first site matching for OPEN commands: a longer hint beats a
+ *  shorter one so "open google calendar" resolves to CALENDAR, not to the
+ *  generic "google" page that merely appears earlier in the sentence. */
+function bestSiteHint(text: string): { key: string; value: any } | null {
+  const words = text.split(/\s+/).filter(Boolean);
+  let best: { key: string; value: any } | null = null;
+  for (const word of words) {
+    const hit = SITE_HINTS[word];
+    if (hit && (!best || word.length > best.key.length)) {
+      best = { key: word, value: hit };
+    }
+  }
+  const multi = matchHint(text, SITE_HINTS);
+  if (multi && multi.key.includes(" ") && (!best || multi.key.length > best.key.length)) {
+    best = multi;
+  }
+  return best;
 }
 
 // ─── Normalization ───────────────────────────────────────────────────────────
@@ -354,21 +359,17 @@ function routeOpenClause(clause: string): TaskStep | null {
   // Website hints ("open youtube", "open gmail") — but NOT when the user
   // asked for a local folder that happens to share a name ("open my docs folder")
   const mentionsFolder = /\b(folder|directory)\b/.test(rest);
-  const site = mentionsFolder ? null : matchHint(rest, SITE_HINTS);
+  const site = mentionsFolder ? null : bestSiteHint(rest);
   if (site) {
-    // Account-aware: "open my google calendar of gmail dhruv@gmail.com" →
-    // open THAT Google account's calendar, never the default one.
-    const email = ACCOUNT_SITE_KEYS.has(site.key) ? extractEmail(rest) : null;
-    const url = accountSiteUrl(site.value.url, email);
+    // Account addressing: "open my calendar of dhruvsharma4944@gmail.com"
+    // scopes the site to THAT account (named specifics beat generic pages).
+    const account = extractAccountEmail(clause);
+    const url = accountAwareUrl(site.value.url, account);
     return {
       action: "open_website",
       target: site.key,
-      params: {
-        url,
-        label: site.value.label,
-        ...(email ? { account: email } : {}),
-      },
-      description: `Open ${site.value.label}${email ? ` (${email})` : ""}`,
+      params: { url, label: site.value.label, ...(account ? { account } : {}) },
+      description: `Open ${site.value.label}${account ? ` (account ${account})` : ""}`,
     };
   }
 

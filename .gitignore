@@ -4,7 +4,9 @@ node_modules/
 # Build artifacts
 dist/
 dist-electron/
-build/
+build/*
+# ...but the Quip logo assets MUST ship (app icon, tray icon, buttons)
+!build/*.png
 target/
 *.tsbuildinfo
 

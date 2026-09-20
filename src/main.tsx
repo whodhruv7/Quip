@@ -1,12 +1,11 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import { initTheme } from "./lib/theme";
+import { applySavedTheme } from "./lib/theme";
 import "./index.css";
 
-// Apply the saved (or brand-default) theme BEFORE first paint so the panel
-// never flashes the wrong chrome.
-initTheme();
+// Theme BEFORE first paint — no flash of the wrong palette.
+applySavedTheme();
 
 // ─── Companion Survival Boundary ─────────────────────────────────────────────
 // The window is transparent — if ANY render error unmounts the React tree,

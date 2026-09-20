@@ -92,6 +92,9 @@ export const IPC = {
   COMPANION_VISIBLE_CHANGED: "quip:companion-visible-changed",
   QUIT_APP: "quip:quit-app",
 
+  // Quip Appearance — bring the companion onto the desktop (Settings button)
+  SHOW_QUIP_DESKTOP: "quip:show-desktop",
+
   // Proactive check-ins toggle (Settings → Desktop)
   GET_CHECKINS_ENABLED: "quip:get-checkins-enabled",
   SET_CHECKINS_ENABLED: "quip:set-checkins-enabled",

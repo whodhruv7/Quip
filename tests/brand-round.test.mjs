@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-const { extractEmail, accountSiteUrl, SITE_HINTS, ACCOUNT_SITE_KEYS, parseIntentV2 } =
+const { extractAccountEmail, accountAwareUrl, SITE_HINTS, parseIntentV2 } =
   await import("../dist-test/electron/engine/intent-parser-v2.js");
 const { parseBehindCount, updateMessage } = await import(
   "../dist-test/electron/system/app-updates.js"
@@ -14,32 +14,37 @@ const { THEMES, resolveTheme, isThemeId, DEFAULT_THEME } = await import(
 
 // ─── Account-aware site opening ───────────────────────────────────────────────
 
-test("extractEmail pulls the first address from a clause", () => {
-  assert.equal(extractEmail("open my google calendar of gmail dhruv.sharma4944@gmail.com please"), "dhruv.sharma4944@gmail.com");
-  assert.equal(extractEmail("no address here"), null);
-  assert.equal(extractEmail("open MYMAIL@Example.CO"), "mymail@example.co");
+test("extractAccountEmail pulls the first address from a clause", () => {
+  assert.equal(extractAccountEmail("open my google calendar of gmail dhruv.sharma4944@gmail.com please"), "dhruv.sharma4944@gmail.com");
+  assert.equal(extractAccountEmail("no address here"), null);
+  assert.equal(extractAccountEmail("open MYMAIL@Example.CO"), "MYMAIL@Example.CO");
 });
 
-test("accountSiteUrl: gmail uses the /mail/u/<email> route", () => {
+test("accountAwareUrl: gmail uses the /mail/u/<email> route", () => {
   assert.equal(
-    accountSiteUrl("https://mail.google.com", "dhruv@gmail.com"),
-    "https://mail.google.com/mail/u/dhruv@gmail.com/"
+    accountAwareUrl("https://mail.google.com", "dhruv@gmail.com"),
+    "https://mail.google.com/mail/u/dhruv%40gmail.com/"
   );
 });
 
-test("accountSiteUrl: other Google properties take ?authuser=<email>", () => {
+test("accountAwareUrl: Google properties take authuser with URL-safe encoding", () => {
   assert.equal(
-    accountSiteUrl("https://calendar.google.com", "dhruv@gmail.com"),
-    "https://calendar.google.com?authuser=dhruv@gmail.com"
+    accountAwareUrl("https://calendar.google.com", "dhruv@gmail.com"),
+    "https://calendar.google.com/calendar/r?authuser=dhruv%40gmail.com"
   );
   assert.equal(
-    accountSiteUrl("https://example.com?a=1", "x@y.com"),
-    "https://example.com?a=1&authuser=x@y.com"
+    accountAwareUrl("https://gemini.google.com", "x@y.com"),
+    "https://gemini.google.com?authuser=x%40y.com"
+  );
+  // non-Google sites never take authuser
+  assert.equal(
+    accountAwareUrl("https://example.com?a=1", "x@y.com"),
+    "https://example.com?a=1"
   );
 });
 
-test("accountSiteUrl: no email → URL untouched", () => {
-  assert.equal(accountSiteUrl("https://calendar.google.com", null), "https://calendar.google.com");
+test("accountAwareUrl: no email → URL untouched", () => {
+  assert.equal(accountAwareUrl("https://calendar.google.com", null), "https://calendar.google.com");
 });
 
 test("'open my google calendar of gmail <email>' resolves the account URL (end-to-end parse)", () => {
@@ -47,7 +52,7 @@ test("'open my google calendar of gmail <email>' resolves the account URL (end-t
   assert.equal(r.steps[0].action, "open_website");
   const url = String(r.steps[0].params?.url);
   assert.ok(url.includes("calendar.google.com"));
-  assert.ok(url.includes("authuser=dhruvsharma4944@gmail.com"));
+  assert.ok(url.includes("authuser=dhruvsharma4944%40gmail.com"));
   assert.equal(r.steps[0].params?.account, "dhruvsharma4944@gmail.com");
   assert.ok(r.steps[0].description.includes("dhruvsharma4944@gmail.com"));
 });
@@ -57,7 +62,7 @@ test("'open my gmail <email>' uses the mail route (end-to-end parse)", () => {
   assert.equal(r.steps[0].action, "open_website");
   const url = String(r.steps[0].params?.url);
   assert.ok(url.startsWith("https://mail.google.com/mail/u/"));
-  assert.ok(url.includes("dhruvsharma4944@gmail.com"));
+  assert.ok(url.includes("dhruvsharma4944%40gmail.com"));
 });
 
 test("site hints: new targets exist with correct URLs", () => {
@@ -71,13 +76,22 @@ test("site hints: new targets exist with correct URLs", () => {
   assert.equal(SITE_HINTS.calendar.label, "Google Calendar");
 });
 
-test("account keys cover the Google family", () => {
-  for (const k of ["gmail", "calendar", "google calendar", "drive", "docs", "sheets", "meet", "gemini"]) {
-    assert.ok(ACCOUNT_SITE_KEYS.has(k), `missing account key: ${k}`);
+test("account scoping covers the Google family (behavior)", () => {
+  for (const url of [
+    "https://mail.google.com",
+    "https://calendar.google.com",
+    "https://drive.google.com",
+    "https://docs.google.com",
+    "https://gemini.google.com",
+    "https://meet.google.com",
+    "https://www.youtube.com",
+  ]) {
+    assert.notEqual(accountAwareUrl(url, "a@b.co"), url, `should be account-scoped: ${url}`);
   }
   // non-Google sites never take authuser
-  assert.ok(!ACCOUNT_SITE_KEYS.has("youtube"));
-  assert.ok(!ACCOUNT_SITE_KEYS.has("chatgpt"));
+  assert.equal(accountAwareUrl("https://github.com", "a@b.co"), "https://github.com");
+  assert.equal(accountAwareUrl("https://chatgpt.com", "a@b.co"), "https://chatgpt.com");
+  assert.equal(accountAwareUrl("https://www.youtube.com", null), "https://www.youtube.com");
 });
 
 test("'open chatgpt' still parses to the plain site (no account)", () => {
@@ -105,11 +119,13 @@ test("updateMessage: honest copy for every outcome", () => {
 
 // ─── Theme catalog ────────────────────────────────────────────────────────────
 
-test("theme catalog: violet brand first, five themes, dark flags honest", () => {
+test("theme catalog: violet brand first, ten themes, dark flags honest", () => {
   assert.equal(THEMES[0].id, "violet");
-  assert.equal(THEMES.length, 5);
+  assert.equal(THEMES.length, 10);
   const violet = THEMES.find((t) => t.id === "violet");
   assert.ok(violet?.dark);
+  const darkIds = THEMES.filter((t) => t.dark).map((t) => t.id).sort();
+  assert.deepEqual(darkIds, ["black", "midnight", "violet"]);
   assert.equal(DEFAULT_THEME, "violet");
 });
 
