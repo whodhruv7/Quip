@@ -164,6 +164,9 @@ export function SettingsPanel({
   const [bringNote, setBringNote] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
   const [fetchResult, setFetchResult] = useState<{ ok: boolean; message: string; needsRestart?: boolean } | null>(null);
+  // Desktop shortcut — the real Quip.lnk on the Windows home screen
+  const [shortcutBusy, setShortcutBusy] = useState(false);
+  const [shortcutResult, setShortcutResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   useEffect(() => {
     setTab(initialTab);
@@ -458,6 +461,21 @@ export function SettingsPanel({
       setFetchResult({ ok: false, message: "The update check couldn't run — try again." });
     } finally {
       setFetching(false);
+    }
+  };
+
+  /** Desktop shortcut — real Quip.lnk on the Windows home screen. Double-tap
+   *  the icon and Quip appears; the terminal is never needed again. */
+  const handleAddShortcut = async () => {
+    setShortcutBusy(true);
+    setShortcutResult(null);
+    try {
+      const r = await window.quip.addDesktopShortcut();
+      setShortcutResult({ ok: r.ok, message: r.message });
+    } catch {
+      setShortcutResult({ ok: false, message: "Windows refused the shortcut — restart Quip and try once more." });
+    } finally {
+      setShortcutBusy(false);
     }
   };
 
@@ -1437,6 +1455,54 @@ export function SettingsPanel({
               )}
             </div>
 
+            {/* Desktop shortcut — the REAL app icon on the home screen.
+                Double-tap it anywhere and Quip appears; no terminal, ever. */}
+            <div
+              className="flex items-center justify-between gap-3 rounded-xl px-3 py-3"
+              style={{
+                border: shortcutResult?.ok ? "1px solid rgba(var(--quip-ok), 0.35)" : "1px solid rgba(var(--quip-line), 0.08)",
+                background: "rgba(var(--quip-line), 0.02)",
+              }}
+            >
+              <div className="flex min-w-0 flex-col">
+                <span style={{ fontSize: 12, fontWeight: 600, color: "rgb(var(--quip-text))" }}>
+                  Quip icon on my desktop
+                </span>
+                <span style={{ fontSize: 10.5, color: "rgba(var(--quip-text-soft), 0.95)", marginTop: 2 }}>
+                  One real icon on your home screen — double-tap it and Quip appears. No terminal, ever.
+                </span>
+                {shortcutResult && (
+                  <span
+                    style={{
+                      fontSize: 10,
+                      marginTop: 4,
+                      color: shortcutResult.ok ? "rgb(var(--quip-ok))" : "rgb(var(--quip-bad))",
+                    }}
+                  >
+                    {shortcutResult.ok ? "✓ " : "✗ "}{shortcutResult.message}
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={handleAddShortcut}
+                disabled={shortcutBusy}
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: "#fff",
+                  opacity: shortcutBusy ? 0.6 : 1,
+                  background: "linear-gradient(135deg, rgb(var(--quip-accent)), rgb(var(--quip-accent-3)))",
+                  border: "none",
+                  borderRadius: 10,
+                  padding: "8px 14px",
+                  cursor: shortcutBusy ? "wait" : "pointer",
+                  flexShrink: 0,
+                }}
+              >
+                {shortcutBusy ? "Creating…" : "Create shortcut"}
+              </button>
+            </div>
+
             {/* Companion visibility — the setting the user asked for */}
             <div
               className="flex items-center justify-between gap-3 rounded-xl px-3 py-3"
@@ -1480,8 +1546,8 @@ export function SettingsPanel({
             </div>
 
             <div style={{ fontSize: 10.5, color: "rgba(var(--quip-text-soft), 0.85)" }}>
-              Closing the window (Alt+F4) only hides Quip — it keeps running in the
-              system tray. Quitting fully is right here.
+              The cross button (X) only clears the app screen — your companion stays on the desktop.
+              Quip leaves the screen only when you quit it right here.
             </div>
 
             {/* Proactive check-ins — main-process reminder engine, user-controlled */}

@@ -95,6 +95,9 @@ export const IPC = {
   // Quip Appearance — bring the companion onto the desktop (Settings button)
   SHOW_QUIP_DESKTOP: "quip:show-desktop",
 
+  // Real Windows desktop shortcut — the one-tap app icon on the home screen
+  ADD_DESKTOP_SHORTCUT: "quip:add-desktop-shortcut",
+
   // Proactive check-ins toggle (Settings → Desktop)
   GET_CHECKINS_ENABLED: "quip:get-checkins-enabled",
   SET_CHECKINS_ENABLED: "quip:set-checkins-enabled",

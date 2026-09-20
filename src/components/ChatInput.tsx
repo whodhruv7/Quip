@@ -143,8 +143,8 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
     <div
       className="flex flex-col px-3 py-2.5"
       style={{
-        borderTop: "1px solid rgb(var(--chrome-line) / 0.06)",
-        background: "rgb(var(--chrome-bg) / 0.55)",
+        borderTop: "1px solid rgba(var(--quip-line), 0.07)",
+        background: "rgba(var(--quip-bg), 0.72)",
         backdropFilter: "blur(20px)",
         WebkitBackdropFilter: "blur(20px)",
       }}
@@ -196,12 +196,12 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
               checkClipboard();
             }}
             onBlur={(e) => {
-              e.currentTarget.style.borderColor = "rgb(var(--chrome-line) / 0.12)";
-              e.currentTarget.style.boxShadow = "none";
+              e.currentTarget.style.borderColor = "";
+              e.currentTarget.style.boxShadow = "";
             }}
             placeholder={getSmartPlaceholder(companionId)}
             aria-label="Message Quip"
-            className="w-full resize-none rounded-2xl border border-black/[0.07] bg-white/80 px-4 py-2.5 text-[14px] text-quip-ink placeholder:text-quip-gray/60 focus:outline-none"
+            className="quip-composer-input w-full resize-none rounded-2xl px-4 py-2.5 text-[14px] focus:outline-none"
             style={{
               transition: "border-color 200ms, box-shadow 200ms",
             }}

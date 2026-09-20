@@ -274,6 +274,14 @@ const api = {
   // ─── Quip Appearance (Settings → Appearance tab button) ──────────────
   showQuipDesktop: () =>
     ipcRenderer.invoke(IPC.SHOW_QUIP_DESKTOP) as Promise<{ ok: boolean; visible: boolean }>,
+  addDesktopShortcut: () =>
+    ipcRenderer.invoke(IPC.ADD_DESKTOP_SHORTCUT) as Promise<{
+      ok: boolean;
+      created: boolean;
+      present: boolean;
+      shortcutPath?: string;
+      message: string;
+    }>,
 
   // ─── Proactive check-ins toggle (Settings → Desktop) ─────────────────
   getCheckInsEnabled: () =>

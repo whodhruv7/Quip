@@ -9,138 +9,175 @@
    Theme is driven by CSS custom properties so we can swap light/aqua/pink/dark. */
 
 :root {
-  /* Default = Light. Override via [data-theme="..."] below. */
-  --quip-bg: 255, 255, 255;          /* panel background */
-  --quip-bg-soft: 250, 251, 252;     /* subtle inset */
-  --quip-text: 10, 11, 15;           /* primary text */
-  --quip-text-soft: 122, 131, 139;   /* secondary text */
-  --quip-line: 10, 11, 15;           /* borders (with alpha) */
-  --quip-accent: 111, 214, 255;      /* aqua */
-  --quip-accent-2: 255, 159, 239;    /* pink */
-  --quip-accent-3: 138, 180, 255;    /* periwinkle — tri-color gradients */
-  --quip-accent-deep: 12, 107, 143;  /* readable accent text on light bg */
+  /* Default = Cloud (light). Override via [data-theme="..."] below.
+     EVERY theme defines the COMPLETE set: bg / bg-soft / text / text-soft /
+     line / accent ×3 / accent-deep / glow — tuned so text contrast is
+     guaranteed on every surface (the chatbar bug is gone for good). */
+  --quip-bg: 252, 253, 255;          /* panel background */
+  --quip-bg-soft: 243, 246, 252;     /* subtle inset */
+  --quip-text: 15, 23, 42;           /* primary text — near-navy ink */
+  --quip-text-soft: 92, 108, 128;    /* secondary — 4.6:1 on bg */
+  --quip-line: 15, 23, 42;           /* borders (with alpha) */
+  --quip-accent: 14, 165, 233;
+  --quip-accent-2: 56, 189, 248;
+  --quip-accent-3: 125, 211, 252;
+  --quip-accent-deep: 2, 105, 154;   /* readable accent text on light bg */
   --quip-ok: 34, 197, 94;
   --quip-warn: 245, 158, 11;
   --quip-bad: 239, 68, 68;
-  --quip-glow: 111, 214, 255;
+  --quip-glow: 56, 189, 248;
   --quip-radius: 28px;
 
-  /* Settings/panel chrome (space-separated RGB — use rgb(var(--x) / alpha)).
-     Light chrome for light themes; dark chrome for violet/ink below. */
+  /* Settings/panel chrome (space-separated RGB — use rgb(var(--x) / alpha)). */
   --chrome-bg: 255 255 255;
-  --chrome-text: 17 18 22;
-  --chrome-soft: 107 114 128;
-  --chrome-idle: 156 163 175;
-  --chrome-line: 10 11 15;
-  --chrome-brand: 109 91 224;        /* deep brand violet, white-text safe */
+  --chrome-text: 17 20 27;
+  --chrome-soft: 94 106 124;
+  --chrome-idle: 148 158 172;
+  --chrome-line: 15 23 42;
+  --chrome-brand: 109 91 224;        /* logo violet, white-text safe */
 }
 
+/* Light chrome is the default; dark themes flip the whole chrome set so
+   TopBar/chat chrome always match their surfaces (no more mixed states). */
 [data-theme="violet"],
-[data-theme="black"] {
-  --chrome-bg: 21 21 27;
-  --chrome-text: 242 241 248;
-  --chrome-soft: 164 162 184;
-  --chrome-idle: 132 134 156;
+[data-theme="black"],
+[data-theme="midnight"] {
+  --chrome-bg: 22 22 30;
+  --chrome-text: 243 242 250;
+  --chrome-soft: 164 163 186;
+  --chrome-idle: 130 131 152;
   --chrome-line: 255 255 255;
   --chrome-brand: 139 124 248;       /* logo violet */
 }
 
-[data-theme="aqua"] {
-  --chrome-brand: 14 116 168;
-}
+/* Per-theme brand tints for light themes' chrome accents. */
+[data-theme="aqua"]   { --chrome-brand: 14 116 168; }
+[data-theme="pink"]   { --chrome-brand: 192 68 173; }
+[data-theme="mint"]   { --chrome-brand: 5 122 85; }
+[data-theme="sunset"] { --chrome-brand: 194 88 18; }
+[data-theme="ocean"]  { --chrome-brand: 3 105 161; }
+[data-theme="forest"] { --chrome-brand: 21 128 61; }
 
-[data-theme="pink"] {
-  --chrome-brand: 192 68 173;
-}
-
-/* Quip BRAND theme — the palette of the logo: ink black canvas, violet glow,
-   soft blue sparkle. Dark surfaces get their own line color. */
+/* ─── VIOLET — the Quip brand: ink canvas, logo-violet glow, blue sparkle ── */
 [data-theme="violet"] {
-  --quip-bg: 21, 21, 27;
-  --quip-bg-soft: 29, 29, 38;
-  --quip-text: 242, 241, 248;
-  --quip-text-soft: 164, 162, 184;
+  --quip-bg: 19, 19, 26;
+  --quip-bg-soft: 28, 28, 38;
+  --quip-text: 243, 242, 250;
+  --quip-text-soft: 165, 163, 192;
   --quip-line: 255, 255, 255;
-  --quip-accent: 139, 124, 248;      /* logo violet */
-  --quip-accent-2: 94, 168, 255;     /* logo blue sparkle */
-  --quip-glow: 139, 124, 248;
+  --quip-accent: 148, 131, 255;
+  --quip-accent-2: 96, 171, 255;
+  --quip-accent-3: 190, 158, 255;
+  --quip-accent-deep: 172, 157, 255; /* accent text stays readable on ink */
+  --quip-ok: 74, 222, 128;
+  --quip-bad: 248, 113, 113;
+  --quip-glow: 148, 131, 255;
 }
 
+/* ─── CLOUD — airy white-blue daylight ──────────────────────────────────── */
+[data-theme="light"] {
+  --quip-bg: 252, 253, 255;
+  --quip-bg-soft: 243, 246, 252;
+  --quip-text: 15, 23, 42;
+  --quip-text-soft: 92, 108, 128;
+  --quip-line: 15, 23, 42;
+  --quip-accent: 14, 165, 233;
+  --quip-accent-2: 56, 189, 248;
+  --quip-accent-3: 125, 211, 252;
+  --quip-accent-deep: 2, 105, 154;
+  --quip-glow: 56, 189, 248;
+}
+
+/* ─── AQUA — icy cyan, crisp sea-glass ──────────────────────────────────── */
 [data-theme="aqua"] {
-  --quip-bg: 240, 249, 255;
-  --quip-bg-soft: 226, 242, 252;
-  --quip-text: 12, 30, 48;
-  --quip-accent: 63, 184, 239;
-  --quip-accent-2: 111, 214, 255;
+  --quip-bg: 238, 250, 255;
+  --quip-bg-soft: 222, 244, 253;
+  --quip-text: 7, 44, 68;
+  --quip-text-soft: 66, 108, 133;
+  --quip-line: 7, 44, 68;
+  --quip-accent: 20, 175, 239;
+  --quip-accent-2: 103, 214, 255;
   --quip-accent-3: 125, 211, 252;
-  --quip-accent-deep: 7, 89, 133;
+  --quip-accent-deep: 6, 108, 143;
+  --quip-glow: 103, 214, 255;
 }
 
+/* ─── BUBBLEGUM — warm candy pink, soft and playful ─────────────────────── */
 [data-theme="pink"] {
-  --quip-bg: 255, 245, 250;
-  --quip-bg-soft: 252, 233, 245;
-  --quip-text: 48, 12, 36;
-  --quip-accent: 244, 114, 214;
-  --quip-accent-2: 255, 159, 239;
-  --quip-accent-3: 249, 168, 212;
-  --quip-accent-deep: 162, 41, 132;
+  --quip-bg: 255, 246, 251;
+  --quip-bg-soft: 253, 233, 244;
+  --quip-text: 58, 10, 42;
+  --quip-text-soft: 146, 78, 120;
+  --quip-line: 58, 10, 42;
+  --quip-accent: 236, 72, 201;
+  --quip-accent-2: 249, 168, 212;
+  --quip-accent-3: 244, 114, 182;
+  --quip-accent-deep: 158, 20, 124;
+  --quip-glow: 236, 72, 201;
 }
 
-[data-theme="violet"] {
-  --quip-bg: 250, 248, 255;
-  --quip-bg-soft: 241, 237, 252;
-  --quip-text: 30, 20, 60;
-  --quip-accent: 139, 124, 246;
-  --quip-accent-2: 196, 181, 253;
-  --quip-accent-3: 167, 139, 250;
-  --quip-accent-deep: 109, 88, 217;
-}
-
+/* ─── MINT — fresh green, cool and clean ────────────────────────────────── */
 [data-theme="mint"] {
-  --quip-bg: 244, 253, 250;
-  --quip-bg-soft: 231, 250, 243;
-  --quip-text: 6, 44, 32;
-  --quip-accent: 52, 211, 153;
-  --quip-accent-2: 167, 243, 208;
-  --quip-accent-3: 110, 231, 183;
-  --quip-accent-deep: 5, 130, 92;
+  --quip-bg: 241, 253, 248;
+  --quip-bg-soft: 226, 249, 239;
+  --quip-text: 5, 41, 29;
+  --quip-text-soft: 64, 110, 90;
+  --quip-line: 5, 41, 29;
+  --quip-accent: 16, 185, 129;
+  --quip-accent-2: 110, 231, 183;
+  --quip-accent-3: 52, 211, 153;
+  --quip-accent-deep: 4, 116, 80;
+  --quip-glow: 52, 211, 153;
 }
 
+/* ─── SUNSET — apricot warmth with rose light ───────────────────────────── */
 [data-theme="sunset"] {
-  --quip-bg: 255, 250, 245;
-  --quip-bg-soft: 255, 241, 235;
-  --quip-text: 60, 22, 12;
-  --quip-accent: 251, 146, 60;
-  --quip-accent-2: 244, 114, 182;
-  --quip-accent-3: 253, 186, 116;
-  --quip-accent-deep: 194, 88, 18;
+  --quip-bg: 255, 250, 246;
+  --quip-bg-soft: 255, 239, 228;
+  --quip-text: 62, 22, 10;
+  --quip-text-soft: 152, 88, 64;
+  --quip-line: 62, 22, 10;
+  --quip-accent: 249, 115, 22;
+  --quip-accent-2: 251, 146, 60;
+  --quip-accent-3: 244, 114, 182;
+  --quip-accent-deep: 185, 68, 8;
+  --quip-glow: 251, 146, 60;
 }
 
+/* ─── OCEAN — deep sea blue, calm focus ─────────────────────────────────── */
 [data-theme="ocean"] {
-  --quip-bg: 242, 250, 255;
-  --quip-bg-soft: 228, 243, 252;
-  --quip-text: 8, 36, 58;
-  --quip-accent: 56, 189, 248;
-  --quip-accent-2: 14, 165, 233;
-  --quip-accent-3: 125, 211, 252;
-  --quip-accent-deep: 3, 105, 161;
+  --quip-bg: 239, 249, 255;
+  --quip-bg-soft: 223, 240, 252;
+  --quip-text: 7, 36, 58;
+  --quip-text-soft: 66, 106, 134;
+  --quip-line: 7, 36, 58;
+  --quip-accent: 14, 165, 233;
+  --quip-accent-2: 56, 189, 248;
+  --quip-accent-3: 96, 165, 250;
+  --quip-accent-deep: 3, 102, 153;
+  --quip-glow: 56, 189, 248;
 }
 
+/* ─── FOREST — leafy depth, grounded greens ─────────────────────────────── */
 [data-theme="forest"] {
-  --quip-bg: 245, 253, 247;
-  --quip-bg-soft: 234, 248, 238;
-  --quip-text: 10, 40, 22;
-  --quip-accent: 74, 222, 128;
-  --quip-accent-2: 22, 101, 52;
+  --quip-bg: 244, 253, 247;
+  --quip-bg-soft: 231, 247, 237;
+  --quip-text: 7, 38, 20;
+  --quip-text-soft: 68, 106, 84;
+  --quip-line: 7, 38, 20;
+  --quip-accent: 34, 197, 94;
+  --quip-accent-2: 74, 222, 128;
   --quip-accent-3: 134, 239, 172;
-  --quip-accent-deep: 21, 128, 61;
+  --quip-accent-deep: 20, 116, 58;
+  --quip-glow: 74, 222, 128;
 }
 
+/* ─── MIDNIGHT — indigo night with periwinkle glow ──────────────────────── */
 [data-theme="midnight"] {
-  --quip-bg: 22, 24, 38;
+  --quip-bg: 21, 23, 36;
   --quip-bg-soft: 30, 33, 50;
-  --quip-text: 233, 236, 248;
-  --quip-text-soft: 156, 164, 196;
+  --quip-text: 233, 236, 249;
+  --quip-text-soft: 158, 164, 199;
   --quip-line: 255, 255, 255;
   --quip-accent: 129, 140, 248;
   --quip-accent-2: 56, 189, 248;
@@ -151,11 +188,12 @@
   --quip-glow: 129, 140, 248;
 }
 
+/* ─── CARBON — true black OLED, neon cyan/pink sparks ───────────────────── */
 [data-theme="black"] {
-  --quip-bg: 18, 19, 24;
-  --quip-bg-soft: 26, 29, 38;
-  --quip-text: 240, 242, 246;
-  --quip-text-soft: 168, 176, 184;
+  --quip-bg: 17, 18, 23;
+  --quip-bg-soft: 26, 28, 35;
+  --quip-text: 241, 243, 247;
+  --quip-text-soft: 166, 174, 184;
   --quip-line: 255, 255, 255;
   --quip-accent: 111, 214, 255;
   --quip-accent-2: 255, 159, 239;
@@ -339,6 +377,24 @@ body {
   outline: 2px solid rgb(var(--quip-accent));
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/* ─── Chat composer input — theme-aware text surface ─────────────────────
+   The chatbar text must stay readable in every palette (the user's ask):
+   full-contrast text + soft placeholder + inset border, all via vars. */
+.quip-composer-input {
+  background: rgba(var(--quip-line), 0.055);
+  border: 1.5px solid rgba(var(--quip-line), 0.14);
+  color: rgb(var(--quip-text));
+  caret-color: rgb(var(--quip-accent));
+}
+.quip-composer-input::placeholder {
+  color: rgba(var(--quip-text-soft), 0.9);
+  font-weight: 450;
+}
+.quip-composer-input:focus {
+  border-color: rgba(var(--quip-accent), 0.55);
+  box-shadow: 0 0 0 3px rgba(var(--quip-accent), 0.14);
 }
 
 /* ─── Code block polish ─────────────────────────────────────────────── */

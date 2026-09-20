@@ -77,6 +77,7 @@ import { autoMigrateModel, looksLikeModelRejection } from "./system/model-health
 import { trimHistory, assembleSections, type PromptSection } from "./system/prompt-budget";
 import { findEnvConflicts } from "./system/env-load";
 import { fetchUpdates } from "./system/app-updates";
+import { ensureQuipShortcut } from "./system/desktop-shortcut";
 import { clampRect } from "./window-geometry";
 
 import { ensureProfile, loadProfile } from "./brains/device-brain";
@@ -743,15 +744,22 @@ function createWindow(companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | 
     }
   });
 
-  // ── Close interception — only Settings → Quit actually exits Quip ───
-  // Alt+F4 / window close hides the companion (app stays in the tray).
-  // When visibility is disabled in Settings the window is already hidden;
-  // closing it must still not kill the app silently.
+  // ── Close interception — the cross button NEVER removes Quip ──
+  // The user's rule: the X removes the app SCREEN, not the mascot. Quip only
+  // leaves the screen via Settings → Quit Quip (isQuitting).
+  //   panel/full mode → shrink back to the companion sprite (mascot stays)
+  //   companion mode  → do nothing — the mascot IS the window, it stays
+  //   hidden (visibility off in Settings) → stay hidden, app still alive
   win.on("close", (e) => {
     if (!isQuitting) {
       e.preventDefault();
       try {
-        win.hide();
+        const mode = windowModes.get(win.id) ?? "companion";
+        if (mode !== "companion" && !win.isDestroyed() && win.isVisible()) {
+          // X on the app page/panel → back to the desktop sprite.
+          setWindowMode(win, "companion");
+        }
+        // Companion mode: Quip stays on screen, per the user's rule.
       } catch {
         /* best effort */
       }
@@ -1656,6 +1664,14 @@ ipcMain.handle(IPC.SHOW_QUIP_DESKTOP, () => {
   return { ok: true, visible: companionVisible };
 });
 
+// Desktop shortcut — the REAL app icon on the Windows home screen. One tap
+// launches Quip with zero terminal. Auto-ensured at boot; this handler lets
+// the user (re)create it on demand with an honest verdict either way.
+// ---------------------------------------------------------------------------
+ipcMain.handle(IPC.ADD_DESKTOP_SHORTCUT, () => {
+  return ensureQuipShortcut(app.getAppPath(), { force: true });
+});
+
 // Task cancellation — the Stop button. One task runs at a time per window;
 // a single broadcast flag flips every live token.
 // ---------------------------------------------------------------------------
@@ -2009,6 +2025,12 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.whenReady().then(async () => {
+    // Desktop shortcut — silently ensure Quip.lnk exists on the real Windows
+    // desktop so the user NEVER needs the terminal to launch Quip again.
+    // Best-effort: never blocks boot, never nags (honest result only when
+    // the user asks via Settings → Desktop shortcut).
+    ensureQuipShortcut(app.getAppPath()).catch(() => {});
+
     // Device Knowledge Layer — load the cached index instantly, then rescan
     // in the background and merge only the diff. Never blocks the boot.
     initDeviceIndex(app.getPath("userData")).catch(() => {});

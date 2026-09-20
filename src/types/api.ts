@@ -78,6 +78,8 @@ export interface SystemAPI {
   onBootstrapProgress: (cb: (p: BootstrapProgress) => void) => () => void;
   /** Settings → Appearance → Fetch Updates (in-app repo updater). */
   fetchUpdates: () => Promise<{ ok: boolean; behind: number; pulled: boolean; needsRestart?: boolean; message: string }>;
+  /** Real Windows desktop shortcut — one-tap app icon on the home screen. */
+  addDesktopShortcut: () => Promise<{ ok: boolean; created: boolean; present: boolean; shortcutPath?: string; message: string }>;
 }
 
 export type ProviderIdUI = "openrouter" | "groq" | "cerebras" | "nvidia" | "gemini" | "ollama";
