@@ -1,345 +1,365 @@
-# Quip V2 — AI Life Companion OS
+# Quip — AI Life Companion OS
 
-> **Made with love by [Dhruv Sharma](https://heydhruv.vercel.app).
->
 > *"Quip is not a chatbot. Quip is not an assistant. Quip is a Context Engine wrapped inside a companion."*
 
----
+**Made with love by [Dhruv Sharma](https://heydhruv.vercel.app) & Carren Mathew**
 
-## 🧠 What is Quip?
-
-Quip is an **AI Life Companion** — a desktop application that lives on your screen, understands you, remembers you, and grows with you over time. Unlike traditional chatbots that forget everything, Quip builds a living picture of who you are, what you're doing, and what you need — then uses that context to help you.
-
-**Three companions, one soul:**
-- **Pix** 🟦 — The Creative Spark (playful, energetic)
-- **Kai** 🟣 — The Wise Guide (calm, analytical)
-- **Zee** 🟡 — The Fearless Explorer (curious, empathetic)
-
-Switch between them anytime. Each has its own personality, memory branch, and mood.
+Quip is a Windows desktop AI companion that **lives on your screen**. It understands what you say, remembers who you are, speaks its replies out loud, sees your screen, opens your apps and websites, and executes real tasks on your laptop — with a permission system and honest failure reporting. Nothing is faked: if Quip can't do something, it tells you exactly why.
 
 ---
 
-## ✨ What's New in V2
+## ⚡ Start Quip — exact commands (Windows)
 
-V2 is a complete ground-up rebuild with a **15-layer brain architecture**. Every layer is modular, independent, and connected through clean APIs.
+> **Node.js 18+ is required** (20 LTS recommended). Install it from **https://nodejs.org** first — click the big green **LTS** button, run the installer, keep clicking Next. Restart any open terminals after installing.
 
-### The 15 Brain Layers
+### ✅ Way 1 — The easy way (double-click, recommended)
 
-| # | Layer | Purpose |
-|---|-------|---------|
-| 1 | 🖥️ **Device Brain** | Discovers OS, hardware, installed apps, default browsers, displays |
-| 2 | 🎯 **Task Brain** | Parses intent, builds multi-step plans, executes in milliseconds |
-| 3 | 🌍 **Environment Brain** | Monitors battery, network, foreground app, system load |
-| 4 | 🧠 **Memory Brain** | Stores facts, preferences, contacts with importance weighting |
-| 5 | 📍 **Spatial Brain** | Calculates safe window positions — never overflows off-screen |
-| 6 | 📊 **Capability Registry** | Maps abstract actions to concrete apps (never hardcodes) |
-| 7 | 🧭 **Goal-Plan-Execute** | 5-phase pipeline: Goal → Plan → Verify → Execute → Confirm |
-| 8 | 🧬 **Knowledge Graph** | Entity + relationship graph of your world |
-| 9 | 🧠 **Workspace Context** | Tracks current file, project, browser tab in real-time |
-| 10 | 🔗 **Relationship Engine** | Learns your communication style (Communication DNA) |
-| 11 | ⚖️ **Memory Importance** | Scores memories 0-1, prunes low-value ones automatically |
-| 12 | 🤝 **Companion Mood** | Dynamic energy/warmth/playfulness based on time + stress |
-| 13 | 📱 **Device Abstraction** | Platform-independent OS operations |
-| 14 | 🔐 **Permission System** | Safe/Medium/Dangerous action gating with trust layer |
-| 15 | 🌱 **Companion Evolution** | Cosmetic unlocks as your relationship deepens |
+```bat
+git clone https://github.com/whodhruv7/Quip.git
+cd Quip
+run-quip.cmd
+```
 
-### Key Features
+`run-quip.cmd` does **everything automatically**:
+1. Checks Node.js is installed
+2. Runs `npm install` (idempotent — always safe, catches new dependencies after updates)
+3. Creates your `.env` from the template
+4. Rebuilds **only when code changed** — warm starts take seconds, not 40s
+5. Launches Quip — your companion appears on screen
 
-- **🧠 Learns from conversations** — Every 10 messages, an LLM extracts facts + entities automatically
-- **💙 Trust layer** — Every action shows WHY ("Opening Edge because it's your default browser")
-- **⚡ Instant** — Fast-path task execution in <50ms, no waiting for LLM
-- **📱 Adaptive** — Spatial Brain ensures UI never overflows, adapts to screen size
-- **🔒 Private** — All memory is local, encrypted at rest. No cloud, no telemetry
-- **✨ Evolving** — Companions unlock cosmetic upgrades as you bond (scarves, stars, auras)
+Nothing fails silently: every step is logged to `quip-launch.log` in the project folder, and if any step breaks, a **Windows message box pops up with the exact reason** — no more invisible crashes.
 
----
+After the first run, you can launch Quip any time by **just double-clicking `run-quip.cmd`** — or use **Settings → "Add Quip to my desktop"** inside the app to get a real desktop icon, then launch from there like a normal app. No terminal needed.
 
-## 🚀 Quick Start
+### ✅ Way 2 — Manual commands (same result, typed by hand)
 
-### Prerequisites
+Open **Command Prompt** (Win + R → type `cmd` → Enter) and run, one line at a time:
 
-- **Node.js** 18+ and npm
-- **Windows**, **macOS**, or **Linux**
-
-### 1. Clone the repo
-
-```bash
+```bat
 git clone https://github.com/whodhruv7/Quip.git
 cd Quip
 npm install
+copy .env.example .env
+npm run build
+npm start
 ```
 
-> If Electron download is slow:
-> ```bash
-> set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/  # Windows
-> # or
-> export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/  # Mac/Linux
-> npm install
-> ```
+That's it — the companion appears on your screen.
 
-### 2. Add your AI API key
+> **Already cloned?** Skip the first two lines. To get the latest version first, run `git pull` inside the `Quip` folder before building.
 
-Create a `.env` file in the project root:
+### 🔑 Add your AI key (one time)
 
-```env
-# Primary (recommended — fast + free tier)
-GROQ_API_KEY=your_groq_key_here
+Quip talks to free AI providers. Get a free key from **https://console.groq.com/keys** (takes 1 minute, no credit card — keys start with `gsk_`), then either:
 
-# Fallback (optional)
-OPENROUTER_API_KEY=your_openrouter_key_here
-OPENROUTER_MODEL=google/gemma-3-27b-it:free
+- **Inside the app (easiest):** Settings → **AI Brain** → paste your key → Save. It persists automatically, no restart needed. **This works even if you skipped the `.env` step.**
+- **Or in the file:** open `.env` in Notepad and fill in `GROQ_API_KEY=gsk_...`
+
+You can also add backup providers (all have free tiers): Cerebras (`cloud.cerebras.ai`), NVIDIA (`build.nvidia.com`), Gemini (`aistudio.google.com/apikey`), OpenRouter (`openrouter.ai/keys`). Quip **automatically fails over** between every provider that has a key — if one is down, the next one answers within the same message.
+
+---
+
+## 🩺 Troubleshooting — "Quip won't open"
+
+Every known failure and its exact fix. Run these in Command Prompt **inside the `Quip` folder**.
+
+### 1. `'npm' is not recognized...` or `'git' is not recognized...`
+
+That program isn't installed or the terminal is older than the install.
+- Install Node.js LTS from https://nodejs.org (npm comes with it) and Git from https://git-scm.com/download/win
+- **Close and reopen Command Prompt**, then try again.
+
+### 2. `npm install` fails or hangs at `electron` (very common on Indian networks)
+
+The Electron binary download times out. Use the mirror:
+
+```bat
+set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+rmdir /s /q node_modules
+del package-lock.json
+npm install
 ```
 
-Get a free Groq key at **https://console.groq.com/keys**
+### 3. `npm install` fails with random permission / path errors
 
-> ⚠️ Never commit your `.env` file. It's already in `.gitignore`.
-
-### 3. Run in development
-
-```bash
-npm run dev
+```bat
+rmdir /s /q node_modules
+del package-lock.json
+npm cache clean --force
+npm install
 ```
 
-This starts Vite (port 5173) and launches Electron pointing at it.
+Make sure you're **not running from inside OneDrive/Desktop-synced folders** if it keeps failing — clone to something like `C:\Quip`.
 
-### 4. Build for production
+### 4. Error mentions `Cannot find module ...dist-electron...`
 
-```bash
-npm run build   # compile electron + build renderer to dist/
-npm start       # launch the built app
+The build step didn't run. Always build before `npm start`:
+
+```bat
+npm run build
+npm start
+```
+
+### 5. Build fails with TypeScript errors
+
+You're probably on an old or half-updated copy:
+
+```bat
+git status
+git pull
+rmdir /s /q node_modules
+npm install
+npm run build
+```
+
+If `git pull` says your local files are modified, run `git stash` then `git pull` again.
+
+### 6. The window never appears (no error either)
+
+- **Open `quip-launch.log`** in the Quip folder — the launcher logs every step there and pop-ups show the exact failure reason.
+- Look at the terminal output — `npm start` prints what's happening. Wait ~10 seconds after `Launching Quip...`
+- Press **Ctrl + R** after launch if the window shows a blank white screen.
+- Check the companion isn't hiding: tap the **Quip mascot on your screen**, or use **Settings → Show Quip**.
+- Check the tray (bottom-right of the taskbar, near the clock) for the Quip icon.
+- The **X button does NOT quit Quip** — it only hides the window so the mascot stays with you. The only way to fully quit is **Settings → Quit Quip**. If Quip is still running, launching it again focuses the existing instance instead of opening a duplicate.
+
+### 7. Companion appears but says it can't reach any AI provider
+
+- Open **Settings → AI Brain**, paste your Groq key, hit Save.
+- Or fill `GROQ_API_KEY` in `.env` and relaunch.
+- Behind a VPN/antivirus/proxy? Set `QUIP_TRANSPORT=net` (or `node`) in `.env` and relaunch.
+- Check **Settings → Doctor** — it runs a live connectivity probe and tells you exactly which provider is failing and why.
+
+### 8. Voice doesn't speak
+
+Voice is on by default (Groq neural voice → free Edge neural voice → your Windows built-in voice). If it's silent:
+- Check **Settings → AI Brain → Speak replies** is on.
+- Check the laptop isn't muted and the default output device is right.
+- Offline with no key? Quip falls back to the local Windows voice automatically.
+
+### 9. Everything else — full reset (fixes 99% of weird states)
+
+```bat
+git stash
+git pull
+rmdir /s /q node_modules
+rmdir /s /q dist
+rmdir /s /q dist-electron
+del package-lock.json
+npm install
+npm run build
+npm start
+```
+
+Still broken? Open an issue at https://github.com/whodhruv7/Quip/issues and paste the terminal output — it always says exactly what failed.
+
+### Run tests (for developers)
+
+```bat
+npm test
 ```
 
 ---
 
-## 🎮 Using Quip
+## 🧩 What Quip does today
 
-| Action | Result |
-|--------|--------|
-| Launch app | First-run device scan → companion appears |
-| **Tap companion** | Opens chat panel |
-| **Tap again** (or X, or tap outside) | Closes chat → saves to history |
-| Type + Enter | Sends message (auto-detects chat vs. task) |
-| Shift + Enter | New line |
-| Drag companion | Repositions (stays on-screen) |
-| Top bar dots | Switch between Pix / Kai / Zee |
-| Settings gear | Open settings (5 tabs) |
+### 💬 Understands you (Understanding Engine)
+Every message becomes a structured **understanding object** through a 10-stage pipeline: intent classification (primary + secondary + hidden intents with confidence scores), pronoun resolution ("play it **again**" remembers what *again* was), specific addressing, task decomposition, and a clarification gate when your ask is genuinely ambiguous. Provider-independent — it works the same whichever AI brain is active.
 
-### What can you ask?
+### 🦾 Does real things (Action Engine)
+A separated pipeline — Head Brain → Action Planner → Permission Manager → Action Engine → Device Controller — executes plans with per-action **verification** (SCREEN STATE → TARGET → ACTION → VERIFY), bounded recovery on failure, structured execution logs, and **honest failure reasons**. Quip never silently fails and never fakes success.
+- Opens apps, sites and files across your whole laptop
+- Account-aware Google addressing — "open my Gmail" lands in **your** logged-in account (`/mail/u/<n>/`, `?authuser=`)
+- YouTube, Spotify, ChatGPT, Gemini, Flipkart and more recognized natively
+- Task approval panel + 3 permission modes (Safe / Medium / Dangerous gating)
+- Real task cancellation — you can stop what it's doing
 
-**Chat mode** (auto-detected):
-- "What is the meaning of life?"
-- "Explain quantum computing simply"
-- "Write me a haiku about Mondays"
+### 👀 Sees your screen (Screen Vision)
+Quip takes a screenshot of what's in front of you and understands it with a vision model — "what am I looking at?", "click the login button" — using your existing keys, no extra signup.
 
-**Task mode** (auto-detected, executes locally):
-- "Open YouTube" → opens your default browser
-- "Play Arijit Singh" → Spotify if installed, else YouTube
-- "Open Gmail" → launches default browser to Gmail
-- "Open VS Code" → launches your editor
-- "Search for cute cat videos" → browser search
+### 🗣️ Speaks out loud (Voice)
+Replies are spoken through a 3-engine chain: **Groq neural voice** → free **Edge neural voice** (`en-IN-NeerjaNeural` reads Hinglish naturally) → your laptop's **built-in Windows voice** offline. If one fails, the next takes over mid-conversation.
 
-Quip **never assumes** — it checks your device profile first, picks the right app, and tells you why.
+### 🔌 Never loses its brain (Provider Failover)
+Six providers in one automatic chain: **Groq → Cerebras → NVIDIA → Gemini → OpenRouter → Ollama (offline)**. Circuit breakers, first-byte timeouts, Retry-After handling, auto model discovery, a live health pill in the UI, and a **Doctor** screen that probes everything and reports exact causes. Keys can live in `.env` or be managed inside Settings → AI Brain.
+
+### 🖥️ Four screen modes
+Switch from the TopBar button or the Settings Screen-mode card:
+- **Companion** — just the sprite on your screen (small transparent window)
+- **Panel** — a small chat panel beside the companion
+- **Full** — the complete Quip app interface, centered and rounded
+- **Fullscreen** — TRUE full screen, the entire display edge to edge; **Esc** brings you back
+
+### 🏠 Lives on your desktop
+- **Real desktop shortcut** — Settings → "Add Quip to my desktop" creates a proper Windows icon with the clear Quip logo. Double-click = companion appears.
+- **X never quits** — the cross button only hides the window; your companion stays on screen, always. The **only** way to fully quit is Settings → Quit Quip.
+- **Fetch Updates** — one button in Settings that pulls the latest code safely (your local changes are stashed and restored automatically) and tells you honestly if a restart is needed. The launcher then picks up any new dependencies automatically on next start.
+- **One instance** — launching Quip twice focuses the running companion instead of spawning a clone.
+
+### 🎭 Six companions, one soul
+
+| Companion | Personality |
+|-----------|-------------|
+| **Pix** 🟦 | The Creative Spark — playful, energetic |
+| **Kai** 🟣 | The Wise Guide — calm, analytical |
+| **Ren** 🟪 | The Fearless Explorer — bold, curious |
+| **Bubbles** 🩵 | The Joyful Friend — warm, bouncy |
+| **Capy** 🟤 | The Calm One — unhurried, soothing |
+| **Skales** 🟢 | The Original Gecko — the Skales companion, redrawn in Quip's pixel-sprite language |
+
+Switch anytime from the top bar. Each has its own personality, colors, aura and memory branch.
+
+### 🎨 Ten full themes (integrated inside the chatbox too)
+
+**Quip Violet** (brand default) · Cloud · Aqua · Bubblegum · Mint · Sunset · Ocean · Forest · Midnight · Carbon
+
+Themes color **everything** — the panel, the chatbox (fully opaque, no screen bleeding through), the logo in the top-left corner of the chatbox, buttons, bubbles and accents — applied before first paint so there's no flash of the wrong look.
+
+### 🖥️ Device Knowledge Layer
+First-launch device scan indexes your OS, hardware, installed apps and default browser. Lookups are diff-only and land under 50ms, so task planning stays instant. Deterministic fast-paths run before any AI is asked.
+
+---
+
+## 📜 Full changelog — everything built so far
+
+**Build 10 — Launcher never fails silently + true fullscreen** *(latest)*
+- **The "app won't open" bug root-caused and fixed** — the launcher only installed dependencies when `node_modules` was missing, so updates that added a dependency broke boot with zero diagnostics. Now `npm install` always runs (idempotent), builds happen only when code changed (warm start = seconds), every step logs to `quip-launch.log`, and any failure pops a Windows message box with the real reason
+- **TRUE fullscreen (4th screen mode)** — the entire display edge to edge, alwaysOnTop off, Esc to return; screen modes are now Companion / Panel / Full / Fullscreen
+- **Opaque themed chatbox** — the desktop can never show through the chat surfaces anymore
+- **Theme-aware chatbox logo** top-left + all hardcoded light-only inks replaced with theme tokens
+- **Bold desktop icon** — clearer logo on the desktop shortcut
+
+**Build 9 — Desktop + polish round**
+- Real Windows desktop shortcut created from inside the app (clear Quip logo, no terminal)
+- Cross button keeps the mascot on screen — quit lives only in Settings
+- Theme system rebuilt end-to-end: 10 themes, integrated into the chatbox, opaque chatbox, theme-aware chatbox logo
+
+**Build 8 — Settings V3 + brand round**
+- Settings V3 "kwazy UX" — Quip Appearance, Fetch Updates buttons, 10-theme picker, user logo
+- Heavy deliberate prompt for the understanding pipeline
+- Account-aware addressing (Gmail `/u/<n>/`, Google `?authuser=` with `%40` encoding)
+- Quip Violet brand theme + refreshed logo assets, honest failure reasons surfaced
+
+**Build 7 — §43 engineering report**
+- 14-item delivery report: architecture, engines, reliability, security, tests, limitations, DoD mapping (`docs/ENGINEERING-REPORT.md`)
+
+**Build 6 — Action Engine V1 (Phase 2)**
+- Unified plan executor with safety classes, contract validation, structured execution log
+- Bounded recovery, mode-aware permission gates, WAITING_FOR_PERMISSION / RECOVERING states in the UI
+- Square action buttons + persisted permission mode, 'play it again' context resolution
+- 33 new tests — **372 total**
+
+**Build 5 — Head Brain (Phase 1)**
+- Permanent Understanding Engine: intents/objects/classification pipeline, reference resolution
+- Device knowledge index, execution planner with verify expectations
+- Task lifecycle state machine + clarification gate
+
+**Build 4 — Connectivity round**
+- Env precedence fixed, circuit breaker, Gemini + Ollama providers
+- Token diet, Doctor screen, auto model health, Edge voice, health pill
+- Root-caused the entire "providers never connect" failure class
+
+**Build 3 — V3 agent core + voice + reach**
+- 4-provider failover (Groq/Cerebras/NVIDIA/OpenRouter) + auto model discovery
+- Real voice (TTS), screen vision, agent-reach web reading
+- Skales docs/weather/system ports, Agent-Reach channels (GitHub/V2EX/Bilibili/Twitter)
+- Groq-first provider, real agentic tool loop, honest failures
+
+**Build 2 — Stability**
+- Fixed the companion-vanish crash, ONE window factory, real task cancellation
+- Honest agent states, Skales gecko roster, real-browser-only policy, device self-check
+- Cute companion states + proactive check-ins
+
+**Build 1 — V2 ground-up rebuild**
+- 15-layer brain architecture (Device, Task, Environment, Memory, Spatial, Capability Registry, Goal-Plan-Execute, Knowledge Graph, Workspace Context, Relationship Engine, Memory Importance, Companion Mood, Device Abstraction, Permission System, Companion Evolution)
+- Memory that learns from conversations, trust layer ("opening Edge because it's your default browser"), spatial positioning, mood-driven animations, cosmetic unlocks
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-┌─────────────── MAIN PROCESS (Electron) ───────────────┐
-│                                                        │
-│  Device Brain ──┬──► Capability Registry               │
-│                 │    ┌──► World Model                   │
-│                 │    └──► Spatial Brain                 │
-│                 ▼                                       │
-│  Task Brain ◄── Environment Brain                      │
-│     │                                                  │
-│     ▼                                                  │
-│  Tool Executor ──► Permission System                   │
-│     │                                                  │
-│     ▼                                                  │
-│  Device Abstraction (Win/Mac/Linux)                    │
-│                                                        │
-│  Memory Brain ◄── Memory Extractor (LLM)               │
-│     │                  │                                │
-│     ▼                  ▼                                │
-│  Memory Importance   Knowledge Graph                   │
-│                                                        │
-│  Relationship Engine    Workspace Context               │
-│  Companion Mood         Companion Evolution             │
-│                                                        │
-│  Model Router (Groq → OpenRouter fallback)              │
-│                                                        │
-└────────────────────┬───────────────────────────────────┘
+┌──────────────── MAIN PROCESS (Electron) ────────────────┐
+│                                                         │
+│  Understanding Engine (10-stage pipeline)               │
+│        │ structured understanding object                │
+│        ▼                                                │
+│  Action Planner ──► Permission Manager ──► Action Engine│
+│                                             │           │
+│                                             ▼           │
+│                                     Device Controller   │
+│              (apps · sites · screen · files · verify)   │
+│                                                         │
+│  Model Router: Groq → Cerebras → NVIDIA → Gemini        │
+│                → OpenRouter → Ollama (offline)          │
+│  Voice Chain: Groq TTS → Edge Neural → Windows SAPI     │
+│  Device Knowledge Layer (diff-only, <50ms lookups)      │
+│  Memory Brain + Knowledge Graph + Relationship DNA      │
+│  Doctor + Health Probe + Structured Failure Reports     │
+│                                                         │
+└────────────────────┬────────────────────────────────────┘
                      │ IPC (typed bridge)
-┌────────────────────▼───────────────────────────────────┐
-│              RENDERER (React + Vite)                    │
-│                                                        │
-│  App.tsx (state machine: idle→open→closing→history)    │
-│    ├── TopBar (companion switch, model, settings)       │
-│    ├── ChatLayout (full-width, smooth scroll)           │
-│    ├── ChatInput (single input, auto-detect intent)     │
-│    ├── Companion (mood-driven animation + cosmetics)    │
-│    ├── SettingsPanel (5 tabs: general/device/memory/    │
-│    │                  dna/progression)                   │
-│    └── ScanOverlay (first-launch scan animation)        │
-│                                                        │
-└────────────────────────────────────────────────────────┘
+┌────────────────────▼────────────────────────────────────┐
+│               RENDERER (React + Vite)                   │
+│  Companion (6, mood-driven) · Chatbox (themed, opaque)  │
+│  TopBar · SettingsPanel (AI Brain/Doctor/Appearance/    │
+│  Device/Memory/DNA/Progression) · ActionApprovalPanel   │
+└─────────────────────────────────────────────────────────┘
 ```
 
----
-
-## 📁 Project Structure
+## 📁 Project structure
 
 ```
 Quip/
+├── run-quip.cmd                  # ⭐ Double-click launcher (install + build + run)
+├── install-desktop-trigger.cmd   # Desktop trigger installer
+├── .env.example                  # API key template (copy → .env)
 ├── electron/
-│   ├── main.ts                    # Bootstrap orchestrator + IPC hub
-│   ├── preload.ts                 # Secure bridge to renderer
-│   ├── shared.ts                  # IPC channels + types
-│   ├── brains/
-│   │   ├── device-brain.ts        # Device discovery
-│   │   ├── capability-registry.ts # Abstract→concrete mapping
-│   │   ├── task-brain.ts          # Intent + planning
-│   │   ├── environment-brain.ts   # Runtime monitoring
-│   │   ├── spatial-brain.ts       # Positioning
-│   │   ├── world-model.ts         # Can/cannot-do
-│   │   ├── tool-executor.ts       # Safe/medium/dangerous
-│   │   ├── memory-brain.ts        # Persistent memory
-│   │   ├── memory-extractor.ts    # LLM compression + KG extraction
-│   │   ├── memory-importance.ts   # Scoring + pruning
-│   │   ├── knowledge-graph.ts     # Entity graph
-│   │   ├── workspace-context.ts   # Active session tracking
-│   │   ├── relationship-engine.ts # Adaptive communication style
-│   │   ├── companion-mood.ts      # Dynamic emotional state
-│   │   └── companion-evolution.ts # Cosmetic unlocks
-│   └── system/
-│       ├── bootstrap.ts           # One-click startup
-│       ├── model-router.ts        # Groq→OpenRouter fallback
-│       └── permission-system.ts   # Trust gating
-├── src/
-│   ├── App.tsx                    # Layout + toggle state machine
-│   ├── components/                # 10 UI components
-│   ├── hooks/                     # useChat, useSpatialLayout, etc.
-│   ├── lib/                       # storage, companion-config
-│   └── types/                     # Full type system
-├── github-panel.html              # Standalone PAT-based push panel
-├── docs/                          # Architecture docs
-├── .env.example                   # Template for API keys
-└── package.json
+│   ├── main.ts                   # Bootstrap + window factory + IPC hub
+│   ├── preload.ts                # Secure typed bridge
+│   ├── shared.ts                 # IPC channel registry
+│   ├── engine/                   # Understanding + intent parser + planner
+│   ├── brains/                   # 15-layer V2 brain architecture
+│   └── system/                   # Model router, permissions, app updates,
+│                                 #   TTS chain, desktop shortcut, doctor
+├── src/                          # React renderer (components, hooks, lib, types)
+│   ├── lib/theme.ts              # 10-theme system
+│   └── lib/companion-config.ts   # 6-companion roster
+├── tests/                        # 372 tests (npm test)
+└── docs/                         # ENGINEERING-REPORT.md + validation checklist
 ```
 
 ---
 
-## ⚙️ Settings
+## 🔒 Privacy & security
 
-Open settings from the **gear icon** in the top bar. Five tabs:
+- **All memory is local** — stored in your app data folder, never sent to any cloud
+- **API keys stay in the main process** — the renderer never sees them
+- **No telemetry** — no analytics, no tracking
+- **Permission gates** — Safe / Medium / Dangerous action classes with an approval panel
+- **You're in control** — view, pin, forget, or clear memories anytime; quit only when you say so
 
-### General
-- Switch companion (Pix / Kai / Zee)
-- View active AI model
-
-### Device
-- Full device profile (OS, CPU, RAM, storage, displays)
-- List of detected apps
-- Rescan button
-
-### Memory
-- View all memories Quip has learned
-- **Pin** important memories (never decay)
-- **Forget** individual memories
-- **Prune** low-importance memories
-
-### Communication DNA
-- See your communication style profile:
-  - Preferred response length
-  - Formality level
-  - Emoji usage frequency
-  - Humor level
-- Top topics you discuss
-- Reset button
-
-### Progression
-- Per-companion depth score (0-100%)
-- Stats: conversations, messages, tasks, memories
-- Unlocked cosmetics (scarves, stars, badges)
-
----
-
-## 🔒 Privacy & Security
-
-- **All memory is local** — stored in your app data folder, never sent to cloud
-- **API keys stay in main process** — renderer never sees them
-- **No telemetry** in V2 — no analytics, no tracking
-- **Workspace context is in-memory only** — never persisted, never sent raw to LLM
-- **You're in control** — view, pin, forget, or clear all memories anytime
-
----
-
-## 🛠️ Tech Stack
+## 🛠️ Tech stack
 
 | Layer | Technology |
 |-------|-----------|
-| Desktop framework | Electron 31 |
-| UI framework | React 18 + TypeScript 5 |
-| Build tool | Vite 5 |
-| Styling | TailwindCSS 3 (white/aqua/pink theme) |
-| Animations | Framer Motion 11 |
-| Markdown | react-markdown + remark-gfm |
-| AI providers | Groq (primary) + OpenRouter (fallback) |
-| Storage | Local JSON files (future: SQLite) |
+| Desktop | Electron 31 |
+| UI | React 18 + TypeScript 5 |
+| Build | Vite 5 + TailwindCSS 3 |
+| Animation | Framer Motion 11 |
+| AI | Groq · Cerebras · NVIDIA · Gemini · OpenRouter · Ollama |
+| Voice | Groq TTS · Edge Neural · Windows SAPI |
+| Vision | Groq / OpenRouter vision models on your existing keys |
+| Tests | Node test runner — 412 tests |
 
----
+## 🗺️ Roadmap
 
-## 🎨 Design Philosophy
-
-**Style:** Apple × Arc × Linear
-
-- **Clarity** — generous whitespace, clear hierarchy
-- **Depth** — glass effects, soft shadows, layered transparency
-- **Motion** — smooth, spring-based, 200-300ms transitions
-- **Color** — white base, aqua `#6FD6FF` primary, pink `#FF9FEF` accent
-- **Calm** — never frantic, never cluttered, always premium
-
----
-
-## 📝 Roadmap
-
-### V1 (Current) ✅
-- 15-layer brain architecture
-- Memory compression + Knowledge Graph extraction
-- Companion toggle fix (open→close→history)
-- Spatial Brain adaptive positioning
-- Settings with 5 tabs
-- Mood-driven animations + cosmetic unlocks
-
-### V1.5 (Next)
-- Task Brain slow-path (LLM decomposition for complex commands)
-- Goal-Plan-Execute re-plan-on-failure state machine
-- Formal Device Abstraction Layer
-- Dangerous action countdown UI
-- Data export (JSON)
-
-### V2 (Future)
-- Voice input/output
-- Mobile companion (React Native)
-- Skill modules (Mail, Coding, Research, Study, Social, Travel)
-- Companion marketplace (premium companions)
-- Timeline Brain (past/present/future context)
-- Reflection layer (weekly insights)
-
----
+- **Next** — sentence-level voice streaming, expanded Agent Reach device control
+- **Later** — skill modules (Mail, Coding, Research, Study, Social, Travel), timeline brain, weekly reflection insights, companion evolution cosmetics
 
 ## 🤝 Contributing
 
-This is a personal project by **Dhruv Sharma**, but feedback and suggestions are welcome! Open an issue on [GitHub](https://github.com/whodhruv7/Quip/issues).
-
----
-
-## 📄 License
-
-UNLICENSED — personal use only. All rights reserved.
-
----
+Personal project by **Dhruv Sharma**, but feedback and issues are welcome: https://github.com/whodhruv7/Quip/issues
 
 ## 👨‍💻 Author
 
@@ -348,10 +368,5 @@ UNLICENSED — personal use only. All rights reserved.
 - 🌐 Website: [heydhruv.vercel.app](https://heydhruv.vercel.app)
 - 📸 Instagram: [@who_dhruv7](https://instagram.com/who_dhruv7)
 - 💻 GitHub: [@whodhruv7](https://github.com/whodhruv7)
-- 📦 Repository: [Quip](https://github.com/whodhruv7/Quip)
 
 > *"Quip is not a chatbot, and not just an agent. It is a Context Engine wrapped inside a companion."*
-
----
-
-_Quip V2 — Built for emotional quality over feature quantity._
