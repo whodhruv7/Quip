@@ -76,6 +76,7 @@ import { probeNetworkPath, buildVerdict, SUGGESTION_COPY } from "./system/brain-
 import { autoMigrateModel, looksLikeModelRejection } from "./system/model-health";
 import { trimHistory, assembleSections, type PromptSection } from "./system/prompt-budget";
 import { findEnvConflicts } from "./system/env-load";
+import { fetchUpdates } from "./system/app-updates";
 import { clampRect } from "./window-geometry";
 
 import { ensureProfile, loadProfile } from "./brains/device-brain";
@@ -238,6 +239,24 @@ function clampWindowIntoView(win: BrowserWindow) {
     win.setPosition(c.x, c.y, false);
     if (windowModes.get(win.id) !== "full") writePosition(c.x, c.y);
   }
+}
+
+// ── Brand icon (the Quip logo, processed with clean rounded cuts) ──────────
+// Dev serves it from public/; a packaged build has it in dist/ (vite copies
+// public/* into the build). Missing file → empty image, callers fall back.
+function quipWindowIcon(): Electron.NativeImage {
+  for (const base of [app.getAppPath(), path.join(app.getAppPath(), "dist"), __dirname]) {
+    try {
+      const p = path.join(base, "quip-icon.png");
+      if (fs.existsSync(p)) {
+        const img = nativeImage.createFromPath(p);
+        if (!img.isEmpty()) return img;
+      }
+    } catch {
+      /* try the next base */
+    }
+  }
+  return nativeImage.createEmpty();
 }
 
 // ---------------------------------------------------------------------------
@@ -545,17 +564,21 @@ function buildSystemPrompt(userMessage?: string, companionId: "pix" | "kai" | "r
       "(.docx), Excel (.xlsx) and PowerPoint (.pptx) files, live system status (CPU/RAM/" +
       "disk/battery), network + Wi-Fi status, speak replies OUT LOUD (you have a real " +
       "voice), read GitHub repos, V2EX, Bilibili search, and single tweets by link, " +
-      "read Reddit/YouTube/RSS/web pages directly, and run shell commands (with approval)."
+      "read Reddit/YouTube/RSS/web pages directly, run shell commands (with approval), " +
+      "and open any named website — Gmail, Google Calendar, Drive, ChatGPT, Gemini, " +
+      "YouTube, Instagram and more — for a specific account if the user names one " +
+      "(e.g. 'open my google calendar of gmail dhruv@gmail.com')."
   );
   push(
     "cannot",
     2,
     "What you CANNOT do (say so honestly, never fake it): send Telegram/WhatsApp/Discord " +
-      "messages as bots, send emails directly (you CAN open a compose window), Google " +
-      "Calendar/image/video generation (no keys wired), scan files with VirusTotal, see " +
-      "or control phones, or search all of X/Twitter (only single tweets by link). " +
-      "When the user asks for these, say exactly what's missing and offer the nearest " +
-      "thing you can do."
+      "messages as bots, send emails directly (you CAN open a Gmail/WhatsApp compose window " +
+      "in the browser), edit Google Calendar EVENTS through an API (you CAN open the " +
+      "Calendar/Gmail/Drive website itself, for any Google account the user names), " +
+      "generate images or videos, scan files with VirusTotal, see or control phones, or " +
+      "search all of X/Twitter (only single tweets by link). When the user asks for these, " +
+      "say exactly what's missing and offer the nearest thing you can do."
   );
 
   // Token budget ≈ 3.5k chars (≈900 tokens): identity/rules always survive;
@@ -600,6 +623,7 @@ function createWindow(companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | 
     alwaysOnTop: true,
     show: true,
     backgroundColor: "#00000000",
+    icon: quipWindowIcon(),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -745,12 +769,17 @@ function showFromTray() {
 }
 
 function createTray() {
-  const icon = nativeImage.createFromBuffer(
-    Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAO0lEQVR4nO3OQQ0AIAwEMP7Z36EBcZJmBEwQ1kYSYUdA1uT+rz0AAAAAAAAAAAAAAAAAAAAAAAAAAL51NekDHNd7rTAAAAAASUVORK5CYII=",
-      "base64"
-    )
-  );
+  // The real Quip logo (rounded-cut 256px PNG) — falls back to a calm dot if
+  // the asset is somehow missing so the tray ALWAYS exists.
+  let icon = quipWindowIcon();
+  if (icon.isEmpty()) {
+    icon = nativeImage.createFromBuffer(
+      Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAO0lEQVR4nO3OQQ0AIAwEMP7Z36EBcZJmBEwQ1kYSYUdA1uT+rz0AAAAAAAAAAAAAAAAAAAAAAAAAAL51NekDHNd7rTAAAAAASUVORK5CYII=",
+        "base64"
+      )
+    );
+  }
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
   tray.setToolTip("Quip — AI Companion");
   tray.on("click", () => showFromTray());
@@ -1747,6 +1776,13 @@ ipcMain.handle(IPC.GET_CONNECTION_JOURNAL, () => connectionJournal.all());
 
 // Structured execution log — the per-action evidence trail (spec Phase 2).
 ipcMain.handle(IPC.GET_ACTION_LOG, () => executionLog.recent(60));
+
+// Settings → Appearance → "Fetch Updates": fetch + fast-forward the running
+// repo, with an honest plain-language result (offline / dirty tree / not-a-repo
+// are reported, never faked as "updated").
+ipcMain.handle(IPC.APP_FETCH_UPDATES, async () => {
+  return fetchUpdates(app.getAppPath());
+});
 
 ipcMain.handle(IPC.GET_TRANSPORT_SETTING, () => ({
   mode: ((): "auto" | "net" | "node" => {

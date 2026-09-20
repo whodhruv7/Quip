@@ -415,7 +415,7 @@ export default function App() {
                 flexShrink: 0,
                 fontSize: 10.5,
                 fontWeight: 600,
-                color: "#6b7280",
+                color: "rgb(var(--chrome-soft))",
                 background: "rgba(0,0,0,0.05)",
                 border: "none",
                 borderRadius: 7,
@@ -591,7 +591,7 @@ export default function App() {
                     fontSize: 10,
                     fontWeight: 500,
                     color: theme.primary,
-                    background: "rgba(255,255,255,0.95)",
+                    background: "rgb(var(--chrome-bg) / 0.95)",
                     padding: "2px 8px",
                     borderRadius: 10,
                     boxShadow: `0 2px 8px ${theme.primary}18`,
@@ -774,7 +774,7 @@ export default function App() {
                   >
                     {theme.name}
                   </div>
-                  <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>
+                  <div style={{ fontSize: 12, color: "rgb(var(--chrome-soft))", marginTop: 2 }}>
                     {theme.subtitle}
                   </div>
                 </div>
@@ -834,7 +834,7 @@ export default function App() {
               right: 20,
               zIndex: 200,
               pointerEvents: "none",
-              background: "rgba(255,255,255,0.95)",
+              background: "rgb(var(--chrome-bg) / 0.95)",
               backdropFilter: "blur(20px)",
               WebkitBackdropFilter: "blur(20px)",
               borderRadius: 12,
@@ -848,10 +848,10 @@ export default function App() {
           >
             <span style={{ fontSize: 18 }}>✨</span>
             <div style={{ display: "flex", flexDirection: "column" }}>
-              <span style={{ fontSize: 11, fontWeight: 600, color: "#111" }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: "rgb(var(--chrome-text))" }}>
                 New unlock!
               </span>
-              <span style={{ fontSize: 11, color: "#6b7280" }}>
+              <span style={{ fontSize: 11, color: "rgb(var(--chrome-soft))" }}>
                 {unlockToast}
               </span>
             </div>

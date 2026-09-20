@@ -127,14 +127,27 @@ export const APP_HINTS: Record<string, string> = {
 export const SITE_HINTS: Record<string, { url: string; label: string }> = {
   youtube: { url: "https://www.youtube.com", label: "YouTube" },
   yt: { url: "https://www.youtube.com", label: "YouTube" },
+  "youtube studio": { url: "https://studio.youtube.com", label: "YouTube Studio" },
   "youtube music": { url: "https://music.youtube.com", label: "YouTube Music" },
   gmail: { url: "https://mail.google.com", label: "Gmail" },
   mail: { url: "https://mail.google.com", label: "Gmail" },
   email: { url: "https://mail.google.com", label: "Gmail" },
+  "google calendar": { url: "https://calendar.google.com", label: "Google Calendar" },
+  calendar: { url: "https://calendar.google.com", label: "Google Calendar" },
+  gcal: { url: "https://calendar.google.com", label: "Google Calendar" },
+  gemini: { url: "https://gemini.google.com", label: "Gemini" },
+  meet: { url: "https://meet.google.com", label: "Google Meet" },
+  "google meet": { url: "https://meet.google.com", label: "Google Meet" },
+  sheets: { url: "https://sheets.google.com", label: "Google Sheets" },
+  slides: { url: "https://slides.google.com", label: "Google Slides" },
+  keep: { url: "https://keep.google.com", label: "Google Keep" },
+  photos: { url: "https://photos.google.com", label: "Google Photos" },
+  "google photos": { url: "https://photos.google.com", label: "Google Photos" },
+  "google account": { url: "https://myaccount.google.com", label: "Google Account" },
   google: { url: "https://www.google.com", label: "Google" },
   github: { url: "https://github.com", label: "GitHub" },
-  chatgpt: { url: "https://chat.openai.com", label: "ChatGPT" },
-  openai: { url: "https://chat.openai.com", label: "ChatGPT" },
+  chatgpt: { url: "https://chatgpt.com", label: "ChatGPT" },
+  openai: { url: "https://chatgpt.com", label: "ChatGPT" },
   claude: { url: "https://claude.ai", label: "Claude" },
   whatsapp: { url: "https://web.whatsapp.com", label: "WhatsApp" },
   instagram: { url: "https://www.instagram.com", label: "Instagram" },
@@ -150,10 +163,58 @@ export const SITE_HINTS: Record<string, { url: string; label: string }> = {
   "google drive": { url: "https://drive.google.com", label: "Google Drive" },
   docs: { url: "https://docs.google.com", label: "Google Docs" },
   "google docs": { url: "https://docs.google.com", label: "Google Docs" },
-  calendar: { url: "https://calendar.google.com", label: "Calendar" },
   maps: { url: "https://www.google.com/maps", label: "Maps" },
   perplexity: { url: "https://www.perplexity.ai", label: "Perplexity" },
+  spotify: { url: "https://open.spotify.com", label: "Spotify" },
+  canva: { url: "https://www.canva.com", label: "Canva" },
+  amazon: { url: "https://www.amazon.in", label: "Amazon" },
+  flipkart: { url: "https://www.flipkart.com", label: "Flipkart" },
+  "stack overflow": { url: "https://stackoverflow.com", label: "Stack Overflow" },
 };
+
+/** Google properties that accept an account switch (authuser / /u/<email>) —
+ *  "open my google calendar of gmail dhruv@gmail.com" opens THAT account. */
+export const ACCOUNT_SITE_KEYS = new Set([
+  "gmail",
+  "mail",
+  "email",
+  "calendar",
+  "google calendar",
+  "gcal",
+  "drive",
+  "google drive",
+  "docs",
+  "google docs",
+  "sheets",
+  "slides",
+  "keep",
+  "photos",
+  "google photos",
+  "meet",
+  "google meet",
+  "gemini",
+  "google account",
+]);
+
+const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i;
+
+/** Pure: pull the FIRST email address out of a clause (or null). */
+export function extractEmail(text: string): string | null {
+  const m = text.match(EMAIL_RE);
+  return m ? m[0].toLowerCase() : null;
+}
+
+/** Pure: a Google-site URL that opens under the given account.
+ *  mail.google.com uses the /mail/u/<email>/ route; everything else takes
+ *  the ?authuser=<email> parameter. No email → the URL is returned as-is.
+ *  The email goes in raw ('@' is legal in URLs and Google handles both). */
+export function accountSiteUrl(url: string, email: string | null): string {
+  if (!email) return url;
+  if (/^https:\/\/mail\.google\.com/i.test(url)) {
+    return `https://mail.google.com/mail/u/${email}/`;
+  }
+  return url + (url.includes("?") ? "&" : "?") + `authuser=${email}`;
+}
 
 const FOLDER_HINTS: Record<string, string> = {
   downloads: "downloads",
@@ -295,11 +356,19 @@ function routeOpenClause(clause: string): TaskStep | null {
   const mentionsFolder = /\b(folder|directory)\b/.test(rest);
   const site = mentionsFolder ? null : matchHint(rest, SITE_HINTS);
   if (site) {
+    // Account-aware: "open my google calendar of gmail dhruv@gmail.com" →
+    // open THAT Google account's calendar, never the default one.
+    const email = ACCOUNT_SITE_KEYS.has(site.key) ? extractEmail(rest) : null;
+    const url = accountSiteUrl(site.value.url, email);
     return {
       action: "open_website",
       target: site.key,
-      params: { url: site.value.url, label: site.value.label },
-      description: `Open ${site.value.label}`,
+      params: {
+        url,
+        label: site.value.label,
+        ...(email ? { account: email } : {}),
+      },
+      description: `Open ${site.value.label}${email ? ` (${email})` : ""}`,
     };
   }
 

@@ -19,6 +19,46 @@
   --quip-accent-2: 255, 159, 239;    /* pink */
   --quip-glow: 111, 214, 255;
   --quip-radius: 28px;
+
+  /* Settings/panel chrome (space-separated RGB — use rgb(var(--x) / alpha)).
+     Light chrome for light themes; dark chrome for violet/ink below. */
+  --chrome-bg: 255 255 255;
+  --chrome-text: 17 18 22;
+  --chrome-soft: 107 114 128;
+  --chrome-idle: 156 163 175;
+  --chrome-line: 10 11 15;
+  --chrome-brand: 109 91 224;        /* deep brand violet, white-text safe */
+}
+
+[data-theme="violet"],
+[data-theme="black"] {
+  --chrome-bg: 21 21 27;
+  --chrome-text: 242 241 248;
+  --chrome-soft: 164 162 184;
+  --chrome-idle: 132 134 156;
+  --chrome-line: 255 255 255;
+  --chrome-brand: 139 124 248;       /* logo violet */
+}
+
+[data-theme="aqua"] {
+  --chrome-brand: 14 116 168;
+}
+
+[data-theme="pink"] {
+  --chrome-brand: 192 68 173;
+}
+
+/* Quip BRAND theme — the palette of the logo: ink black canvas, violet glow,
+   soft blue sparkle. Dark surfaces get their own line color. */
+[data-theme="violet"] {
+  --quip-bg: 21, 21, 27;
+  --quip-bg-soft: 29, 29, 38;
+  --quip-text: 242, 241, 248;
+  --quip-text-soft: 164, 162, 184;
+  --quip-line: 255, 255, 255;
+  --quip-accent: 139, 124, 248;      /* logo violet */
+  --quip-accent-2: 94, 168, 255;     /* logo blue sparkle */
+  --quip-glow: 139, 124, 248;
 }
 
 [data-theme="aqua"] {

@@ -22,10 +22,10 @@ export function CompanionSwitch({ activeId, onSelect }: CompanionSwitchProps) {
             onClick={() => onSelect(c.id)}
             className="relative flex flex-1 flex-col items-center gap-2 rounded-xl p-3 transition-all"
             style={{
-              background: active ? `${c.primary}10` : "rgba(0,0,0,0.02)",
+              background: active ? `${c.primary}10` : "rgb(var(--chrome-line) / 0.03)",
               border: active
                 ? `1.5px solid ${c.primary}44`
-                : "1.5px solid rgba(0,0,0,0.04)",
+                : "1.5px solid rgb(var(--chrome-line) / 0.06)",
             }}
           >
             {/* Avatar */}
@@ -48,7 +48,7 @@ export function CompanionSwitch({ activeId, onSelect }: CompanionSwitchProps) {
                   width: 16,
                   height: 16,
                   borderRadius: "50%",
-                  background: "rgba(255,255,255,0.95)",
+                  background: "rgb(var(--chrome-bg) / 0.95)",
                 }}
               />
             </motion.div>

@@ -80,9 +80,9 @@ function MessageBase({ message, index = 0, onRetry }: { message: ChatMessageType
                   border: "1px solid rgba(200,50,50,0.12)",
                 }
               : {
-                  background: "rgba(255,255,255,0.85)",
+                  background: "rgb(var(--chrome-bg) / 0.85)",
                   color: "#111111",
-                  border: "1px solid rgba(0,0,0,0.04)",
+                  border: "1px solid rgb(var(--chrome-line) / 0.06)",
                   backdropFilter: "blur(12px)",
                   WebkitBackdropFilter: "blur(12px)",
                 }

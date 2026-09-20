@@ -108,7 +108,7 @@ export function ChatWelcome({ companionId, onSuggestionClick, onOpenKeySetup }: 
         style={{
           fontSize: 18,
           fontWeight: 600,
-          color: "#111",
+          color: "rgb(var(--chrome-text))",
           marginBottom: 4,
           textAlign: "center",
         }}
@@ -186,7 +186,7 @@ export function ChatWelcome({ companionId, onSuggestionClick, onOpenKeySetup }: 
             {wizardOpen && (
               <div
                 className="flex w-full max-w-[280px] flex-col gap-2 rounded-xl px-3 py-3"
-                style={{ border: "1px solid rgba(245,158,11,0.3)", background: "rgba(255,255,255,0.9)" }}
+                style={{ border: "1px solid rgba(245,158,11,0.3)", background: "rgb(var(--chrome-bg) / 0.9)" }}
               >
                 <span style={{ fontSize: 10.5, color: "#374151" }}>
                   1. Get a free key at <b>console.groq.com/keys</b> (30s) · 2. Paste it below:
@@ -200,7 +200,7 @@ export function ChatWelcome({ companionId, onSuggestionClick, onOpenKeySetup }: 
                   spellCheck={false}
                   autoComplete="off"
                   className="w-full rounded-lg px-2.5 py-2 outline-none"
-                  style={{ fontSize: 11.5, border: "1px solid rgba(0,0,0,0.1)", color: "#111" }}
+                  style={{ fontSize: 11.5, border: "1px solid rgb(var(--chrome-line) / 0.12)", color: "rgb(var(--chrome-text))" }}
                 />
                 <button
                   onClick={handleWizardSave}
@@ -223,7 +223,7 @@ export function ChatWelcome({ companionId, onSuggestionClick, onOpenKeySetup }: 
                 )}
                 <button
                   onClick={onOpenKeySetup}
-                  style={{ fontSize: 9.5, color: "#6b7280", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}
+                  style={{ fontSize: 9.5, color: "rgb(var(--chrome-soft))", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}
                 >
                   More providers (Gemini, NVIDIA…) in Settings
                 </button>
@@ -249,8 +249,8 @@ export function ChatWelcome({ companionId, onSuggestionClick, onOpenKeySetup }: 
               fontSize: 12,
               fontWeight: 500,
               color: "#374151",
-              background: "rgba(255,255,255,0.70)",
-              border: "1px solid rgba(0,0,0,0.05)",
+              background: "rgb(var(--chrome-bg) / 0.70)",
+              border: "1px solid rgb(var(--chrome-line) / 0.07)",
               boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
             }}
           >

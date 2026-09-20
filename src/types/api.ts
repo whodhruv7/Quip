@@ -76,6 +76,8 @@ export interface SystemAPI {
   onCosmeticUnlock: (cb: (unlock: unknown) => void) => () => void;
   getModelStatus: () => Promise<ModelRouterStatus | null>;
   onBootstrapProgress: (cb: (p: BootstrapProgress) => void) => () => void;
+  /** Settings → Appearance → Fetch Updates (in-app repo updater). */
+  fetchUpdates: () => Promise<{ ok: boolean; behind: number; pulled: boolean; message: string }>;
 }
 
 export type ProviderIdUI = "openrouter" | "groq" | "cerebras" | "nvidia" | "gemini" | "ollama";

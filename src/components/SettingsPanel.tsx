@@ -15,6 +15,7 @@ import type { CompanionId, DeviceProfile, UserKnowledge } from "@/types";
 import type { ModelRouterStatus } from "@/types/models";
 import { CompanionSwitch } from "./CompanionSwitch";
 import { ConfirmModal } from "./ConfirmModal";
+import { THEMES, applyTheme, resolveTheme, type ThemeId } from "../lib/theme";
 
 interface SettingsPanelProps {
   open: boolean;
@@ -24,7 +25,7 @@ interface SettingsPanelProps {
   initialTab?: Tab;
 }
 
-type Tab = "ai" | "general" | "desktop" | "device" | "memory" | "dna" | "progression";
+type Tab = "ai" | "appearance" | "general" | "desktop" | "device" | "memory" | "dna" | "progression";
 
 type ProviderId = "openrouter" | "groq" | "cerebras" | "nvidia" | "gemini" | "ollama";
 
@@ -110,6 +111,10 @@ export function SettingsPanel({
   // AI Brain tab state
   const [modelStatus, setModelStatus] = useState<ModelRouterStatus | null>(null);
   const [provider, setProvider] = useState<ProviderId>("groq");
+  // Appearance tab state
+  const [theme, setTheme] = useState<ThemeId>(() => resolveTheme(null));
+  const [updating, setUpdating] = useState(false);
+  const [updateResult, setUpdateResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("");
   const [testing, setTesting] = useState(false);
@@ -181,7 +186,33 @@ export function SettingsPanel({
       .getCheckInsEnabled()
       .then(setCheckInsEnabled)
       .catch(() => {});
+    // Current saved theme (localStorage → applied at boot in main.tsx).
+    try {
+      setTheme(resolveTheme(localStorage.getItem("quip-theme")));
+    } catch {
+      /* keep default */
+    }
   }, [open]);
+
+  /** Appearance: switch the whole panel chrome live + persist the choice. */
+  const handleSetTheme = (id: ThemeId) => {
+    setTheme(id);
+    applyTheme(id);
+  };
+
+  /** Appearance: fetch the repo's updates and report honestly. */
+  const handleFetchUpdates = async () => {
+    setUpdating(true);
+    setUpdateResult(null);
+    try {
+      const r = await window.quip.fetchUpdates();
+      setUpdateResult({ ok: r.ok && !r.pulled ? true : r.ok, message: r.message });
+    } catch {
+      setUpdateResult({ ok: false, message: "The update check couldn't run — try again." });
+    } finally {
+      setUpdating(false);
+    }
+  };
 
   /** Probe BOTH providers for real (main process) and auto-select the one
    *  that is genuinely CONNECTED — the user never has to guess. */
@@ -422,7 +453,7 @@ export function SettingsPanel({
       exit={{ opacity: 0 }}
       className="absolute inset-0 z-40 flex flex-col"
       style={{
-        background: "rgba(255,255,255,0.92)",
+        background: "rgb(var(--chrome-bg) / 0.94)",
         backdropFilter: "blur(24px)",
         WebkitBackdropFilter: "blur(24px)",
       }}
@@ -430,9 +461,9 @@ export function SettingsPanel({
       {/* Header */}
       <div
         className="flex items-center justify-between px-4 py-3"
-        style={{ borderBottom: "1px solid rgba(0,0,0,0.04)" }}
+        style={{ borderBottom: "1px solid rgb(var(--chrome-line) / 0.07)" }}
       >
-        <h3 style={{ fontSize: 14, fontWeight: 600, color: "#111" }}>Settings</h3>
+        <h3 style={{ fontSize: 14, fontWeight: 600, color: "rgb(var(--chrome-text))" }}>Settings</h3>
         <button
           onClick={onClose}
           className="flex h-7 w-7 items-center justify-center rounded-lg text-quip-gray transition-colors hover:bg-black/[0.04]"
@@ -445,15 +476,15 @@ export function SettingsPanel({
 
       {/* Tabs */}
       <div className="flex gap-1 px-4 py-2 overflow-x-auto">
-        {(["ai", "general", "desktop", "device", "memory", "dna", "progression"] as Tab[]).map((t) => (
+        {(["ai", "appearance", "general", "desktop", "device", "memory", "dna", "progression"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className="rounded-lg px-3 py-1.5 text-[11px] font-medium capitalize transition-all whitespace-nowrap"
             style={
               tab === t
-                ? { background: "rgba(0,0,0,0.06)", color: "#111" }
-                : { color: "#9ca3af" }
+                ? { background: "rgba(139,124,248,0.16)", color: "rgb(var(--chrome-text))" }
+                : { color: "rgb(var(--chrome-idle))" }
             }
           >
             {t === "dna" ? "Communication DNA" : t === "ai" ? "AI Brain" : t}
@@ -488,10 +519,10 @@ export function SettingsPanel({
                     style={{ background: modelStatus.healthy ? "#22c55e" : "#ef4444" }}
                   />
                   <div className="flex flex-col" style={{ minWidth: 0 }}>
-                    <span style={{ fontSize: 11.5, fontWeight: 600, color: "#111" }}>
+                    <span style={{ fontSize: 11.5, fontWeight: 600, color: "rgb(var(--chrome-text))" }}>
                       {modelStatus.active?.label ?? "No provider"}
                     </span>
-                    <span style={{ fontSize: 9.5, color: "#6b7280" }}>
+                    <span style={{ fontSize: 9.5, color: "rgb(var(--chrome-soft))" }}>
                       {modelStatus.healthy ? "Connected and ready" : "No working key yet"}
                     </span>
                   </div>
@@ -499,19 +530,19 @@ export function SettingsPanel({
               </div>
             )}
 
-            <div style={{ fontSize: 11, color: "#6b7280" }}>
+            <div style={{ fontSize: 11, color: "rgb(var(--chrome-soft))" }}>
               Paste a free API key below — Quip saves it for you. No file editing needed.
             </div>
 
             {/* ONE-CLICK CHECKUP — real probes of network + every provider + voices */}
             <div
               className="rounded-xl px-3 py-2.5"
-              style={{ border: "1px solid rgba(0,0,0,0.06)", background: "rgba(0,0,0,0.015)" }}
+              style={{ border: "1px solid rgb(var(--chrome-line) / 0.09)", background: "rgb(var(--chrome-line) / 0.035)" }}
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex flex-col" style={{ minWidth: 0 }}>
-                  <span style={{ fontSize: 11.5, fontWeight: 600, color: "#111" }}>Full checkup</span>
-                  <span style={{ fontSize: 9.5, color: "#6b7280" }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 600, color: "rgb(var(--chrome-text))" }}>Full checkup</span>
+                  <span style={{ fontSize: 9.5, color: "rgb(var(--chrome-soft))" }}>
                     Tests the network path, every provider's key AND model, the voice engines — and tells you exactly what's wrong.
                   </span>
                 </div>
@@ -522,7 +553,7 @@ export function SettingsPanel({
                     fontSize: 10.5,
                     fontWeight: 700,
                     color: "#fff",
-                    background: doctorRunning ? "rgba(0,0,0,0.25)" : "#0c6b8f",
+                    background: doctorRunning ? "rgb(var(--chrome-line) / 0.25)" : "rgb(var(--chrome-brand))",
                     border: "none",
                     borderRadius: 8,
                     padding: "6px 12px",
@@ -541,7 +572,7 @@ export function SettingsPanel({
                       fontSize: 10.5,
                       fontWeight: 600,
                       color: doctorReport.network?.ok === false ? "#b91c1c" : "#111",
-                      background: "rgba(0,0,0,0.03)",
+                      background: "rgb(var(--chrome-line) / 0.05)",
                     }}
                   >
                     {doctorReport.verdict}
@@ -555,12 +586,12 @@ export function SettingsPanel({
                     </div>
                   )}
                   {(doctorReport.suggestions ?? []).slice(0, 6).map((s: string, i: number) => (
-                    <div key={i} style={{ fontSize: 9.5, color: "#374151" }}>• {s}</div>
+                    <div key={i} style={{ fontSize: 9.5, color: "rgb(var(--chrome-text))" }}>• {s}</div>
                   ))}
                   {(doctorReport.journal ?? []).length > 0 && (
                     <details>
-                      <summary style={{ fontSize: 9.5, color: "#6b7280", cursor: "pointer" }}>Recent connection attempts</summary>
-                      <div style={{ fontSize: 9, color: "#6b7280", whiteSpace: "pre-wrap", fontFamily: "monospace", marginTop: 4 }}>
+                      <summary style={{ fontSize: 9.5, color: "rgb(var(--chrome-soft))", cursor: "pointer" }}>Recent connection attempts</summary>
+                      <div style={{ fontSize: 9, color: "rgb(var(--chrome-soft))", whiteSpace: "pre-wrap", fontFamily: "monospace", marginTop: 4 }}>
                         {doctorReport.journal
                           .map((e: any) => `${e.ok ? "✓" : "✗"} ${new Date(e.ts).toLocaleTimeString()} ${e.provider} (${Math.round(e.latencyMs)}ms)${e.note ? ` — ${e.note}` : ""}`)
                           .join("\n")}
@@ -574,10 +605,10 @@ export function SettingsPanel({
             {/* Auto-resolve: REAL probes of both providers, honest badges */}
             <div
               className="rounded-xl px-3 py-2.5"
-              style={{ border: "1px solid rgba(0,0,0,0.06)", background: "rgba(0,0,0,0.015)" }}
+              style={{ border: "1px solid rgb(var(--chrome-line) / 0.09)", background: "rgb(var(--chrome-line) / 0.035)" }}
             >
               <div className="flex items-center justify-between gap-2">
-                <span style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: "rgb(var(--chrome-text))" }}>
                   Which provider works?
                 </span>
                 <button
@@ -586,7 +617,7 @@ export function SettingsPanel({
                   style={{
                     fontSize: 10.5,
                     fontWeight: 600,
-                    color: "#0c6b8f",
+                    color: "rgb(var(--chrome-brand))",
                     background: "rgba(111,214,255,0.12)",
                     border: "none",
                     borderRadius: 7,
@@ -605,7 +636,7 @@ export function SettingsPanel({
                         className="h-2 w-2 shrink-0 rounded-full"
                         style={{ background: s.ok ? "#22c55e" : s.configured ? "#ef4444" : "#d1d5db" }}
                       />
-                      <span style={{ fontSize: 10.5, color: "#374151", fontWeight: 600, textTransform: "capitalize" }}>
+                      <span style={{ fontSize: 10.5, color: "rgb(var(--chrome-text))", fontWeight: 600, textTransform: "capitalize" }}>
                         {s.provider}
                       </span>
                       <span style={{ fontSize: 10, color: s.ok ? "#15803d" : "#6b7280", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -622,9 +653,9 @@ export function SettingsPanel({
             {/* Provider priority + kill switches — which key is THE brain */}
             <div
               className="rounded-xl px-3 py-2.5"
-              style={{ border: "1px solid rgba(0,0,0,0.06)", background: "rgba(0,0,0,0.015)" }}
+              style={{ border: "1px solid rgb(var(--chrome-line) / 0.09)", background: "rgb(var(--chrome-line) / 0.035)" }}
             >
-              <div style={{ fontSize: 11, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "rgb(var(--chrome-text))", marginBottom: 6 }}>
                 Which key should be active?
               </div>
               <div className="flex flex-col gap-1.5">
@@ -639,7 +670,7 @@ export function SettingsPanel({
                         disabled={savingConfig || !isEnabled}
                         className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1 transition-all"
                         style={{
-                          border: `1.5px solid ${isPrimary ? "rgba(111,214,255,0.65)" : "rgba(0,0,0,0.07)"}`,
+                          border: `1.5px solid ${isPrimary ? "rgba(139,124,248,0.65)" : "rgb(var(--chrome-line) / 0.09)"}`,
                           background: isPrimary ? "rgba(111,214,255,0.08)" : "transparent",
                           cursor: isEnabled && !savingConfig ? "pointer" : "default",
                           opacity: isEnabled ? 1 : 0.45,
@@ -647,10 +678,10 @@ export function SettingsPanel({
                       >
                         <span
                           className="h-2 w-2 shrink-0 rounded-full"
-                          style={{ background: isPrimary ? "#0c6b8f" : "rgba(0,0,0,0.15)" }}
+                          style={{ background: isPrimary ? "rgb(var(--chrome-brand))" : "rgb(var(--chrome-line) / 0.14)" }}
                         />
-                        <span style={{ fontSize: 11, fontWeight: 600, color: "#111" }}>{p.name}</span>
-                        <span style={{ fontSize: 9.5, color: isPrimary ? "#0c6b8f" : "#9ca3af", whiteSpace: "nowrap" }}>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: "rgb(var(--chrome-text))" }}>{p.name}</span>
+                        <span style={{ fontSize: 9.5, color: isPrimary ? "rgb(var(--chrome-brand))" : "rgb(var(--chrome-idle))", whiteSpace: "nowrap" }}>
                           {isPrimary ? "PRIMARY" : "make primary"}
                         </span>
                         {status?.ok && (
@@ -682,12 +713,12 @@ export function SettingsPanel({
                 })}
               </div>
               {providerConfig?.visionModel && (
-                <div style={{ fontSize: 9.5, color: "#6b7280", marginTop: 6 }}>
+                <div style={{ fontSize: 9.5, color: "rgb(var(--chrome-soft))", marginTop: 6 }}>
                   Screen vision runs on {providerConfig.visionModel} — no extra key needed.
                 </div>
               )}
               {configNote && (
-                <div style={{ fontSize: 10, color: "#374151", marginTop: 6 }}>{configNote}</div>
+                <div style={{ fontSize: 10, color: "rgb(var(--chrome-text))", marginTop: 6 }}>{configNote}</div>
               )}
             </div>
 
@@ -711,12 +742,12 @@ export function SettingsPanel({
                     }}
                     className="flex-1 rounded-xl px-3 py-2.5 text-left transition-all"
                     style={{
-                      border: `1.5px solid ${provider === p.id ? "rgba(111,214,255,0.65)" : "rgba(0,0,0,0.07)"}`,
-                      background: provider === p.id ? "rgba(111,214,255,0.08)" : "rgba(0,0,0,0.015)",
+                      border: `1.5px solid ${provider === p.id ? "rgba(139,124,248,0.65)" : "rgb(var(--chrome-line) / 0.09)"}`,
+                      background: provider === p.id ? "rgba(139,124,248,0.10)" : "rgb(var(--chrome-line) / 0.035)",
                     }}
                   >
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "#111" }}>{p.name}</div>
-                    <div style={{ fontSize: 9.5, color: "#6b7280", marginTop: 1 }}>{p.hint}</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "rgb(var(--chrome-text))" }}>{p.name}</div>
+                    <div style={{ fontSize: 9.5, color: "rgb(var(--chrome-soft))", marginTop: 1 }}>{p.hint}</div>
                   </button>
                 ))}
               </div>
@@ -732,7 +763,7 @@ export function SettingsPanel({
                   href={AI_PROVIDERS.find((p) => p.id === provider)!.keyUrl}
                   target="_blank"
                   rel="noreferrer"
-                  style={{ fontSize: 10.5, color: "#0c6b8f", textDecoration: "underline" }}
+                  style={{ fontSize: 10.5, color: "rgb(var(--chrome-brand))", textDecoration: "underline" }}
                 >
                   {AI_PROVIDERS.find((p) => p.id === provider)!.localOnly ? "Get Ollama ↗" : "Get a free key ↗"}
                 </a>
@@ -755,9 +786,9 @@ export function SettingsPanel({
                 className="w-full rounded-xl px-3 py-2.5 outline-none transition-all focus:ring-2"
                 style={{
                   fontSize: 12,
-                  border: "1.5px solid rgba(0,0,0,0.08)",
+                  border: "1.5px solid rgb(var(--chrome-line) / 0.10)",
                   background: "rgba(255,255,255,0.85)",
-                  color: "#111",
+                  color: "rgb(var(--chrome-text))",
                   // @ts-expect-error CSS var
                   "--tw-ring-color": "rgba(111,214,255,0.4)",
                 }}
@@ -776,7 +807,7 @@ export function SettingsPanel({
                   style={{
                     fontSize: 10.5,
                     fontWeight: 600,
-                    color: "#0c6b8f",
+                    color: "rgb(var(--chrome-brand))",
                     background: "rgba(111,214,255,0.12)",
                     border: "none",
                     borderRadius: 7,
@@ -796,9 +827,9 @@ export function SettingsPanel({
                 className="w-full rounded-xl px-3 py-2.5 outline-none transition-all focus:ring-2"
                 style={{
                   fontSize: 12,
-                  border: "1.5px solid rgba(0,0,0,0.08)",
+                  border: "1.5px solid rgb(var(--chrome-line) / 0.10)",
                   background: "rgba(255,255,255,0.85)",
-                  color: "#111",
+                  color: "rgb(var(--chrome-text))",
                   // @ts-expect-error CSS var
                   "--tw-ring-color": "rgba(111,214,255,0.4)",
                 }}
@@ -806,7 +837,7 @@ export function SettingsPanel({
               {browsing && (
                 <div
                   className="mt-2 rounded-xl px-2.5 py-2"
-                  style={{ border: "1px solid rgba(0,0,0,0.07)", background: "rgba(255,255,255,0.7)" }}
+                  style={{ border: "1px solid rgb(var(--chrome-line) / 0.09)", background: "rgb(var(--chrome-line) / 0.04)" }}
                 >
                   {discoveredModels.length > 0 && (
                     <>
@@ -819,9 +850,9 @@ export function SettingsPanel({
                         className="mb-2 w-full rounded-lg px-2.5 py-1.5 outline-none"
                         style={{
                           fontSize: 11,
-                          border: "1px solid rgba(0,0,0,0.08)",
-                          background: "rgba(0,0,0,0.015)",
-                          color: "#111",
+                          border: "1px solid rgb(var(--chrome-line) / 0.10)",
+                          background: "rgb(var(--chrome-line) / 0.035)",
+                          color: "rgb(var(--chrome-text))",
                         }}
                       />
                       <div
@@ -853,16 +884,16 @@ export function SettingsPanel({
                                   style={{
                                     fontSize: 10.5,
                                     fontFamily: "monospace",
-                                    color: selected ? "#0c6b8f" : "#374151",
+                                    color: selected ? "rgb(var(--chrome-brand))" : "rgb(var(--chrome-text))",
                                     fontWeight: selected ? 700 : 400,
                                   }}
                                 >
                                   {m.id}
                                 </span>
                                 {selected ? (
-                                  <span style={{ fontSize: 9, fontWeight: 700, color: "#0c6b8f", whiteSpace: "nowrap" }}>IN USE</span>
+                                  <span style={{ fontSize: 9, fontWeight: 700, color: "rgb(var(--chrome-brand))", whiteSpace: "nowrap" }}>IN USE</span>
                                 ) : (
-                                  <span style={{ fontSize: 9, color: "#9ca3af", whiteSpace: "nowrap" }}>
+                                  <span style={{ fontSize: 9, color: "rgb(var(--chrome-idle))", whiteSpace: "nowrap" }}>
                                     {m.ownedBy ?? ""}
                                   </span>
                                 )}
@@ -873,12 +904,12 @@ export function SettingsPanel({
                     </>
                   )}
                   {modelBrowserNote && (
-                    <div style={{ fontSize: 10, color: "#374151", padding: "2px 4px" }}>{modelBrowserNote}</div>
+                    <div style={{ fontSize: 10, color: "rgb(var(--chrome-text))", padding: "2px 4px" }}>{modelBrowserNote}</div>
                   )}
                   {discoveredModels.length > 0 && (
                     <button
                       onClick={() => setBrowsing(false)}
-                      style={{ fontSize: 9.5, color: "#9ca3af", background: "none", border: "none", cursor: "pointer", marginTop: 4 }}
+                      style={{ fontSize: 9.5, color: "rgb(var(--chrome-idle))", background: "none", border: "none", cursor: "pointer", marginTop: 4 }}
                     >
                       Close list
                     </button>
@@ -890,14 +921,14 @@ export function SettingsPanel({
             {/* Voice — the companion SPEAKS */}
             <div
               className="rounded-xl px-3 py-2.5"
-              style={{ border: "1px solid rgba(0,0,0,0.06)", background: "rgba(0,0,0,0.015)" }}
+              style={{ border: "1px solid rgb(var(--chrome-line) / 0.09)", background: "rgb(var(--chrome-line) / 0.035)" }}
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex flex-col" style={{ minWidth: 0 }}>
-                  <span style={{ fontSize: 11.5, fontWeight: 600, color: "#111" }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 600, color: "rgb(var(--chrome-text))" }}>
                     Let Quip speak replies out loud
                   </span>
-                  <span style={{ fontSize: 9.5, color: "#6b7280" }}>
+                  <span style={{ fontSize: 9.5, color: "rgb(var(--chrome-soft))" }}>
                     Groq neural voice first — falls back to this laptop's built-in voice, so it can always talk.
                   </span>
                 </div>
@@ -928,7 +959,7 @@ export function SettingsPanel({
                         style={{
                           fontSize: 9.5,
                           fontWeight: 600,
-                          color: speakEngine === e ? "#0c6b8f" : "#6b7280",
+                          color: speakEngine === e ? "rgb(var(--chrome-brand))" : "rgb(var(--chrome-soft))",
                           background: speakEngine === e ? "rgba(111,214,255,0.14)" : "rgba(0,0,0,0.03)",
                           border: "none",
                           borderRadius: 6,
@@ -948,7 +979,7 @@ export function SettingsPanel({
                         style={{
                           fontSize: 9,
                           fontWeight: 600,
-                          color: speakVoice === v ? "#0c6b8f" : "#9ca3af",
+                          color: speakVoice === v ? "rgb(var(--chrome-brand))" : "rgb(var(--chrome-idle))",
                           background: speakVoice === v ? "rgba(111,214,255,0.14)" : "transparent",
                           border: `1px solid ${speakVoice === v ? "rgba(111,214,255,0.5)" : "rgba(0,0,0,0.06)"}`,
                           borderRadius: 6,
@@ -962,7 +993,7 @@ export function SettingsPanel({
                   </div>
                   {/* Free Edge neural voices — Hinglish reads naturally here */}
                   <div className="flex items-center gap-1.5">
-                    <span style={{ fontSize: 9, color: "#9ca3af", whiteSpace: "nowrap" }}>Free:</span>
+                    <span style={{ fontSize: 9, color: "rgb(var(--chrome-idle))", whiteSpace: "nowrap" }}>Free:</span>
                     {[["en-IN-NeerjaNeural", "Neerja (Hinglish)"], ["en-US-AriaNeural", "Aria"], ["en-US-GuyNeural", "Guy"]].map(([v, label]) => (
                       <button
                         key={v}
@@ -970,7 +1001,7 @@ export function SettingsPanel({
                         style={{
                           fontSize: 9,
                           fontWeight: 600,
-                          color: edgeVoice === v ? "#0c6b8f" : "#9ca3af",
+                          color: edgeVoice === v ? "rgb(var(--chrome-brand))" : "rgb(var(--chrome-idle))",
                           background: edgeVoice === v ? "rgba(111,214,255,0.14)" : "transparent",
                           border: `1px solid ${edgeVoice === v ? "rgba(111,214,255,0.5)" : "rgba(0,0,0,0.06)"}`,
                           borderRadius: 6,
@@ -984,19 +1015,19 @@ export function SettingsPanel({
                   </div>
                 </div>
               )}
-              {speakNote && <div style={{ fontSize: 9.5, color: "#374151", marginTop: 4 }}>{speakNote}</div>}
+              {speakNote && <div style={{ fontSize: 9.5, color: "rgb(var(--chrome-text))", marginTop: 4 }}>{speakNote}</div>}
             </div>
 
             {/* Network transport — the escape hatch when a VPN/AV breaks ONE
                 network stack (the other one usually still works). */}
             <div
               className="rounded-xl px-3 py-2.5"
-              style={{ border: "1px solid rgba(0,0,0,0.06)", background: "rgba(0,0,0,0.015)" }}
+              style={{ border: "1px solid rgb(var(--chrome-line) / 0.09)", background: "rgb(var(--chrome-line) / 0.035)" }}
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex flex-col" style={{ minWidth: 0 }}>
-                  <span style={{ fontSize: 11.5, fontWeight: 600, color: "#111" }}>Network route</span>
-                  <span style={{ fontSize: 9.5, color: "#6b7280" }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 600, color: "rgb(var(--chrome-text))" }}>Network route</span>
+                  <span style={{ fontSize: 9.5, color: "rgb(var(--chrome-soft))" }}>
                     Auto tries both stacks. Behind a VPN/proxy/antivirus, pinning the other one often fixes "can't connect".
                   </span>
                 </div>
@@ -1008,7 +1039,7 @@ export function SettingsPanel({
                       style={{
                         fontSize: 9.5,
                         fontWeight: 600,
-                        color: transport === m ? "#0c6b8f" : "#6b7280",
+                        color: transport === m ? "rgb(var(--chrome-brand))" : "rgb(var(--chrome-soft))",
                         background: transport === m ? "rgba(111,214,255,0.14)" : "rgba(0,0,0,0.03)",
                         border: "none",
                         borderRadius: 6,
@@ -1030,7 +1061,7 @@ export function SettingsPanel({
                 onClick={handleTestConnection}
                 disabled={testing}
                 className="flex-1 rounded-xl px-4 py-2.5 text-[12px] font-medium transition-all disabled:opacity-50"
-                style={{ background: "rgba(0,0,0,0.05)", color: "#111" }}
+                style={{ background: "rgb(var(--chrome-line) / 0.06)", color: "rgb(var(--chrome-text))" }}
               >
                 {testing ? "Testing…" : "Test connection"}
               </button>
@@ -1074,6 +1105,168 @@ export function SettingsPanel({
           </div>
         )}
 
+        {tab === "appearance" && (
+          <div className="flex flex-col gap-4">
+            {/* Brand hero — the Quip logo with its clean rounded cuts */}
+            <div
+              className="relative overflow-hidden rounded-2xl px-4 py-5"
+              style={{
+                background:
+                  "radial-gradient(120% 140% at 20% 0%, rgba(139,124,248,0.28) 0%, rgba(139,124,248,0.10) 42%, rgb(var(--chrome-line) / 0.04) 100%)",
+                border: "1px solid rgba(139,124,248,0.30)",
+              }}
+            >
+              <div className="flex items-center gap-4">
+                <img
+                  src="/quip-avatar.png"
+                  alt="Quip logo"
+                  draggable={false}
+                  style={{
+                    width: 76,
+                    height: 76,
+                    borderRadius: 24,
+                    boxShadow: "0 8px 28px rgba(139,124,248,0.35)",
+                    background: "#131318",
+                  }}
+                />
+                <div className="flex flex-col" style={{ minWidth: 0 }}>
+                  <span style={{ fontSize: 17, fontWeight: 700, color: "rgb(var(--chrome-text))", letterSpacing: -0.3 }}>
+                    Quip
+                  </span>
+                  <span style={{ fontSize: 10.5, color: "rgb(var(--chrome-soft))", marginTop: 2, lineHeight: 1.45 }}>
+                    Your desktop companion — one tap on the sprite opens this panel,
+                    expand any time for the full app.
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Bring Quip to the desktop — one tap, no terminal */}
+            <div
+              className="flex items-center justify-between gap-3 rounded-2xl px-4 py-4"
+              style={{
+                border: companionVisible ? "1px solid rgba(139,124,248,0.45)" : "1px solid rgb(var(--chrome-line) / 0.09)",
+                background: companionVisible ? "rgba(139,124,248,0.10)" : "rgb(var(--chrome-line) / 0.035)",
+              }}
+            >
+              <div className="flex items-center gap-3" style={{ minWidth: 0 }}>
+                <img
+                  src="/quip-avatar.png"
+                  alt=""
+                  draggable={false}
+                  style={{ width: 40, height: 40, borderRadius: 14, background: "#131318" }}
+                />
+                <div className="flex flex-col" style={{ minWidth: 0 }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: "rgb(var(--chrome-text))" }}>
+                    {companionVisible ? "Quip is on your desktop" : "Bring Quip to my desktop"}
+                  </span>
+                  <span style={{ fontSize: 10.5, color: "rgb(var(--chrome-soft))", marginTop: 2 }}>
+                    {companionVisible
+                      ? "The companion is floating right now — tap it to chat."
+                      : "One tap puts the companion back on your screen. No terminal needed."}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => handleToggleVisible(!companionVisible)}
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: "#fff",
+                  background: companionVisible ? "rgb(var(--chrome-line) / 0.20)" : "rgb(var(--chrome-brand))",
+                  border: "none",
+                  borderRadius: 10,
+                  padding: "8px 14px",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {companionVisible ? "Hide for now" : "Show Quip"}
+              </button>
+            </div>
+
+            {/* Theme — the whole chrome follows the palette live */}
+            <div>
+              <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide" style={{ color: "rgb(var(--chrome-soft))" }}>
+                Theme
+              </label>
+              <div className="grid grid-cols-5 gap-2">
+                {THEMES.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => handleSetTheme(t.id)}
+                    aria-label={`Theme ${t.label}`}
+                    className="flex flex-col items-center gap-1.5 rounded-xl px-1 py-2.5 transition-all"
+                    style={{
+                      border: theme === t.id ? "1.5px solid rgba(139,124,248,0.65)" : "1.5px solid rgb(var(--chrome-line) / 0.08)",
+                      background: theme === t.id ? "rgba(139,124,248,0.10)" : "transparent",
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 22,
+                        height: 22,
+                        borderRadius: 8,
+                        background: `linear-gradient(135deg, ${t.swatch[0]} 0%, ${t.swatch[0]} 55%, ${t.swatch[1]} 100%)`,
+                        border: "1px solid rgb(var(--chrome-line) / 0.12)",
+                      }}
+                    />
+                    <span style={{ fontSize: 9, fontWeight: 600, color: theme === t.id ? "rgb(var(--chrome-text))" : "rgb(var(--chrome-idle))" }}>
+                      {t.label}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Fetch Updates — real git fetch + fast-forward, honest result */}
+            <div
+              className="rounded-2xl px-4 py-4"
+              style={{ border: "1px solid rgb(var(--chrome-line) / 0.09)", background: "rgb(var(--chrome-line) / 0.035)" }}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-col" style={{ minWidth: 0 }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: "rgb(var(--chrome-text))" }}>Fetch updates</span>
+                  <span style={{ fontSize: 10.5, color: "rgb(var(--chrome-soft))", marginTop: 2 }}>
+                    Grabs the newest Quip code from the repo and applies it. If something blocks
+                    the update, it tells you exactly what.
+                  </span>
+                </div>
+                <button
+                  onClick={handleFetchUpdates}
+                  disabled={updating}
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    color: "#fff",
+                    background: updating ? "rgb(var(--chrome-line) / 0.25)" : "rgb(var(--chrome-brand))",
+                    border: "none",
+                    borderRadius: 10,
+                    padding: "8px 14px",
+                    cursor: updating ? "default" : "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {updating ? "Fetching…" : "Fetch Updates"}
+                </button>
+              </div>
+              {updateResult && (
+                <div
+                  className="mt-2.5 rounded-lg px-2.5 py-2"
+                  style={{
+                    fontSize: 10.5,
+                    fontWeight: 600,
+                    color: updateResult.ok ? "rgb(var(--chrome-text))" : "#b91c1c",
+                    background: "rgb(var(--chrome-line) / 0.05)",
+                  }}
+                >
+                  {updateResult.message}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {tab === "general" && (
           <div className="flex flex-col gap-5">
             <div>
@@ -1090,13 +1283,13 @@ export function SettingsPanel({
             {/* Companion visibility — the setting the user asked for */}
             <div
               className="flex items-center justify-between gap-3 rounded-xl px-3 py-3"
-              style={{ border: "1px solid rgba(0,0,0,0.06)", background: "rgba(0,0,0,0.015)" }}
+              style={{ border: "1px solid rgb(var(--chrome-line) / 0.09)", background: "rgb(var(--chrome-line) / 0.035)" }}
             >
               <div className="flex flex-col" style={{ minWidth: 0 }}>
-                <span style={{ fontSize: 12, fontWeight: 600, color: "#111" }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "rgb(var(--chrome-text))" }}>
                   Keep companion on my screen
                 </span>
-                <span style={{ fontSize: 10.5, color: "#6b7280", marginTop: 2 }}>
+                <span style={{ fontSize: 10.5, color: "rgb(var(--chrome-soft))", marginTop: 2 }}>
                   Always visible until you turn it off here. Nothing floating when off.
                 </span>
               </div>
@@ -1129,7 +1322,7 @@ export function SettingsPanel({
               </button>
             </div>
 
-            <div style={{ fontSize: 10.5, color: "#9ca3af" }}>
+            <div style={{ fontSize: 10.5, color: "rgb(var(--chrome-idle))" }}>
               Closing the window (Alt+F4) only hides Quip — it keeps running in the
               system tray. Quitting fully is right here.
             </div>
@@ -1137,13 +1330,13 @@ export function SettingsPanel({
             {/* Proactive check-ins — main-process reminder engine, user-controlled */}
             <div
               className="flex items-center justify-between gap-3 rounded-xl px-3 py-3"
-              style={{ border: "1px solid rgba(0,0,0,0.06)", background: "rgba(0,0,0,0.015)" }}
+              style={{ border: "1px solid rgb(var(--chrome-line) / 0.09)", background: "rgb(var(--chrome-line) / 0.035)" }}
             >
               <div className="flex flex-col" style={{ minWidth: 0 }}>
-                <span style={{ fontSize: 12, fontWeight: 600, color: "#111" }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "rgb(var(--chrome-text))" }}>
                   Let Quip check in on me
                 </span>
-                <span style={{ fontSize: 10.5, color: "#6b7280", marginTop: 2 }}>
+                <span style={{ fontSize: 10.5, color: "rgb(var(--chrome-soft))", marginTop: 2 }}>
                   Small cute reminders now and then. Never at night, never spammy.
                 </span>
               </div>
@@ -1221,7 +1414,7 @@ export function SettingsPanel({
                 </button>
               </>
             ) : (
-              <div style={{ fontSize: 12, color: "#9ca3af" }}>No device profile yet.</div>
+              <div style={{ fontSize: 12, color: "rgb(var(--chrome-idle))" }}>No device profile yet.</div>
             )}
           </div>
         )}
@@ -1246,18 +1439,18 @@ export function SettingsPanel({
                   key={m.id}
                   className="flex items-start justify-between gap-2 rounded-lg px-3 py-2"
                   style={{
-                    background: "rgba(0,0,0,0.02)",
-                    border: "1px solid rgba(0,0,0,0.04)",
+                    background: "rgb(var(--chrome-line) / 0.04)",
+                    border: "1px solid rgb(var(--chrome-line) / 0.07)",
                   }}
                 >
                   <div className="flex flex-col" style={{ minWidth: 0, flex: 1 }}>
-                    <span style={{ fontSize: 11, fontWeight: 600, color: "#111" }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: "rgb(var(--chrome-text))" }}>
                       {m.key}
                     </span>
-                    <span style={{ fontSize: 11, color: "#6b7280", wordBreak: "break-word" }}>
+                    <span style={{ fontSize: 11, color: "rgb(var(--chrome-soft))", wordBreak: "break-word" }}>
                       {m.value}
                     </span>
-                    <span style={{ fontSize: 9, color: "#9ca3af", marginTop: 2 }}>
+                    <span style={{ fontSize: 9, color: "rgb(var(--chrome-idle))", marginTop: 2 }}>
                       {m.kind} · {m.importance} · ×{m.weight}
                       {m.weight >= 10 ? " · 📌 pinned" : ""}
                     </span>
@@ -1279,7 +1472,7 @@ export function SettingsPanel({
                 </div>
               ))
             ) : (
-              <div style={{ fontSize: 12, color: "#9ca3af" }}>
+              <div style={{ fontSize: 12, color: "rgb(var(--chrome-idle))" }}>
                 No memories yet. Quip learns as you talk — after every ~10 messages it extracts facts about you automatically.
               </div>
             )}
@@ -1290,7 +1483,7 @@ export function SettingsPanel({
           <div className="flex flex-col gap-3">
             {profile ? (
               <>
-                <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 4 }}>
+                <div style={{ fontSize: 11, color: "rgb(var(--chrome-soft))", marginBottom: 4 }}>
                   Quip observes how you communicate and adapts its style to match yours.
                   This is your Communication DNA.
                 </div>
@@ -1342,7 +1535,7 @@ export function SettingsPanel({
                           className="rounded-full px-2.5 py-1 text-[10px] font-medium"
                           style={{
                             background: "rgba(111,214,255,0.12)",
-                            color: "#0c6b8f",
+                            color: "rgb(var(--chrome-brand))",
                           }}
                         >
                           {t.topic} · {t.count}
@@ -1361,7 +1554,7 @@ export function SettingsPanel({
                 </button>
               </>
             ) : (
-              <div style={{ fontSize: 12, color: "#9ca3af" }}>
+              <div style={{ fontSize: 12, color: "rgb(var(--chrome-idle))" }}>
                 No profile yet. Quip builds this as you chat.
               </div>
             )}
@@ -1370,7 +1563,7 @@ export function SettingsPanel({
 
         {tab === "progression" && (
           <div className="flex flex-col gap-4">
-            <div style={{ fontSize: 11, color: "#6b7280" }}>
+            <div style={{ fontSize: 11, color: "rgb(var(--chrome-soft))" }}>
               Your companions grow with you. As you talk, complete tasks, and create memories together, they unlock cosmetic upgrades.
             </div>
             {progression ? (
@@ -1383,15 +1576,15 @@ export function SettingsPanel({
                     key={id}
                     className="rounded-xl p-3"
                     style={{
-                      background: "rgba(0,0,0,0.02)",
-                      border: "1px solid rgba(0,0,0,0.04)",
+                      background: "rgb(var(--chrome-line) / 0.04)",
+                      border: "1px solid rgb(var(--chrome-line) / 0.07)",
                     }}
                   >
                     <div className="flex items-center justify-between mb-2">
-                      <span style={{ fontSize: 13, fontWeight: 600, color: "#111", textTransform: "capitalize" }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "rgb(var(--chrome-text))", textTransform: "capitalize" }}>
                         {id}
                       </span>
-                      <span style={{ fontSize: 10, color: "#9ca3af" }}>
+                      <span style={{ fontSize: 10, color: "rgb(var(--chrome-idle))" }}>
                         {depthPct}% depth
                       </span>
                     </div>
@@ -1400,7 +1593,7 @@ export function SettingsPanel({
                     <div
                       style={{
                         height: 6,
-                        background: "rgba(0,0,0,0.06)",
+                        background: "rgb(var(--chrome-line) / 0.07)",
                         borderRadius: 3,
                         overflow: "hidden",
                         marginBottom: 8,
@@ -1442,7 +1635,7 @@ export function SettingsPanel({
                         ))}
                       </div>
                     ) : (
-                      <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 4 }}>
+                      <div style={{ fontSize: 10, color: "rgb(var(--chrome-idle))", marginTop: 4 }}>
                         No cosmetics unlocked yet — keep talking!
                       </div>
                     )}
@@ -1450,7 +1643,7 @@ export function SettingsPanel({
                 );
               })
             ) : (
-              <div style={{ fontSize: 12, color: "#9ca3af" }}>
+              <div style={{ fontSize: 12, color: "rgb(var(--chrome-idle))" }}>
                 No progression data yet.
               </div>
             )}
@@ -1492,12 +1685,12 @@ export function SettingsPanel({
 function DataRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between">
-      <span style={{ fontSize: 11, color: "#9ca3af" }}>{label}</span>
+      <span style={{ fontSize: 11, color: "rgb(var(--chrome-idle))" }}>{label}</span>
       <span
         style={{
           fontSize: 11,
           fontWeight: 500,
-          color: "#111",
+          color: "rgb(var(--chrome-text))",
           textAlign: "right",
           maxWidth: "60%",
           overflow: "hidden",
@@ -1516,13 +1709,13 @@ function DNABar({ label, value, max, unit, display }: { label: string; value: nu
   return (
     <div>
       <div className="flex items-center justify-between mb-1">
-        <span style={{ fontSize: 11, color: "#6b7280" }}>{label}</span>
-        <span style={{ fontSize: 11, fontWeight: 500, color: "#111" }}>{display}</span>
+        <span style={{ fontSize: 11, color: "rgb(var(--chrome-soft))" }}>{label}</span>
+        <span style={{ fontSize: 11, fontWeight: 500, color: "rgb(var(--chrome-text))" }}>{display}</span>
       </div>
       <div
         style={{
           height: 6,
-          background: "rgba(0,0,0,0.06)",
+          background: "rgb(var(--chrome-line) / 0.07)",
           borderRadius: 3,
           overflow: "hidden",
         }}
@@ -1545,10 +1738,10 @@ function Stat({ label, value }: { label: string; value: number }) {
   return (
     <div
       className="rounded-lg px-2 py-1.5"
-      style={{ background: "rgba(0,0,0,0.03)" }}
+      style={{ background: "rgb(var(--chrome-line) / 0.05)" }}
     >
-      <div style={{ fontSize: 9, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</div>
-      <div style={{ fontSize: 14, fontWeight: 600, color: "#111" }}>{value}</div>
+      <div style={{ fontSize: 9, color: "rgb(var(--chrome-idle))", textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</div>
+      <div style={{ fontSize: 14, fontWeight: 600, color: "rgb(var(--chrome-text))" }}>{value}</div>
     </div>
   );
 }

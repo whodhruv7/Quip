@@ -33,7 +33,7 @@ export function ActionApprovalPanel({ request, companionColor, onResolve }: Acti
         margin: "0 12px 8px",
         padding: "10px 12px",
         borderRadius: 14,
-        background: `rgba(255,255,255,0.92)`,
+        background: `rgb(var(--chrome-bg) / 0.94)`,
         backdropFilter: "blur(20px)",
         WebkitBackdropFilter: "blur(20px)",
         border: `1px solid ${risk.border}`,
@@ -44,7 +44,7 @@ export function ActionApprovalPanel({ request, companionColor, onResolve }: Acti
     >
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
         <span style={{ fontSize: 11 }}>✋</span>
-        <span style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.4 }}>
+        <span style={{ fontSize: 10, fontWeight: 600, color: "rgb(var(--chrome-soft))", textTransform: "uppercase", letterSpacing: 0.4 }}>
           Action request · {risk.label}
         </span>
       </div>
@@ -54,7 +54,7 @@ export function ActionApprovalPanel({ request, companionColor, onResolve }: Acti
       </div>
 
       {request.steps.length > 1 && (
-        <div style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.5, marginBottom: 6 }}>
+        <div style={{ fontSize: 11, color: "rgb(var(--chrome-soft))", lineHeight: 1.5, marginBottom: 6 }}>
           {request.steps.slice(0, 4).map((s, i) => (
             <div key={i} style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {s}
@@ -67,7 +67,7 @@ export function ActionApprovalPanel({ request, companionColor, onResolve }: Acti
         <button
           onClick={() => onResolve(request.id, false)}
           style={{
-            border: "1px solid rgba(0,0,0,0.08)",
+            border: "1px solid rgb(var(--chrome-line) / 0.10)",
             borderRadius: 10,
             padding: "6px 14px",
             fontSize: 11.5,

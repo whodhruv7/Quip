@@ -74,6 +74,8 @@ export const IPC = {
   RUN_DOCTOR: "quip:run-doctor",
   GET_CONNECTION_JOURNAL: "quip:get-connection-journal",
   GET_ACTION_LOG: "quip:get-action-log",
+  /** In-app repo updater (Settings → Appearance → Fetch Updates). */
+  APP_FETCH_UPDATES: "quip:fetch-updates",
   GET_TRANSPORT_SETTING: "quip:get-transport-setting",
   SET_TRANSPORT_SETTING: "quip:set-transport-setting",
 

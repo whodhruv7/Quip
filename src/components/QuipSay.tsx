@@ -45,7 +45,7 @@ export function QuipSay({ message, companionColor, onDismiss, compact }: QuipSay
             maxWidth: compact ? 118 : 220,
             padding: compact ? "7px 10px" : "9px 13px",
             borderRadius: "14px 14px 4px 14px",
-            background: "rgba(255,255,255,0.96)",
+            background: "rgb(var(--chrome-bg) / 0.96)",
             backdropFilter: "blur(16px)",
             WebkitBackdropFilter: "blur(16px)",
             border: `1px solid ${companionColor}33`,

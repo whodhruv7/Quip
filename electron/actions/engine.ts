@@ -385,7 +385,13 @@ export class ActionEngine {
         return {
           ok: false,
           note: result.note,
-          failureLine: failureLine(step.description, kind, decision.reason),
+          // The user must see the SPECIFIC problem ("couldn't find an installed
+          // app called zzz"), not just the classification phrase.
+          failureLine: failureLine(
+            step.description,
+            kind,
+            withDetail(decision.reason, result.note)
+          ),
           cancelled: false,
         };
       }
@@ -407,7 +413,11 @@ export class ActionEngine {
     return {
       ok: false,
       note: last?.result.note ?? "failed",
-      failureLine: failureLine(step.description, kind, "It didn't succeed after a retry, so I stopped."),
+      failureLine: failureLine(
+        step.description,
+        kind,
+        withDetail("It didn't succeed after a retry, so I stopped.", last?.result.note)
+      ),
       cancelled: false,
     };
   }
@@ -478,10 +488,18 @@ export class ActionEngine {
         ? firstOk?.note?.slice(0, 300) || plan.expectedResult
         : `Done — all ${steps.length} steps verified. ${plan.expectedResult}`.slice(0, 400);
     }
+    // The user must see the BASIC PROBLEM in the main bubble — not a vague
+    // "it failed". Failure lines are "<step>: failed (<kind>) — <reason>";
+    // the reason after the em-dash is the plain-language problem.
+    const firstReason = (failures[0] ?? "").split("—").slice(1).join("—").trim();
     if (completed === 0) {
-      return "I couldn't complete any step of that.";
+      return firstReason
+        ? `I couldn't do it. ${firstReason}`
+        : "I couldn't complete any step of that.";
     }
-    return `Completed ${completed} of ${steps.length} steps — ${failures.length} step${failures.length === 1 ? "" : "s"} failed.`;
+    return `I got ${completed} of ${steps.length} step${steps.length === 1 ? "" : "s"} done${
+      firstReason ? ` — but the rest failed. The problem: ${firstReason}` : "."
+    }`;
   }
 
   private finish(
@@ -494,6 +512,17 @@ export class ActionEngine {
 }
 
 // ─── Production wiring (real permission system) ─────────────────────────────
+
+/** Combine a recovery-classification phrase with the tool's SPECIFIC note, so
+ *  the failure line carries the real problem ("couldn't find an installed app
+ *  called zzz"), not just the category. "nope"/"failed" add nothing. */
+function withDetail(reason: string, note?: string): string {
+  const detail = (note ?? "").trim();
+  if (!detail || detail.toLowerCase() === "failed" || detail.toLowerCase() === "nope") {
+    return reason;
+  }
+  return `${reason} (${detail})`;
+}
 
 export function createActionEngine(ctx: ToolContext, log?: (line: string) => void): ActionEngine {
   return new ActionEngine({

@@ -143,8 +143,8 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
     <div
       className="flex flex-col px-3 py-2.5"
       style={{
-        borderTop: "1px solid rgba(0,0,0,0.05)",
-        background: "rgba(255,255,255,0.55)",
+        borderTop: "1px solid rgb(var(--chrome-line) / 0.06)",
+        background: "rgb(var(--chrome-bg) / 0.55)",
         backdropFilter: "blur(20px)",
         WebkitBackdropFilter: "blur(20px)",
       }}
@@ -160,13 +160,13 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
         >
           <span style={{ fontSize: 11, color: themeColor }}>🔗</span>
           <div className="flex flex-col" style={{ minWidth: 0, flex: 1 }}>
-            <span style={{ fontSize: 10, color: "#6b7280", fontWeight: 500 }}>
+            <span style={{ fontSize: 10, color: "rgb(var(--chrome-soft))", fontWeight: 500 }}>
               Open this URL?
             </span>
             <span
               style={{
                 fontSize: 11,
-                color: "#111",
+                color: "rgb(var(--chrome-text))",
                 whiteSpace: "nowrap",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -196,7 +196,7 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
               checkClipboard();
             }}
             onBlur={(e) => {
-              e.currentTarget.style.borderColor = "rgba(0,0,0,0.07)";
+              e.currentTarget.style.borderColor = "rgb(var(--chrome-line) / 0.12)";
               e.currentTarget.style.boxShadow = "none";
             }}
             placeholder={getSmartPlaceholder(companionId)}
@@ -215,7 +215,7 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
           className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] text-white transition-all active:scale-90"
           style={
             busy || !value.trim()
-              ? { background: "rgba(0,0,0,0.08)", cursor: "not-allowed" }
+              ? { background: "rgb(var(--chrome-line) / 0.08)", cursor: "not-allowed" }
               : {
                   background: `linear-gradient(135deg, ${themeColor}, ${themeColor}cc)`,
                   boxShadow: `0 4px 14px ${themeColor}33`,

@@ -199,7 +199,12 @@ test("engine: a failed step is reported with a reason — attempted ≠ successf
   assert.equal(r.stepsCompleted, 0);
   assert.ok(r.failures.length >= 2);
   assert.ok(r.failures[0].includes("failed"));
-  assert.match(r.summary, /couldn't complete|failed|0 of 2/i);
+  // The BASIC PROBLEM must be in the summary itself (never a vague "it failed").
+  assert.match(
+    r.summary,
+    /couldn't do it|genuinely not there|couldn't complete|failed|0 of 2/i
+  );
+  assert.ok(r.summary.includes("couldn't find an installed app called zzz"));
   // not-found → reobserve once → so each step runs twice, honestly logged
   const entries = executionLog.forTask("t-fail");
   assert.ok(entries.every((e) => e.ok === false));

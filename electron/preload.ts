@@ -218,6 +218,13 @@ const api = {
     ipcRenderer.invoke(IPC.GET_ACTION_LOG) as Promise<
       Array<{ ts: number; action: string; target: string; ok: boolean; attempt: number; durationMs: number; summary: string; failureKind?: string }>
     >,
+  fetchUpdates: () =>
+    ipcRenderer.invoke(IPC.APP_FETCH_UPDATES) as Promise<{
+      ok: boolean;
+      behind: number;
+      pulled: boolean;
+      message: string;
+    }>,
   getTransportSetting: () =>
     ipcRenderer.invoke(IPC.GET_TRANSPORT_SETTING) as Promise<{ mode: "auto" | "net" | "node" }>,
   setTransportSetting: (mode: "auto" | "net" | "node") =>

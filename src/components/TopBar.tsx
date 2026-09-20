@@ -69,10 +69,10 @@ export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onRef
     <div
       className="flex items-center gap-1.5 px-3 py-2"
       style={{
-        background: "rgba(255,255,255,0.40)",
+        background: "rgb(var(--chrome-bg) / 0.40)",
         backdropFilter: "blur(20px)",
         WebkitBackdropFilter: "blur(20px)",
-        borderBottom: "1px solid rgba(0,0,0,0.04)",
+        borderBottom: "1px solid rgb(var(--chrome-line) / 0.06)",
       }}
     >
       {/* Companion dots — switch between all 6 companions */}
@@ -129,12 +129,12 @@ export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onRef
       <button
         onClick={onBrainClick ?? onSettingsToggle}
         className="flex h-6 items-center gap-1.5 rounded-[7px] px-2 transition-all hover:scale-[1.05]"
-        style={{ background: "rgba(0,0,0,0.03)", border: "1px solid rgba(0,0,0,0.05)" }}
+        style={{ background: "rgb(var(--chrome-line) / 0.04)", border: "1px solid rgb(var(--chrome-line) / 0.07)" }}
         title={pillTitle}
         aria-label={pillTitle}
       >
         <span className="h-2 w-2 rounded-full" style={{ background: pillColor }} />
-        <span style={{ fontSize: 9, fontWeight: 600, color: "#6b7280" }}>AI</span>
+        <span style={{ fontSize: 9, fontWeight: 600, color: "rgb(var(--chrome-soft))" }}>AI</span>
       </button>
 
       {/* Square expand button — panel ⇄ full app */}
@@ -143,7 +143,7 @@ export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onRef
         className="flex h-7 w-7 items-center justify-center rounded-[7px] transition-all"
         style={{
           border: `1.5px solid ${accent.primary}66`,
-          background: mode === "full" ? `${accent.primary}18` : "rgba(255,255,255,0.7)",
+          background: mode === "full" ? `${accent.primary}18` : "rgb(var(--chrome-line) / 0.05)",
           color: accent.primary,
         }}
         title={mode === "full" ? "Back to small panel" : "Expand to full app"}
