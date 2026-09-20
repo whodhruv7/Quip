@@ -122,7 +122,7 @@ export function ChatWelcome({ companionId, onSuggestionClick, onOpenKeySetup }: 
         transition={{ duration: 0.5, delay: 0.25 }}
         style={{
           fontSize: 13,
-          color: "#9ca3af",
+          color: "rgb(var(--quip-text-soft))",
           marginBottom: 16,
           textAlign: "center",
           lineHeight: 1.5,
@@ -186,9 +186,9 @@ export function ChatWelcome({ companionId, onSuggestionClick, onOpenKeySetup }: 
             {wizardOpen && (
               <div
                 className="flex w-full max-w-[280px] flex-col gap-2 rounded-xl px-3 py-3"
-                style={{ border: "1px solid rgba(245,158,11,0.3)", background: "rgb(var(--chrome-bg) / 0.9)" }}
+                style={{ border: "1px solid rgba(245,158,11,0.3)", background: "rgb(var(--quip-bg-soft))" }}
               >
-                <span style={{ fontSize: 10.5, color: "#374151" }}>
+                <span style={{ fontSize: 10.5, color: "rgb(var(--quip-text))" }}>
                   1. Get a free key at <b>console.groq.com/keys</b> (30s) · 2. Paste it below:
                 </span>
                 <input
@@ -209,7 +209,7 @@ export function ChatWelcome({ companionId, onSuggestionClick, onOpenKeySetup }: 
                     fontSize: 11,
                     fontWeight: 700,
                     color: "#fff",
-                    background: wizardState === "saving" ? "rgba(0,0,0,0.25)" : "#0c6b8f",
+                    background: wizardState === "saving" ? "rgba(128,128,128,0.55)" : "rgb(var(--quip-accent-deep))",
                     border: "none",
                     borderRadius: 8,
                     padding: "6px 0",
@@ -248,10 +248,10 @@ export function ChatWelcome({ companionId, onSuggestionClick, onOpenKeySetup }: 
             style={{
               fontSize: 12,
               fontWeight: 500,
-              color: "#374151",
-              background: "rgb(var(--chrome-bg) / 0.70)",
-              border: "1px solid rgb(var(--chrome-line) / 0.07)",
-              boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+              color: "rgb(var(--quip-text))",
+              background: "rgba(var(--quip-line), 0.045)",
+              border: "1px solid rgba(var(--quip-line), 0.09)",
+              boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
             }}
           >
             <span style={{ fontSize: 14 }}>{s.icon}</span>

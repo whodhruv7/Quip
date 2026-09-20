@@ -131,6 +131,16 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ─── Esc exits true full screen (never the app) ──────────────────────────
+  useEffect(() => {
+    if (viewMode !== "fullscreen") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") enterMode("full");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [viewMode, enterMode]);
+
   // ─── Close (X) — always returns to the single desktop companion ────────
   const handleClose = useCallback(() => {
     saveCurrentMessages(companionId, messages);
@@ -299,9 +309,9 @@ export default function App() {
           style={{
             padding: "8px 12px",
             fontSize: 11,
-            color: "#dc2626",
-            background: "rgba(254,235,235,0.7)",
-            borderBottom: "1px solid rgba(239,68,68,0.12)",
+            color: "rgb(var(--quip-bad))",
+            background: "rgba(var(--quip-bad), 0.10)",
+            borderBottom: "1px solid rgba(var(--quip-bad), 0.18)",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
@@ -318,7 +328,7 @@ export default function App() {
                 color: "#fff",
                 padding: "4px 10px",
                 borderRadius: 7,
-                background: "linear-gradient(135deg, #6FD6FF, #FF9FEF)",
+                background: "linear-gradient(135deg, rgb(var(--quip-accent)), rgb(var(--quip-accent-3)))",
                 border: "none",
                 cursor: "pointer",
                 whiteSpace: "nowrap",
@@ -331,10 +341,10 @@ export default function App() {
               onClick={clearError}
               style={{
                 fontSize: 10,
-                color: "#dc2626",
+                color: "rgb(var(--quip-bad))",
                 padding: "2px 6px",
                 borderRadius: 4,
-                background: "rgba(239,68,68,0.1)",
+                background: "rgba(var(--quip-bad), 0.10)",
                 border: "none",
                 cursor: "pointer",
               }}
@@ -375,7 +385,7 @@ export default function App() {
               alignItems: "center",
               gap: 8,
               fontSize: 11.5,
-              color: "#374151",
+              color: "rgb(var(--quip-text))",
             }}
           >
             <span
@@ -415,8 +425,8 @@ export default function App() {
                 flexShrink: 0,
                 fontSize: 10.5,
                 fontWeight: 600,
-                color: "rgb(var(--chrome-soft))",
-                background: "rgba(0,0,0,0.05)",
+                color: "rgb(var(--quip-text-soft))",
+                background: "rgba(var(--quip-line), 0.06)",
                 border: "none",
                 borderRadius: 7,
                 padding: "3px 10px",
@@ -455,7 +465,7 @@ export default function App() {
               gap: 6,
               fontSize: 10.5,
               fontWeight: 600,
-              color: streamingProvider.confirmed ? "#0c6b8f" : "#9ca3af",
+              color: streamingProvider.confirmed ? "rgb(var(--quip-accent-deep))" : "rgb(var(--quip-text-soft))",
             }}
           >
             <span
@@ -463,7 +473,7 @@ export default function App() {
                 width: 6,
                 height: 6,
                 borderRadius: "50%",
-                background: streamingProvider.confirmed ? "#22c55e" : "#d1d5db",
+                background: streamingProvider.confirmed ? "rgb(var(--quip-ok, 34, 197, 94))" : "rgba(var(--quip-line), 0.25)",
                 animation: streamingProvider.confirmed ? "none" : "quipPulse 1s ease-in-out infinite",
               }}
             />
@@ -486,8 +496,9 @@ export default function App() {
       onReflectionToggle={() => setReflectionOpen(true)}
       onNewChat={handleNewChat}
       onClose={handleClose}
-      mode={viewMode === "full" ? "full" : "panel"}
+      mode={viewMode === "full" ? "full" : viewMode === "fullscreen" ? "fullscreen" : "panel"}
       onToggleExpand={() => enterMode(viewMode === "full" ? "panel" : "full")}
+      onToggleFullscreen={() => enterMode(viewMode === "fullscreen" ? "full" : "fullscreen")}
       onBrainClick={() => openSettings("ai")}
     />
   );
@@ -644,11 +655,11 @@ export default function App() {
               overflow: "hidden",
               display: "flex",
               flexDirection: "column",
-              background: "rgba(255,255,255,0.72)",
-              backdropFilter: "blur(24px) saturate(165%)",
-              WebkitBackdropFilter: "blur(24px) saturate(165%)",
-              border: "1px solid rgba(255,255,255,0.6)",
-              boxShadow: "0 20px 60px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.03)",
+              // OPAQUE + theme-driven: the desktop behind must NEVER show
+              // through the chat surface, in every palette (the user's ask).
+              background: "rgb(var(--quip-bg))",
+              border: "1px solid rgba(var(--quip-line), 0.10)",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.18)",
             }}
           >
             {topBar}
@@ -730,11 +741,10 @@ export default function App() {
               overflow: "hidden",
               display: "flex",
               flexDirection: "column",
-              background: "rgba(252,252,253,0.88)",
-              backdropFilter: "blur(24px) saturate(165%)",
-              WebkitBackdropFilter: "blur(24px) saturate(165%)",
-              border: "1px solid rgba(255,255,255,0.65)",
-              boxShadow: "0 30px 80px rgba(0,0,0,0.14), 0 0 0 1px rgba(0,0,0,0.03)",
+              // OPAQUE + theme-driven (no desktop show-through, no white glass).
+              background: "rgb(var(--quip-bg))",
+              border: "1px solid rgba(var(--quip-line), 0.10)",
+              boxShadow: "0 30px 80px rgba(0,0,0,0.22)",
             }}
           >
             {topBar}
@@ -753,7 +763,7 @@ export default function App() {
                   gap: 10,
                   background:
                     `radial-gradient(circle at 50% 30%, ${theme.auraA} 0%, transparent 70%)`,
-                  borderRight: "1px solid rgba(0,0,0,0.035)",
+                  borderRight: "1px solid rgba(var(--quip-line), 0.07)",
                 }}
               >
                 <Companion
@@ -768,13 +778,13 @@ export default function App() {
                     style={{
                       fontSize: 16,
                       fontWeight: 600,
-                      color: "#10131f",
+                      color: "rgb(var(--quip-text))",
                       letterSpacing: -0.2,
                     }}
                   >
                     {theme.name}
                   </div>
-                  <div style={{ fontSize: 12, color: "rgb(var(--chrome-soft))", marginTop: 2 }}>
+                  <div style={{ fontSize: 12, color: "rgb(var(--quip-text-soft))", marginTop: 2 }}>
                     {theme.subtitle}
                   </div>
                 </div>
@@ -786,7 +796,7 @@ export default function App() {
                       fontSize: 11,
                       fontWeight: 500,
                       color: theme.primary,
-                      background: "rgba(255,255,255,0.9)",
+                      background: "rgba(var(--quip-line), 0.06)",
                       padding: "3px 10px",
                       borderRadius: 10,
                       border: `1px solid ${theme.primary}25`,
@@ -803,6 +813,114 @@ export default function App() {
               </div>
 
               {/* Chat column */}
+              <div
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              >
+                {chatBody}
+              </div>
+            </div>
+
+            {overlays}
+          </motion.div>
+        </div>
+      )}
+
+      {/* ═══ TRUE FULL SCREEN MODE — the whole display, edge to edge ═════ */}
+      {viewMode === "fullscreen" && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+          }}
+        >
+          <motion.div
+            key="fullscreen-app"
+            initial={{ opacity: 0, scale: 1.01 }}
+            animate={{
+              opacity: 1,
+              scale: 1,
+              transition: { type: "spring", stiffness: 340, damping: 32, mass: 0.8 },
+            }}
+            style={{
+              pointerEvents: "auto",
+              height: "100%",
+              width: "100%",
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+              // Whole display, zero inset, fully themed + opaque.
+              background: "rgb(var(--quip-bg))",
+            }}
+          >
+            {topBar}
+
+            <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+              <div
+                style={{
+                  width: 320,
+                  flexShrink: 0,
+                  position: "relative",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 12,
+                  background:
+                    `radial-gradient(circle at 50% 30%, ${theme.auraA} 0%, transparent 70%)`,
+                  borderRight: "1px solid rgba(var(--quip-line), 0.07)",
+                }}
+              >
+                <Companion
+                  id={companionId}
+                  state={pixState}
+                  size={200}
+                  unlockedCosmetics={cosmetics}
+                  moodSpeed={moodSpeed}
+                />
+                <div style={{ textAlign: "center" }}>
+                  <div
+                    style={{
+                      fontSize: 17,
+                      fontWeight: 600,
+                      color: "rgb(var(--quip-text))",
+                      letterSpacing: -0.2,
+                    }}
+                  >
+                    {theme.name}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: "rgb(var(--quip-text-soft))", marginTop: 2 }}>
+                    {theme.subtitle}
+                  </div>
+                </div>
+                {chatBusy && (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    style={{
+                      fontSize: 11.5,
+                      fontWeight: 500,
+                      color: theme.primary,
+                      background: "rgba(var(--quip-line), 0.06)",
+                      padding: "3px 10px",
+                      borderRadius: 10,
+                      border: `1px solid ${theme.primary}25`,
+                    }}
+                  >
+                    {isResponding ? "typing…" : "thinking…"}
+                  </motion.div>
+                )}
+                <QuipSay
+                  message={quipSay}
+                  companionColor={theme.primary}
+                  onDismiss={() => setQuipSay(null)}
+                />
+              </div>
+
               <div
                 style={{
                   flex: 1,
@@ -839,8 +957,8 @@ export default function App() {
               WebkitBackdropFilter: "blur(20px)",
               borderRadius: 12,
               padding: "10px 16px",
-              boxShadow: "0 10px 30px rgba(0,0,0,0.12)",
-              border: "1px solid rgba(255,255,255,0.6)",
+              boxShadow: "0 10px 30px rgba(0,0,0,0.16)",
+              border: "1px solid rgba(var(--quip-line), 0.10)",
               display: "flex",
               alignItems: "center",
               gap: 8,

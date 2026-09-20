@@ -57,7 +57,7 @@ export function CompanionSwitch({ activeId, onSelect }: CompanionSwitchProps) {
                 style={{
                   fontSize: 12,
                   fontWeight: 600,
-                  color: active ? "#111" : "#6b7280",
+                  color: active ? "rgb(var(--quip-text))" : "rgb(var(--quip-text-soft))",
                 }}
               >
                 {c.name}
@@ -65,7 +65,7 @@ export function CompanionSwitch({ activeId, onSelect }: CompanionSwitchProps) {
               <span
                 style={{
                   fontSize: 9,
-                  color: "#9ca3af",
+                  color: "rgb(var(--quip-text-soft))",
                   marginTop: 1,
                 }}
               >

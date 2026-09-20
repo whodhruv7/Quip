@@ -76,7 +76,9 @@ export function buildShortcutPs(repoRoot: string, desktopDir: string): string {
     `$sc.IconLocation = '${ico},0'`,
     `$sc.WorkingDirectory = '${work}'`,
     "$sc.Description = 'Quip — your desktop companion'",
-    "$sc.WindowStyle = 7",
+    // WindowStyle 1 = normal (7 = minimized — pointless for a hidden console
+    // launcher, and it made some shells flash the taskbar).
+    "$sc.WindowStyle = 1",
     "$sc.Save()",
   ].join("; ");
 }

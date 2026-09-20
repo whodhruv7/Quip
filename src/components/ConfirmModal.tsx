@@ -60,11 +60,9 @@ export function ConfirmModal({
             transition={{ type: "spring", stiffness: 400, damping: 30 }}
             className="mx-4 w-full max-w-xs rounded-2xl p-4"
             style={{
-              background: "rgba(255,255,255,0.98)",
-              backdropFilter: "blur(20px)",
-              WebkitBackdropFilter: "blur(20px)",
-              boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
-              border: "1px solid rgba(0,0,0,0.05)",
+              background: "rgb(var(--quip-bg))",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.28)",
+              border: "1px solid rgba(var(--quip-line), 0.10)",
             }}
             onClick={(e) => e.stopPropagation()}
             role="dialog"
@@ -73,18 +71,18 @@ export function ConfirmModal({
           >
             <h3
               id="confirm-title"
-              style={{ fontSize: 14, fontWeight: 600, color: "#111", marginBottom: 6 }}
+              style={{ fontSize: 14, fontWeight: 600, color: "rgb(var(--quip-text))", marginBottom: 6 }}
             >
               {title}
             </h3>
-            <p style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.5, marginBottom: 16 }}>
+            <p style={{ fontSize: 12, color: "rgb(var(--quip-text-soft))", lineHeight: 1.5, marginBottom: 16 }}>
               {message}
             </p>
             <div className="flex gap-2">
               <button
                 onClick={onCancel}
-                className="flex-1 rounded-lg px-3 py-2 text-[12px] font-medium transition-all hover:bg-black/[0.04]"
-                style={{ color: "#6b7280", background: "rgba(0,0,0,0.03)" }}
+                className="flex-1 rounded-lg px-3 py-2 text-[12px] font-medium transition-all"
+                style={{ color: "rgb(var(--quip-text-soft))", background: "rgba(var(--quip-line), 0.05)" }}
               >
                 {cancelLabel}
               </button>

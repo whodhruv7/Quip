@@ -143,30 +143,29 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
     <div
       className="flex flex-col px-3 py-2.5"
       style={{
-        borderTop: "1px solid rgba(var(--quip-line), 0.07)",
-        background: "rgba(var(--quip-bg), 0.72)",
-        backdropFilter: "blur(20px)",
-        WebkitBackdropFilter: "blur(20px)",
+        borderTop: "1px solid rgba(var(--quip-line), 0.08)",
+        // OPAQUE themed composer bar — no desktop show-through.
+        background: "rgb(var(--quip-bg))",
       }}
     >
       {urlChip && (
         <button
           onClick={() => submit(urlChip)}
-          className="mb-2 flex items-center gap-2 rounded-lg px-3 py-1.5 text-left transition-all hover:bg-black/[0.04]"
+          className="mb-2 flex items-center gap-2 rounded-lg px-3 py-1.5 text-left transition-all"
           style={{
-            background: "rgba(111,214,255,0.08)",
+            background: "rgba(var(--quip-accent), 0.10)",
             border: `1px solid ${themeColor}33`,
           }}
         >
           <span style={{ fontSize: 11, color: themeColor }}>🔗</span>
           <div className="flex flex-col" style={{ minWidth: 0, flex: 1 }}>
-            <span style={{ fontSize: 10, color: "rgb(var(--chrome-soft))", fontWeight: 500 }}>
+            <span style={{ fontSize: 10, color: "rgb(var(--quip-text-soft))", fontWeight: 500 }}>
               Open this URL?
             </span>
             <span
               style={{
                 fontSize: 11,
-                color: "rgb(var(--chrome-text))",
+                color: "rgb(var(--quip-text))",
                 whiteSpace: "nowrap",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -175,7 +174,7 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
               {urlChip}
             </span>
           </div>
-          <span style={{ fontSize: 14, color: "#9ca3af" }}>↵</span>
+          <span style={{ fontSize: 14, color: "rgb(var(--quip-text-soft))" }}>↵</span>
         </button>
       )}
 

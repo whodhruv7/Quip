@@ -133,11 +133,12 @@ export const IPC = {
 // ─── Window mode ───────────────────────────────────────────────────────────
 
 /**
- * companion — only the companion sprite is on screen (small transparent window)
- * panel     — small chat panel beside the companion
- * full      — the full Quip application interface
+ * companion  — only the companion sprite is on screen (small transparent window)
+ * panel      — small chat panel beside the companion
+ * full       — the full Quip application interface (centered, rounded)
+ * fullscreen — TRUE full screen: the entire display, edge to edge (mode 3)
  */
-export type WindowMode = "companion" | "panel" | "full";
+export type WindowMode = "companion" | "panel" | "full" | "fullscreen";
 
 // ─── Chat payloads ─────────────────────────────────────────────────────────
 export interface ChatSendPayload {

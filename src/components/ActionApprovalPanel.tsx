@@ -33,11 +33,9 @@ export function ActionApprovalPanel({ request, companionColor, onResolve }: Acti
         margin: "0 12px 8px",
         padding: "10px 12px",
         borderRadius: 14,
-        background: `rgb(var(--chrome-bg) / 0.94)`,
-        backdropFilter: "blur(20px)",
-        WebkitBackdropFilter: "blur(20px)",
+        background: `rgb(var(--quip-bg))`,
         border: `1px solid ${risk.border}`,
-        boxShadow: `0 8px 24px rgba(0,0,0,0.08), 0 0 0 3px ${risk.bg}`,
+        boxShadow: `0 8px 24px rgba(0,0,0,0.14), 0 0 0 3px ${risk.bg}`,
       }}
       role="alertdialog"
       aria-label="Quip wants to do something"
@@ -49,12 +47,12 @@ export function ActionApprovalPanel({ request, companionColor, onResolve }: Acti
         </span>
       </div>
 
-      <div style={{ fontSize: 12.5, fontWeight: 600, color: "#10131f", lineHeight: 1.4, marginBottom: 4 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 600, color: "rgb(var(--quip-text))", lineHeight: 1.4, marginBottom: 4 }}>
         Quip wants to: {request.title}
       </div>
 
       {request.steps.length > 1 && (
-        <div style={{ fontSize: 11, color: "rgb(var(--chrome-soft))", lineHeight: 1.5, marginBottom: 6 }}>
+        <div style={{ fontSize: 11, color: "rgb(var(--quip-text-soft))", lineHeight: 1.5, marginBottom: 6 }}>
           {request.steps.slice(0, 4).map((s, i) => (
             <div key={i} style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {s}
@@ -67,13 +65,13 @@ export function ActionApprovalPanel({ request, companionColor, onResolve }: Acti
         <button
           onClick={() => onResolve(request.id, false)}
           style={{
-            border: "1px solid rgb(var(--chrome-line) / 0.10)",
+            border: "1px solid rgba(var(--quip-line), 0.12)",
             borderRadius: 10,
             padding: "6px 14px",
             fontSize: 11.5,
             fontWeight: 500,
-            color: "#374151",
-            background: "white",
+            color: "rgb(var(--quip-text-soft))",
+            background: "rgba(var(--quip-line), 0.04)",
             cursor: "pointer",
           }}
         >

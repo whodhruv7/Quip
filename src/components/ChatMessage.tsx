@@ -61,9 +61,10 @@ function MessageBase({ message, index = 0, onRetry }: { message: ChatMessageType
       className="flex justify-start gap-2 group"
     >
       <div
-        className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1 ring-white/60"
+        className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
         style={{
           background: `linear-gradient(135deg, ${theme.primary}22, ${theme.secondary}18)`,
+          boxShadow: "inset 0 0 0 1px rgba(var(--quip-line), 0.10)",
         }}
       >
         <span className="h-2 w-2 rounded-full" style={{ background: theme.primary }} />
@@ -75,16 +76,15 @@ function MessageBase({ message, index = 0, onRetry }: { message: ChatMessageType
           style={
             message.error
               ? {
-                  background: "rgba(254,235,235,0.85)",
-                  color: "#c0392b",
-                  border: "1px solid rgba(200,50,50,0.12)",
+                  background: "rgba(var(--quip-bad), 0.10)",
+                  color: "rgb(var(--quip-bad))",
+                  border: "1px solid rgba(var(--quip-bad), 0.22)",
                 }
               : {
-                  background: "rgb(var(--chrome-bg) / 0.85)",
-                  color: "#111111",
-                  border: "1px solid rgb(var(--chrome-line) / 0.06)",
-                  backdropFilter: "blur(12px)",
-                  WebkitBackdropFilter: "blur(12px)",
+                  // OPAQUE theme surface — readable ink in every palette.
+                  background: "rgba(var(--quip-line), 0.05)",
+                  color: "rgb(var(--quip-text))",
+                  border: "1px solid rgba(var(--quip-line), 0.09)",
                 }
           }
         >
@@ -109,8 +109,8 @@ function MessageBase({ message, index = 0, onRetry }: { message: ChatMessageType
             <button
               onClick={handleCopy}
               aria-label={copied ? "Copied" : "Copy message"}
-              className="absolute top-1 right-1 flex h-6 w-6 items-center justify-center rounded-md text-quip-gray opacity-0 transition-all hover:bg-black/[0.04] hover:text-quip-text group-hover:opacity-100"
-              style={{ fontSize: 11 }}
+              className="quip-copy-btn absolute top-1 right-1 flex h-6 w-6 items-center justify-center rounded-md opacity-0 transition-all group-hover:opacity-100"
+              style={{ fontSize: 11, color: "rgb(var(--quip-text-soft))" }}
             >
               {copied ? "✓" : "⧉"}
             </button>
@@ -137,9 +137,9 @@ function MessageBase({ message, index = 0, onRetry }: { message: ChatMessageType
             style={{
               fontSize: 10,
               fontWeight: 600,
-              color: "#0c6b8f",
-              background: "rgba(111,214,255,0.12)",
-              border: "1px solid rgba(111,214,255,0.4)",
+              color: "rgb(var(--quip-accent-deep))",
+              background: "rgba(var(--quip-accent), 0.12)",
+              border: "1px solid rgba(var(--quip-accent), 0.4)",
               cursor: "pointer",
             }}
           >

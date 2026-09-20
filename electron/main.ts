@@ -238,7 +238,7 @@ function clampWindowIntoView(win: BrowserWindow) {
   const c = clampRect({ x, y, width: w, height: h }, area);
   if (c.x !== x || c.y !== y) {
     win.setPosition(c.x, c.y, false);
-    if (windowModes.get(win.id) !== "full") writePosition(c.x, c.y);
+    if (!isFullLayout(windowModes.get(win.id) ?? "companion")) writePosition(c.x, c.y);
   }
 }
 
@@ -294,7 +294,7 @@ function applyCompanionVisible(visible: boolean, opts: { persist?: boolean; anno
       const mode = windowModes.get(win.id) ?? "companion";
       win.showInactive();
       win.moveTop();
-      win.setAlwaysOnTop(mode !== "full", "screen-saver");
+      win.setAlwaysOnTop(mode !== "full" && mode !== "fullscreen", "screen-saver");
       clampWindowIntoView(win);
     } else {
       win.hide();
@@ -307,11 +307,12 @@ function applyCompanionVisible(visible: boolean, opts: { persist?: boolean; anno
 }
 
 // ---------------------------------------------------------------------------
-// Window modes — companion sprite / small panel / full app.
+// Window modes — companion sprite / small panel / full app / TRUE full screen.
 //
-// companion : a tiny transparent window holding just the companion sprite.
-// panel     : the window grows — small chat panel with the companion beside it.
-// full      : the full Quip application, centered.
+// companion  : a tiny transparent window holding just the companion sprite.
+// panel      : the window grows — small chat panel with the companion beside it.
+// full       : the full Quip application, centered.
+// fullscreen : MODE 3 — the ENTIRE display, edge to edge, opaque themed.
 // ---------------------------------------------------------------------------
 const COMPANION_MODE_SIZE = { width: 132, height: 176 };
 const PANEL_MODE_SIZE = { width: 548, height: 560 };
@@ -323,6 +324,16 @@ function fullAppBounds(): { width: number; height: number } {
     width: Math.min(1060, area.width - 48),
     height: Math.min(680, area.height - 48),
   };
+}
+
+/** True when the mode is an app-sized layout (as opposed to the sprite). */
+export function isFullLayout(mode: WindowMode): boolean {
+  return mode === "full" || mode === "fullscreen";
+}
+
+/** Runtime narrowing for IPC payloads. */
+export function isWindowMode(v: unknown): v is WindowMode {
+  return v === "companion" || v === "panel" || v === "full" || v === "fullscreen";
 }
 
 /** Keep the bottom-right corner fixed so the companion stays visually in place. */
@@ -353,6 +364,17 @@ function setWindowMode(win: BrowserWindow, mode: WindowMode) {
       width: size.width,
       height: size.height,
     };
+  } else if (mode === "fullscreen") {
+    // MODE 3 — TRUE full screen: the entire display, edge to edge. We use the
+    // display's full bounds (frameless window) instead of OS fullscreen so the
+    // transparent window stays glitch-free on Windows.
+    const display = screen.getPrimaryDisplay();
+    next = {
+      x: display.bounds.x,
+      y: display.bounds.y,
+      width: display.bounds.width,
+      height: display.bounds.height,
+    };
   } else {
     const c = anchorBottomRight(cur, COMPANION_MODE_SIZE.width, COMPANION_MODE_SIZE.height);
     next = { x: c.x, y: c.y, width: COMPANION_MODE_SIZE.width, height: COMPANION_MODE_SIZE.height };
@@ -360,9 +382,9 @@ function setWindowMode(win: BrowserWindow, mode: WindowMode) {
 
   win.setResizable(true);
   win.setBounds(next);
-  win.setResizable(mode === "full");
-  win.setAlwaysOnTop(mode !== "full", "screen-saver");
-  if (mode === "full") {
+  win.setResizable(isFullLayout(mode));
+  win.setAlwaysOnTop(!isFullLayout(mode), "screen-saver");
+  if (isFullLayout(mode)) {
     win.setMinimumSize(760, 520);
   } else {
     win.setMinimumSize(0, 0);
@@ -702,7 +724,7 @@ function createWindow(companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | 
   win.on("move", () => {
     // Persist the anchor position — but not while in full mode (the full
     // window is centered; the companion anchor should stay where it was).
-    if (windows.size === 1 && windowModes.get(win.id) !== "full") {
+    if (windows.size === 1 && !isFullLayout(windowModes.get(win.id) ?? "companion")) {
       const [px, py] = win.getPosition();
       writePosition(px, py);
     }
@@ -842,7 +864,7 @@ function showQuipDesktop(): void {
     clampWindowIntoView(win);
     // "Always should open the page that of like my app" — the primary window
     // opens the full app experience, not the compact sprite.
-    if (first && windowModes.get(win.id) !== "full") {
+    if (first && !isFullLayout(windowModes.get(win.id) ?? "companion")) {
       setWindowMode(win, "full");
       win.focus();
     }
@@ -908,11 +930,11 @@ ipcMain.handle(IPC.GET_WINDOW_POSITION, (_e) => {
 });
 
 // ---------------------------------------------------------------------------
-// IPC — window modes (companion / panel / full)
+// IPC — window modes (companion / panel / full / fullscreen)
 // ---------------------------------------------------------------------------
 ipcMain.handle(IPC.WINDOW_MODE_SET, (_e, mode: WindowMode) => {
   const win = BrowserWindow.fromWebContents(_e.sender);
-  if (!win || (mode !== "companion" && mode !== "panel" && mode !== "full")) return false;
+  if (!win || !isWindowMode(mode)) return false;
   setWindowMode(win, mode);
   return true;
 });
@@ -2186,7 +2208,7 @@ if (!app.requestSingleInstanceLock()) {
       for (const win of windows.values()) {
         if (win.isDestroyed() || win.isMinimized()) continue;
         const mode = windowModes.get(win.id) ?? "companion";
-        if (companionVisible && mode !== "full" && !win.isVisible()) {
+        if (companionVisible && !isFullLayout(mode) && !win.isVisible()) {
           win.showInactive();
           win.moveTop();
           clampWindowIntoView(win);

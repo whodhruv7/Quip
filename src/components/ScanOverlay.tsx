@@ -64,9 +64,7 @@ export function ScanOverlay({ companionId, onProgress, onDone }: ScanOverlayProp
           transition={{ duration: 0.4 }}
           className="absolute inset-0 z-50 flex items-center justify-center"
           style={{
-            background: "rgba(255,255,255,0.85)",
-            backdropFilter: "blur(40px)",
-            WebkitBackdropFilter: "blur(40px)",
+            background: "rgb(var(--quip-bg))",
           }}
         >
           <div className="flex flex-col items-center gap-6">
@@ -120,7 +118,7 @@ export function ScanOverlay({ companionId, onProgress, onDone }: ScanOverlayProp
                 style={{
                   fontSize: 15,
                   fontWeight: 600,
-                  color: "#111",
+                  color: "rgb(var(--quip-text))",
                 }}
               >
                 {STAGE_LABELS[progress?.stage ?? "idle"] ?? "Starting"}
@@ -134,7 +132,7 @@ export function ScanOverlay({ companionId, onProgress, onDone }: ScanOverlayProp
                   transition={{ duration: 0.3 }}
                   style={{
                     fontSize: 12,
-                    color: "#9ca3af",
+                    color: "rgb(var(--quip-text-soft))",
                   }}
                 >
                   {progress.message}
@@ -148,7 +146,7 @@ export function ScanOverlay({ companionId, onProgress, onDone }: ScanOverlayProp
                 width: 200,
                 height: 3,
                 borderRadius: 3,
-                background: "rgba(0,0,0,0.06)",
+                background: "rgba(var(--quip-line), 0.08)",
                 overflow: "hidden",
               }}
             >

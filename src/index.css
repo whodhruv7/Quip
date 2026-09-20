@@ -397,6 +397,12 @@ body {
   box-shadow: 0 0 0 3px rgba(var(--quip-accent), 0.14);
 }
 
+/* Copy button on chat bubbles — theme-aware hover (no hardcoded black). */
+.quip-copy-btn:hover {
+  background: rgba(var(--quip-line), 0.09);
+  color: rgb(var(--quip-text));
+}
+
 /* ─── Code block polish ─────────────────────────────────────────────── */
 .quip-md pre {
   position: relative;

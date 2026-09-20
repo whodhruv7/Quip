@@ -100,7 +100,7 @@ export function ChatLayout({ messages, busy, onRetry }: ChatLayoutProps) {
       className="flex-1 overflow-y-auto px-4 py-3 quip-scroll"
       style={{
         scrollbarWidth: "thin",
-        scrollbarColor: "rgba(0,0,0,0.08) transparent",
+        scrollbarColor: "rgba(var(--quip-line), 0.14) transparent",
       }}
     >
       <div className="flex flex-col gap-3">
@@ -113,14 +113,14 @@ export function ChatLayout({ messages, busy, onRetry }: ChatLayoutProps) {
                   className="flex items-center justify-center py-2"
                   style={{
                     fontSize: 10,
-                    color: "rgba(0,0,0,0.35)",
+                    color: "rgb(var(--quip-text-soft))",
                     fontWeight: 500,
                     letterSpacing: 0.3,
                   }}
                 >
                   <span
                     style={{
-                      background: "rgba(0,0,0,0.03)",
+                      background: "rgba(var(--quip-line), 0.045)",
                       padding: "2px 8px",
                       borderRadius: 8,
                     }}

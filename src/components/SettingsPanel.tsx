@@ -14,6 +14,7 @@ import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { CompanionId, DeviceProfile, UserKnowledge } from "@/types";
 import type { ModelRouterStatus } from "@/types/models";
+import type { WindowMode } from "../../electron/shared";
 import { CompanionSwitch } from "./CompanionSwitch";
 import { ConfirmModal } from "./ConfirmModal";
 import { THEMES, applyTheme, currentTheme, isDarkTheme } from "@/lib/theme";
@@ -476,6 +477,24 @@ export function SettingsPanel({
       setShortcutResult({ ok: false, message: "Windows refused the shortcut — restart Quip and try once more." });
     } finally {
       setShortcutBusy(false);
+    }
+  };
+
+  /** Screen Mode — companion / panel / full app / TRUE full screen. */
+  const [screenMode, setScreenMode] = useState<WindowMode>("companion");
+  useEffect(() => {
+    try {
+      window.quip.getWindowMode().then((m) => setScreenMode(m)).catch(() => {});
+    } catch {
+      /* non-fatal */
+    }
+  }, []);
+  const handleScreenMode = (mode: WindowMode) => {
+    setScreenMode(mode);
+    try {
+      window.quip.setWindowMode(mode);
+    } catch {
+      /* non-fatal — main may still switch the window */
     }
   };
 
@@ -1244,6 +1263,47 @@ export function SettingsPanel({
               >
                 {bringing ? "Bringing…" : "Show Quip"}
               </button>
+            </div>
+
+            {/* Screen Mode — all four, one tap each (Mode 3 = TRUE full screen) */}
+            <div
+              className="rounded-2xl px-4 py-4"
+              style={{ border: "1px solid rgba(var(--quip-line), 0.09)", background: "rgba(var(--quip-line), 0.035)" }}
+            >
+              <span style={{ fontSize: 12, fontWeight: 700, color: "rgb(var(--quip-text))" }}>Screen mode</span>
+              <div className="mt-2.5 grid grid-cols-4 gap-2">
+                {([
+                  { id: "companion", label: "Companion" },
+                  { id: "panel", label: "Panel" },
+                  { id: "full", label: "Full App" },
+                  { id: "fullscreen", label: "Full Screen" },
+                ] as Array<{ id: WindowMode; label: string }>).map((m) => {
+                  const active = screenMode === m.id;
+                  return (
+                    <button
+                      key={m.id}
+                      onClick={() => handleScreenMode(m.id)}
+                      style={{
+                        fontSize: 10.5,
+                        fontWeight: 700,
+                        color: active ? "#fff" : "rgb(var(--quip-text-soft))",
+                        background: active
+                          ? "linear-gradient(135deg, rgb(var(--quip-accent)), rgb(var(--quip-accent-3)))"
+                          : "rgba(var(--quip-line), 0.05)",
+                        border: active ? "none" : "1px solid rgba(var(--quip-line), 0.10)",
+                        borderRadius: 10,
+                        padding: "8px 4px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {m.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <span data-tone="soft" style={{ fontSize: 10, color: "rgba(var(--quip-text-soft), 0.9)", marginTop: 6, display: "block" }}>
+                Full Screen takes the whole display — Esc or the same button brings the app back.
+              </span>
             </div>
 
             {/* Palette pointer — the full picker lives in General */}
