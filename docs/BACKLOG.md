@@ -3,18 +3,18 @@
 > Generated from the Master Future Vision blueprint (docs/MASTER-FUTURE-VISION.pdf) and the verified codebase audit (docs/CODEBASE_AUDIT.md). Every task carries acceptance criteria and a verification method. A task is DONE only when its verification has actually run and passed — never merely because code was written. Statuses: `todo` → `doing` → `done` / `blocked(reason)`.
 
 
-**Total tasks: 492** across 25 domains, dependency-ordered by phase (P0 startup/reliability → P1 architecture → P2 efficiency → P3 UX → P4 capability depth → P5 polish/verification).
+**Total tasks: 493** across 25 domains, dependency-ordered by phase (P0 startup/reliability → P1 architecture → P2 efficiency → P3 UX → P4 capability depth → P5 polish/verification).
 
 
 ## Phase P0 — Startup & reliability blockers (do first; nothing else starts with P0 open)
 
 | ID | Domain | Task | Acceptance criteria | Verification | Status |
 |----|--------|------|---------------------|--------------|--------|
-| Q-001 | Execution & Legacy | AbortSignal on legacy-tools scrape | Legacy fallback path bounded | timeout test | todo |
-| Q-002 | Startup & Lifecycle | Create companion window before bootstrap completes | Window visible before blocking bootstrap; bootstrap continues in background | boot test: window-visible timestamp < 2s warm | todo |
-| Q-003 | Startup & Lifecycle | Buffer BOOTSTRAP_PROGRESS events until first window exists | No progress event is dropped when broadcast runs before windows map is populated | unit test: buffer flush delivers all stages to late window | todo |
-| Q-004 | Startup & Lifecycle | Render real ScanOverlay progress on first launch | Overlay shows live stage events and completes only on real bootstrap done | clean-start test with simulated slow scan | todo |
-| Q-005 | Startup & Lifecycle | Remove ScanOverlay 1.2s fake-done timer | Overlay never marks scanned before real done event; generous timeout only as last resort | code assert + slow-scan test | todo |
+| Q-001 | Execution & Legacy | AbortSignal on legacy-tools scrape | Legacy fallback path bounded | timeout test | done |
+| Q-002 | Startup & Lifecycle | Create companion window before bootstrap completes | Window visible before blocking bootstrap; bootstrap continues in background | boot test: window-visible timestamp < 2s warm | done |
+| Q-003 | Startup & Lifecycle | Buffer BOOTSTRAP_PROGRESS events until first window exists | No progress event is dropped when broadcast runs before windows map is populated | unit test: buffer flush delivers all stages to late window | done |
+| Q-004 | Startup & Lifecycle | Render real ScanOverlay progress on first launch | Overlay shows live stage events and completes only on real bootstrap done | clean-start test with simulated slow scan | done |
+| Q-005 | Startup & Lifecycle | Remove ScanOverlay 1.2s fake-done timer | Overlay never marks scanned before real done event; generous timeout only as last resort | code assert + slow-scan test | done |
 | Q-006 | Startup & Lifecycle | Add launch-log stage timestamps for every boot stage | Each stage logs started/completed ms; failures log reason | read log in boot test; assert fields | todo |
 | Q-007 | Startup & Lifecycle | Make bootstrap per-stage fail-soft explicit | Each init stage catch logs its name; boot proceeds with honest degraded flags | inject stage failure; boot completes | todo |
 | Q-008 | Startup & Lifecycle | Single-flight device rescans | Concurrent RESCAN_DEVICE calls collapse to one running scan; last-wins | fire 5 IPC rescans; one scan observed | todo |
@@ -33,7 +33,7 @@
 |----|--------|------|---------------------|--------------|--------|
 | Q-017 | Permissions & Ledger | Dangerous allowlist management UI | Full-trust mode's allowlist viewable/editable in Settings | UI test | todo |
 | Q-018 | Startup & Lifecycle | Display-metrics change clamps geometry | Companion never lost when display config changes | display change simulation | todo |
-| Q-019 | Startup & Lifecycle | Clean-start matrix automation | Empty userData boot passes: scan visible, no errors, stores created | CI smoke with temp userData | todo |
+| Q-019 | Startup & Lifecycle | Clean-start matrix automation | Empty userData boot passes: scan visible, no errors, stores created | CI smoke with temp userData | done (sandbox: scripts/boot-smoke.sh — empty-userData boot, stores created, process alive; Windows matrix rows remain) |
 | Q-020 | Startup & Lifecycle | Repeated open/close/reopen lifecycle loop test | 20 cycles leave no window/process leaks and no state divergence | loop test with assertions | todo |
 | Q-021 | Startup & Lifecycle | Boot with no keys produces calm onboarding state | no-key message renders; no crash; Settings reachable | boot test without env | todo |
 | Q-022 | Startup & Lifecycle | Boot with malformed .env is fail-soft | Bad lines skipped with log; valid keys still load | malformed env test | todo |
@@ -46,11 +46,11 @@
 
 | ID | Domain | Task | Acceptance criteria | Verification | Status |
 |----|--------|------|---------------------|--------------|--------|
-| Q-027 | Architecture | Delete legacy task-brain/tool-executor/capability-registry trio | Files removed; import graph clean; tests green | build+tests after removal | todo |
-| Q-028 | Architecture | Remove unused runTask import lifeline | main.ts no longer references legacy pipeline | grep zero matches | todo |
+| Q-027 | Architecture | Delete legacy task-brain/tool-executor/capability-registry trio | Files removed; import graph clean; tests green | build+tests after removal | done |
+| Q-028 | Architecture | Remove unused runTask import lifeline | main.ts no longer references legacy pipeline | grep zero matches | done |
 | Q-029 | Architecture | Re-point any legacy-pipeline tests to live pipeline | No test imports deleted modules; coverage preserved via brain-hub tests | test suite green | todo |
 | Q-030 | Architecture | Single source risk table in actions/contracts | permission-modes + permission-system reference contracts table | unit test: tables identical | todo |
-| Q-031 | Architecture | Delete engine/window-policy.ts or promote it | No test-only production modules; decision recorded | import-graph report | todo |
+| Q-031 | Architecture | Delete engine/window-policy.ts or promote it | No test-only production modules; decision recorded | import-graph report | done |
 | Q-032 | Architecture | Split main.ts IPC handlers into ipc/ modules | main.ts < 1200 lines; handlers grouped by domain | line-count check + tests | todo |
 | Q-033 | Architecture | Extract buildSystemPrompt into prompt/ module | Prompt assembly unit-testable; CHAT_SEND thin | unit tests on prompt builder | todo |
 | Q-034 | Architecture | Extract window factory + tray into windows/ module | Lifecycle code isolated from IPC | module boundary review + tests | todo |
@@ -88,8 +88,8 @@
 | Q-066 | Caching & Indexing | Cache docs | Table 22-1 kept current | docs | todo |
 | Q-067 | Caching & Indexing | Index rebuild recovery | Corrupt index rebuilds honestly | corruption test | todo |
 | Q-068 | Caching & Indexing | Alias table persistence + bounds | Learned aliases stored, capped | store test | todo |
-| Q-069 | Execution & Verification | Per-step deadline on deterministic orchestrator path | executeWithRetry wrapped; hang fails honestly within budget | hanging-fetch test | todo |
-| Q-070 | Execution & Verification | AbortSignal on YouTube result scrape | searchYouTubeResults aborts at deadline | timeout test | todo |
+| Q-069 | Execution & Verification | Per-step deadline on deterministic orchestrator path | executeWithRetry wrapped; hang fails honestly within budget | hanging-fetch test | done |
+| Q-070 | Execution & Verification | AbortSignal on YouTube result scrape | searchYouTubeResults aborts at deadline | timeout test | done |
 | Q-071 | Execution & Verification | Unclear verdict implemented in verifier | Ambiguous observation yields unclear, not pass | verifier unit test | todo |
 | Q-072 | Execution & Verification | Expectation match-rule library | equals/exists/contains/delta rules shared by all steps | rule unit tests | todo |
 | Q-073 | Execution & Verification | Evidence retention per step | StepRecord stores observation + verdict + timings | record schema test | todo |
@@ -115,10 +115,10 @@
 | Q-093 | Execution & Verification | Concurrent task isolation | Two tasks cannot corrupt each other's state | concurrency test | todo |
 | Q-094 | Execution & Verification | Engine exception containment | Step throw becomes fail verdict, never process crash | fault-injection test | todo |
 | Q-095 | Execution & Verification | Verification documentation | Match rules + ladder documented | docs | todo |
-| Q-096 | IPC & Contracts | Move off-registry IPC literals into shared.ts | set-companion, permission-mode trio, approval-resolve, swarm channels declared once | ipc-audit passes with zero literals | todo |
-| Q-097 | IPC & Contracts | Remove dead IPC.SWARM_BROADCAST or wire it | No declared channel lacks both handler and consumer decision recorded | registry scan | todo |
+| Q-096 | IPC & Contracts | Move off-registry IPC literals into shared.ts | set-companion, permission-mode trio, approval-resolve, swarm channels declared once | ipc-audit passes with zero literals | done |
+| Q-097 | IPC & Contracts | Remove dead IPC.SWARM_BROADCAST or wire it | No declared channel lacks both handler and consumer decision recorded | registry scan | done |
 | Q-098 | IPC & Contracts | Extend ipc-audit with renderer-usage diff | Checker fails CI when a channel loses its consumer or handler | checker run on mutated fixture | todo |
-| Q-099 | IPC & Contracts | Wrap CHAT_SEND prompt build in guarded section | Brain throw yields CHAT_ERROR with kind, not unhandled rejection | throwing-brain stub test | todo |
+| Q-099 | IPC & Contracts | Wrap CHAT_SEND prompt build in guarded section | Brain throw yields CHAT_ERROR with kind, not unhandled rejection | throwing-brain stub test | done |
 | Q-100 | IPC & Contracts | Audit all ipcMain handlers for try/catch coverage | Every non-trivial handler returns typed error payload on throw | static scan + targeted tests | todo |
 | Q-101 | IPC & Contracts | Payload validation for window/geometry channels | NaN/garbage rejected safely; no crash path from hostile payload | fuzz payload test | todo |
 | Q-102 | IPC & Contracts | Payload validation for TASK_EXECUTE input | Malformed task input rejected with honest error before planning | fuzz test | todo |
@@ -137,17 +137,17 @@
 | Q-115 | IPC & Contracts | GetKnowledgeGraph payload bounds | Renderer receives bounded graph slice, not unbounded file | bounds test | todo |
 | Q-116 | IPC & Contracts | GetActionLog payload bounds | Bounded slice with newest-first order | bounds test | todo |
 | Q-117 | IPC & Contracts | Connection journal channel contract | Bounded entries; typed reasons | bounds test | todo |
-| Q-118 | Memory & Stores | Knowledge graph cap + eviction | Entities/links bounded; recency+importance eviction | soak test | todo |
-| Q-119 | Memory & Stores | Knowledge graph debounced writes | No sync write per upsert | write-pattern test | todo |
-| Q-120 | Memory & Stores | Timeline window bound | logEvent windowed; old events age out | soak test | todo |
-| Q-121 | Memory & Stores | Timeline debounced writes | No sync write per event | write-pattern test | todo |
+| Q-118 | Memory & Stores | Knowledge graph cap + eviction | Entities/links bounded; recency+importance eviction | soak test | done |
+| Q-119 | Memory & Stores | Knowledge graph debounced writes | No sync write per upsert | write-pattern test | done |
+| Q-120 | Memory & Stores | Timeline window bound | logEvent windowed; old events age out | soak test | done |
+| Q-121 | Memory & Stores | Timeline debounced writes | No sync write per event | write-pattern test | done |
 | Q-122 | Memory & Stores | Graph/timeline migration trims existing files | Upgrade trims with report of removals | migration test | todo |
 | Q-123 | Memory & Stores | Memory importance scoring tests | Score inputs: repetition, pins, use, correction | scoring tests | todo |
 | Q-124 | Memory & Stores | Decay + prune policy tests | Floor pruning; pinned immune | policy tests | todo |
 | Q-125 | Memory & Stores | Memory cap 200 working entries | Soak: 1000 extractions, cap held | soak test | todo |
 | Q-126 | Memory & Stores | Extraction evidence spans | Each memory shows source span | schema test | todo |
 | Q-127 | Memory & Stores | User correction outranks extraction | Correction window honored | policy test | todo |
-| Q-128 | Memory & Stores | Store-size CI assertions | All bounded stores asserted in tests | CI test | todo |
+| Q-128 | Memory & Stores | Store-size CI assertions | All bounded stores asserted in tests | CI test | done (knowledge-graph + timeline soaks in tests/reliability-round-2.test.mjs) |
 | Q-129 | Memory & Stores | Atomic-per-file write util | No truncated JSON after kill | crash test | todo |
 | Q-130 | Memory & Stores | Relevance-filtered prompt memory slice | Only task-relevant memory enters prompt | assembler test | todo |
 | Q-131 | Memory & Stores | Memory tab score display | User sees scores + evidence | renderer contract | todo |
@@ -159,7 +159,7 @@
 | Q-137 | Memory & Stores | Weekly reflection real store | Digest from real logs; bounded feedback (52) | bounds + honesty tests | todo |
 | Q-138 | Memory & Stores | Store documentation | Every store: purpose, cap, decay, writer | docs | todo |
 | Q-139 | Memory & Stores | User-data size diagnostic | Doctor shows per-store sizes | diagnostic test | todo |
-| Q-140 | Permissions & Security | Permission-mode settings card (3 modes) | Card shows current mode, switches persist, copy matches engine matrix | UI test: switch -> IPC -> persisted | todo |
+| Q-140 | Permissions & Security | Permission-mode settings card (3 modes) | Card shows current mode, switches persist, copy matches engine matrix | UI test: switch -> IPC -> persisted | done |
 | Q-141 | Permissions & Security | Remembered grants store | allow-once / allow-shape grants persisted, listed, revocable | store round-trip + revoke test | todo |
 | Q-142 | Permissions & Security | Grant scoping by shape + destination | An email-send grant never widens to generic send | scope tests | todo |
 | Q-143 | Permissions & Security | Approval panel shows step/target/consequence | Panel copy per spec; deny is first-class outcome | renderer contract test | todo |
@@ -219,11 +219,11 @@
 
 | ID | Domain | Task | Acceptance criteria | Verification | Status |
 |----|--------|------|---------------------|--------------|--------|
-| Q-195 | Companions | Kai body implements eyeOffset | Cursor tracking works for Kai | render test/manual pass | todo |
-| Q-196 | Companions | Ren body implements eyeOffset | Cursor tracking works for Ren | render test/manual pass | todo |
+| Q-195 | Companions | Kai body implements eyeOffset | Cursor tracking works for Kai | render test/manual pass | done |
+| Q-196 | Companions | Ren body implements eyeOffset | Cursor tracking works for Ren | render test/manual pass | done |
 | Q-197 | Companions | All-companion state matrix render pass | 6 companions x 13 states render with distinct art | matrix render checklist | todo |
 | Q-198 | Companions | Companion config single source | Art literals moved to config or documented as art | config scan | todo |
-| Q-199 | Companions | Progression bar uses active companion colors | Depth bar per-companion, not hardcoded Pix duo | render test | todo |
+| Q-199 | Companions | Progression bar uses active companion colors | Depth bar per-companion, not hardcoded Pix duo | render test | done |
 | Q-200 | Companions | Cosmetics tier consistency across roster | All companions have tier1/2/3 cosmetic slots | config test | todo |
 | Q-201 | Companions | Mood engine input audit | Only honest signals feed mood | audit + tests | todo |
 | Q-202 | Companions | Idle micro-gesture shuffle no-repeat | Gesture bag verified | unit test | todo |
@@ -238,8 +238,8 @@
 | Q-211 | Companions | Swarm spawn headless registry correctness | Registry-only spawns tracked without windows | unit test | todo |
 | Q-212 | Companions | Companion sprite crash fallback | main.tsx gradient fallback verified | error-boundary test | todo |
 | Q-213 | Settings | Permission-mode card (desktop tab) | Mode switch + explanation + grants list | UI tests | todo |
-| Q-214 | Settings | Guard refreshMemory/handleForget/handlePin | try/catch + honest error state | error-injection test | todo |
-| Q-215 | Settings | Guard handleResetDNA | Same | error-injection test | todo |
+| Q-214 | Settings | Guard refreshMemory/handleForget/handlePin | try/catch + honest error state | error-injection test | done |
+| Q-215 | Settings | Guard handleResetDNA | Same | error-injection test | done |
 | Q-216 | Settings | Quit confirmation copy per spec | Copy says companion leaves; cancel prominent | copy review | todo |
 | Q-217 | Settings | Restart-now only after needsRestart | Button gated by fetch result | state test | todo |
 | Q-218 | Settings | Fetch Updates progress + honest conflict UI | Stash conflict surfaces honestly | conflict fixture test | todo |
@@ -256,20 +256,20 @@
 | Q-229 | Settings | Accessibility: focus states + contrast | Focus visible; contrast >= 3:1 across themes | a11y pass | todo |
 | Q-230 | Settings | Settings docs | Every tab documented | docs | todo |
 | Q-231 | Themes & UX | Token-scan script with baseline | Color literals inventoried; count must not grow | scan script | todo |
-| Q-232 | Themes & UX | TopBar health pill tokens | Pill uses --quip-ok/bad | scan zero for file | todo |
-| Q-233 | Themes & UX | TopBar speaking bars tokens | Amber via --quip-warn | scan | todo |
-| Q-234 | Themes & UX | ChatMessage action badge tokens | ok/bad tokens replace hex | scan | todo |
-| Q-235 | Themes & UX | ChatMessage Dot fallback from theme | Fallback reads token, not #6FD6FF | render test | todo |
+| Q-232 | Themes & UX | TopBar health pill tokens | Pill uses --quip-ok/bad | scan zero for file | done |
+| Q-233 | Themes & UX | TopBar speaking bars tokens | Amber via --quip-warn | scan | done |
+| Q-234 | Themes & UX | ChatMessage action badge tokens | ok/bad tokens replace hex | scan | done |
+| Q-235 | Themes & UX | ChatMessage Dot fallback from theme | Fallback reads token, not #6FD6FF | render test | done |
 | Q-236 | Themes & UX | ChatInput focus styles via CSS | Inline borderColor mutation replaced by token CSS | scan | todo |
 | Q-237 | Themes & UX | ChatWelcome status colors tokens | Greens/ambers via tokens | scan | todo |
 | Q-238 | Themes & UX | ConfirmModal gradient tokens | Danger gradient from tokens | scan | todo |
 | Q-239 | Themes & UX | ActionApprovalPanel palette tokens | Risk palette from tokens | scan | todo |
 | Q-240 | Themes & UX | Settings toggle knob tokens | Knobs from chrome tokens | scan | todo |
 | Q-241 | Themes & UX | Progression depth bar tokens | Per-companion colors | render test | todo |
-| Q-242 | Themes & UX | WeeklyReflection theme integration | Component themed, no bg-white/90 classes | scan + render pass | todo |
-| Q-243 | Themes & UX | WeeklyReflection real digest | getWeeklyDigest data; zero fabricated numbers | honesty test | todo |
-| Q-244 | Themes & UX | WeeklyReflection feedback wired | Buttons record via recordReflectionFeedback | integration test | todo |
-| Q-245 | Themes & UX | WeeklyReflection honest empty state | No activity => no-activity copy | empty-state test | todo |
+| Q-242 | Themes & UX | WeeklyReflection theme integration | Component themed, no bg-white/90 classes | scan + render pass | done |
+| Q-243 | Themes & UX | WeeklyReflection real digest | getWeeklyDigest data; zero fabricated numbers | honesty test | done |
+| Q-244 | Themes & UX | WeeklyReflection feedback wired | Buttons record via recordReflectionFeedback | integration test | done |
+| Q-245 | Themes & UX | WeeklyReflection honest empty state | No activity => no-activity copy | empty-state test | done |
 | Q-246 | Themes & UX | Session history UI | Archive list + open + search over stored sessions | UI tests | todo |
 | Q-247 | Themes & UX | archiveSession wired to New chat | New chat archives; history lists it | integration test | todo |
 | Q-248 | Themes & UX | Fullscreen layout dedup with full | One parameterized FullLayout component | component tests | todo |
@@ -345,9 +345,9 @@
 | Q-313 | Filesystem & OS | Document create primitive (md/txt/docx-ready) | Creates with template; verified existence+shape | primitive tests | todo |
 | Q-314 | Filesystem & OS | Clipboard read/write with round-trip verify | Verification equality | primitive tests | todo |
 | Q-315 | Filesystem & OS | OS settings primitives (volume/brightness) | Read-back verification; range clamps | primitive tests (mock) | todo |
-| Q-316 | Filesystem & OS | Battery real read (Windows) with cache | Real values via WMI; 60s cache; honest unsupported | read test (mock WMI); honest fallback test | todo |
-| Q-317 | Filesystem & OS | Battery-aware prompt section live | Low-battery line only when real signal says so | prompt test | todo |
-| Q-318 | Filesystem & OS | Battery-aware proactive check live | checkBatteryCritical uses real values | unit test | todo |
+| Q-316 | Filesystem & OS | Battery real read (Windows) with cache | Real values via WMI; 60s cache; honest unsupported | read test (mock WMI); honest fallback test | done |
+| Q-317 | Filesystem & OS | Battery-aware prompt section live | Low-battery line only when real signal says so | prompt test | done |
+| Q-318 | Filesystem & OS | Battery-aware proactive check live | checkBatteryCritical uses real values | unit test | done |
 | Q-319 | Filesystem & OS | Network info primitive | Honest online/offline/transport state | primitive test | todo |
 | Q-320 | Filesystem & OS | App launch/focus/close verification | Process/window observed for each | primitive tests | todo |
 | Q-321 | Filesystem & OS | Filesystem docs | Rules + primitives documented | docs | todo |
@@ -527,6 +527,8 @@
 | Q-490 | Testing & CI | Headless boot smoke (xvfb) in CI | Main process boots; window created; no crash | gate (where env allows) | todo |
 | Q-491 | Testing & CI | Regression test per closed bug | Every bugs-ledger fix links a test | ledger audit | todo |
 | Q-492 | Testing & CI | Nightly extended soak (optional) | Bounds + lifecycle soaks run nightly | scheduled job or script | todo |
+
+| Q-493 | Startup & Lifecycle | Fix production renderer load path (white-screen root cause) | loadFile resolved to dist-electron/dist/index.html (nonexistent); now repo dist/ — verified by headless boot smoke with zero load errors | boot smoke + ERR_FILE_NOT_FOUND absent | done (commit c8ee774) |
 
 ## Domain summary
 
