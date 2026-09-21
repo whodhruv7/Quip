@@ -15,7 +15,59 @@
 // -----------------------------------------------------------------------------
 
 import os from "node:os";
+import { exec } from "node:child_process";
 import type { EnvironmentState } from "../../src/types";
+
+// ── REAL battery telemetry ───────────────────────────────────────────────
+// The battery used to be hardcoded to supported:false / level:1 / charging:true,
+// which silently disabled every low-power feature (prompt section, proactive
+// check). We now read the REAL value on Windows via WMI (60s cache) and report
+// an honest "unsupported" elsewhere — never a plausible lie.
+type BatteryReading = { supported: boolean; level: number; charging: boolean };
+let batteryCache: { at: number; reading: BatteryReading } | null = null;
+const BATTERY_TTL_MS = 60_000;
+
+function readBatteryViaWmi(): Promise<BatteryReading> {
+  return new Promise((resolve) => {
+    if (process.platform !== "win32") {
+      resolve({ supported: false, level: 1, charging: true });
+      return;
+    }
+    const cmd =
+      'powershell -NoProfile -Command "$b=Get-CimInstance Win32_Battery; ' +
+      'if ($b) { \\"{0}|{1}\\" -f $b.EstimatedChargeRemaining, ($b.BatteryStatus -ge 2) } ' +
+      'else { \\"none\\" }"';
+    exec(cmd, { timeout: 5000 }, (_err, stdout) => {
+      const out = (stdout || "").trim();
+      if (!out || out === "none") {
+        // Desktop PC or inaccessible WMI — honest unsupported, not a fake value.
+        resolve({ supported: false, level: 1, charging: true });
+        return;
+      }
+      const parts = out.split("|");
+      const pct = Number.parseFloat(parts[0]);
+      const charging = parts[1] === "True" || parts[1] === "true";
+      if (Number.isFinite(pct)) {
+        resolve({
+          supported: true,
+          level: Math.min(1, Math.max(0, pct / 100)),
+          charging,
+        });
+      } else {
+        resolve({ supported: false, level: 1, charging: true });
+      }
+    });
+  });
+}
+
+async function getBattery(): Promise<BatteryReading> {
+  if (batteryCache && Date.now() - batteryCache.at < BATTERY_TTL_MS) {
+    return batteryCache.reading;
+  }
+  const reading = await readBatteryViaWmi();
+  batteryCache = { at: Date.now(), reading };
+  return reading;
+}
 
 type Listener = (state: EnvironmentState) => void;
 
@@ -31,15 +83,12 @@ class EnvironmentBrain {
 
   /** Read a single snapshot synchronously (best effort). */
   snapshot(): EnvironmentState {
-    let battery: EnvironmentState["battery"] = {
-      supported: false,
-      level: 1,
-      charging: true,
-    };
-
-    if (typeof (powerMonitor as any)?.getSystemIdleTime === "function") {
-      // battery is async in newer Electron; attempt gracefully.
-    }
+    // Battery: last KNOWN reading (async WMI fills the cache in the
+    // background). Until the first read completes this is honest-unsupported,
+    // not a fake 100%.
+    const battery: EnvironmentState["battery"] = batteryCache
+      ? batteryCache.reading
+      : { supported: false, level: 1, charging: true };
 
     const idleSeconds =
       typeof (powerMonitor as any)?.getSystemIdleTime === "function"
@@ -62,16 +111,14 @@ class EnvironmentBrain {
     };
   }
 
-  /** Async snapshot — includes battery if the Electron API is available. */
+  /** Async snapshot — includes REAL battery where the platform provides it. */
   async snapshotAsync(): Promise<EnvironmentState> {
     const base = this.snapshot();
     try {
-      if (typeof (powerMonitor as any)?.getCurrentTemperature === "function") {
-        // future-proof no-op
-      }
-      // Electron >= 25 exposes getBatteryUsage? No. Use process-level info.
+      base.battery = await getBattery();
+      base.power = base.battery.charging ? "ac" : "battery";
     } catch {
-      /* ignore */
+      /* keep honest-unsupported fallback */
     }
     return base;
   }

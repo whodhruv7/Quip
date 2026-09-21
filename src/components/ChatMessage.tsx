@@ -153,8 +153,8 @@ function MessageBase({ message, index = 0, onRetry }: { message: ChatMessageType
             style={{
               fontSize: 10,
               fontWeight: 600,
-              color: message.action.success ? "#16a34a" : "#dc2626",
-              background: message.action.success ? "rgba(34,197,94,0.08)" : "rgba(239,68,68,0.08)",
+              color: `rgb(var(--quip-${message.action.success ? "ok" : "bad"}))`,
+              background: `rgba(var(--quip-${message.action.success ? "ok" : "bad"}),0.08)`,
             }}
           >
             <span>{message.action.success ? "✓" : "✕"}</span>
@@ -166,7 +166,7 @@ function MessageBase({ message, index = 0, onRetry }: { message: ChatMessageType
   );
 }
 
-function Dot({ delay = 0, color = "#6FD6FF" }: { delay?: number; color?: string }) {
+function Dot({ delay = 0, color = "rgb(var(--quip-accent))" }: { delay?: number; color?: string }) {
   return (
     <span
       className="inline-block h-1.5 w-1.5 animate-bounce rounded-full"

@@ -50,13 +50,33 @@ class TimelineBrain {
     }
   }
 
+  // ── BOUND (the frugality contract) ──────────────────────────────────
+  // The timeline used to push events forever with a whole-file sync write
+  // per event. Events now window at 400 (newest kept) and writes are
+  // debounced, matching every other bounded store in Quip.
+  private static readonly MAX_EVENTS = 400;
+  private static readonly SAVE_DEBOUNCE_MS = 2_000;
+  private saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private scheduleSave() {
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = null;
+      this.save();
+    }, TimelineBrain.SAVE_DEBOUNCE_MS);
+  }
+
   /**
-   * Log a new event into the timeline.
+   * Log a new event into the timeline (bounded, debounced persistence).
    */
   logEvent(event: Omit<TimelineEvent, "id">) {
     const id = Math.random().toString(36).substring(2, 9);
     this.state.events.push({ ...event, id });
-    this.save();
+    if (this.state.events.length > TimelineBrain.MAX_EVENTS) {
+      // Keep the NEWEST events — drop the oldest beyond the window.
+      this.state.events = this.state.events.slice(-TimelineBrain.MAX_EVENTS);
+    }
+    this.scheduleSave();
   }
 
   /**

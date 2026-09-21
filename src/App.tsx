@@ -11,7 +11,7 @@
 //
 // Closing the panel or the full app always returns to the single companion.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Companion } from "@/components/Companion";
 import { TopBar } from "@/components/TopBar";
@@ -239,8 +239,10 @@ export default function App() {
     chatBusy &&
     messages.some((m) => m.role === "assistant" && m.streaming && m.content.length > 0);
   // Fresh task outcome (≤2s old) wins: success jump, concerned shake, or a
-  // gentle cancelled droop. Then approval → waiting sway, and a running task
-  // maps to its REAL phase — planning/observing/working, never fake states.
+  // gentle cancelled droop. A re-render timer clears the pose at exactly 2s
+  // so the sprite never sticks in a celebratory/guilty expression until some
+  // unrelated state happens to change (the audit's stuck-pose bug).
+  const [, forceTick] = useReducer((x: number) => x + 1, 0);
   const outcomeFlash: "success" | "error" | "cancelled" | null =
     taskOutcome && Date.now() - taskOutcome.at < 2000
       ? taskOutcome.cancelled
@@ -249,6 +251,16 @@ export default function App() {
           ? "success"
           : "error"
       : null;
+  useEffect(() => {
+    if (!taskOutcome) return;
+    const remaining = 2000 - (Date.now() - taskOutcome.at);
+    if (remaining <= 0) {
+      forceTick();
+      return;
+    }
+    const t = setTimeout(forceTick, remaining);
+    return () => clearTimeout(t);
+  }, [taskOutcome]);
   const pixState: PixState = outcomeFlash
     ? outcomeFlash
     : approvalRequest

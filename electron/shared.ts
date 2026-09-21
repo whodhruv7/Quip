@@ -127,7 +127,11 @@ export const IPC = {
   GET_SWARM_INSTANCES: "quip:get-swarm-instances",
   INTER_COMPANION_MSG: "quip:inter-companion-msg",
   AUTO_TASK: "quip:auto-task",
-  SWARM_BROADCAST: "quip:swarm-broadcast",
+  SET_COMPANION: "quip:set-companion",
+  APPROVAL_RESOLVE: "quip:approval-resolve",
+  GET_PERMISSION_MODE: "quip:get-permission-mode",
+  SET_PERMISSION_MODE: "quip:set-permission-mode",
+  CYCLE_PERMISSION_MODE: "quip:cycle-permission-mode",
 } as const;
 
 // ─── Window mode ───────────────────────────────────────────────────────────
@@ -163,7 +167,7 @@ export interface ChatDonePayload {
 export interface ChatErrorPayload {
   requestId: string;
   message: string;
-  kind: "no-key" | "http" | "network" | "parse";
+  kind: "no-key" | "http" | "network" | "parse" | "internal";
 }
 
 /** Live provider chip — emitted when an attempt starts (confirmed=false)

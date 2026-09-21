@@ -32,27 +32,47 @@ export function ScanOverlay({ companionId, onProgress, onDone }: ScanOverlayProp
   const theme = getCompanion(companionId as any);
 
   useEffect(() => {
-    // Fast fallback: 1.2s max — app should feel instant
-    const fallback = setTimeout(() => {
-      setVisible(false);
-      setTimeout(() => onDone?.(), 150);
-    }, 1200);
+    // HONEST completion: the overlay closes when the real bootstrap-done
+    // event arrives. The only fallback is a LAST-RESORT watchdog for the
+    // case where the backend never emits anything at all (crashed pipeline)
+    // — it no longer fakes "done" after a fixed 1.2s while the scan is
+    // genuinely still running (that lied to the user about first launch).
+    let sawAnyEvent = false;
+    let watchdog: ReturnType<typeof setTimeout> | null = null;
+
+    const armWatchdog = () => {
+      if (watchdog) clearTimeout(watchdog);
+      // 8s with zero events (or zero NEW events) => backend is stuck;
+      // dismiss honestly rather than hanging forever.
+      watchdog = setTimeout(() => {
+        setVisible(false);
+        setTimeout(() => onDone?.(), 150);
+      }, 8000);
+    };
+    armWatchdog();
 
     const off = window.quip.onBootstrapProgress((p) => {
+      sawAnyEvent = true;
       setProgress(p);
       onProgress?.(p);
+      // Any real activity pushes the watchdog out; completion is the
+      // backend's `done` flag — never a timer guessing on its behalf.
       if (p.done) {
-        clearTimeout(fallback);
+        if (watchdog) clearTimeout(watchdog);
         setTimeout(() => {
           setVisible(false);
           setTimeout(() => onDone?.(), 200);
         }, 200);
+      } else {
+        armWatchdog();
       }
     });
     return () => {
-      clearTimeout(fallback);
+      if (watchdog) clearTimeout(watchdog);
       off();
     };
+    // sawAnyEvent tracked for clarity; watchdog re-arm covers liveness.
+    void sawAnyEvent;
   }, [onProgress, onDone]);
 
   return (

@@ -227,7 +227,12 @@ export async function searchYouTubeResults(query: string): Promise<YouTubeResult
   try {
     const res = await fetch(
       `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`,
-      { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" } }
+      {
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+        // AbortSignal: a hung scrape used to stall the play_media verification
+        // path indefinitely. 10s is generous for one HTML round-trip.
+        signal: AbortSignal.timeout(10_000),
+      }
     );
     const html = await res.text();
     const results = extractYouTubeResults(html);

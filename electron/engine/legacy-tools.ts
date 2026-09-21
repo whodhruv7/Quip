@@ -113,7 +113,7 @@ export const MediaTool = {
     try {
       if (params.youtube === "true" && params.query) {
         try {
-          const res = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(params.query)}`);
+          const res = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(params.query)}`, { signal: AbortSignal.timeout(10000) });
           const html = await res.text();
           const match = html.match(/"videoId":"([a-zA-Z0-9_-]{11})"/);
           if (match && match[1]) {

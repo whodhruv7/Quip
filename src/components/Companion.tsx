@@ -170,10 +170,10 @@ function KaiBody({ t, asleep, blinking, eyeOffset = { x: 0, y: 0 } }: { t: Compa
       <rect x="4" y="5" width="24" height="24" rx="8" fill="white" stroke="rgba(0,0,0,0.04)" strokeWidth="0.8" />
       {/* Face panel */}
       <rect x="7" y="9" width="18" height="13" rx="5" fill={t.dark} />
-      {/* Eyes — slightly narrower, wise look */}
+      {/* Eyes — slightly narrower, wise look; follow the cursor like the rest of the roster */}
       <motion.g variants={blinkVar} initial="open"
         animate={asleep ? "blink" : blinking ? "blink" : "open"}
-        style={{ originY: "14.25px" }}>
+        style={{ originY: "14.25px", x: eyeOffset.x, y: eyeOffset.y }}>
         <rect x="10" y="12" width="3.5" height="4.5" rx="0.8" fill={t.eyeColor} />
         <rect x="18.5" y="12" width="3.5" height="4.5" rx="0.8" fill={t.eyeColor} />
       </motion.g>
@@ -216,10 +216,10 @@ function RenBody({ t, asleep, blinking, eyeOffset = { x: 0, y: 0 } }: { t: Compa
       <rect x="5" y="7" width="22" height="20" rx="5" fill="none" stroke="rgba(255,215,0,0.20)" strokeWidth="0.6" />
       {/* Face panel - darker */}
       <rect x="7" y="10" width="18" height="12" rx="4" fill={t.dark} />
-      {/* Eyes — bold, determined look */}
+      {/* Eyes — bold, determined look; follow the cursor like the rest of the roster */}
       <motion.g variants={blinkVar} initial="open"
         animate={asleep ? "blink" : blinking ? "blink" : "open"}
-        style={{ originY: "14.75px" }}>
+        style={{ originY: "14.75px", x: eyeOffset.x, y: eyeOffset.y }}>
         <rect x="10" y="13" width="4" height="3.5" rx="0.6" fill={t.eyeColor} />
         <rect x="18" y="13" width="4" height="3.5" rx="0.6" fill={t.eyeColor} />
       </motion.g>

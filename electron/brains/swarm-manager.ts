@@ -17,6 +17,7 @@
 // -----------------------------------------------------------------------------
 
 import { BrowserWindow } from "electron";
+import { IPC } from "../shared";
 
 /**
  * The SINGLE window factory — injected by main.ts. Every companion window
@@ -107,7 +108,7 @@ class SwarmManager {
     if (autoTask) {
       win.webContents.once("did-finish-load", () => {
         if (!win.isDestroyed()) {
-          win.webContents.send("quip:auto-task", { task: autoTask });
+          win.webContents.send(IPC.AUTO_TASK, { task: autoTask });
         }
       });
     }
@@ -165,7 +166,7 @@ class SwarmManager {
       return false;
     }
 
-    targetWin.webContents.send("quip:inter-companion-msg", {
+    targetWin.webContents.send(IPC.INTER_COMPANION_MSG, {
       from: fromInst.companionId,
       to: toCompanionId,
       message,

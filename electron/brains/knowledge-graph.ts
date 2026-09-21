@@ -56,6 +56,14 @@ export interface Subgraph {
 
 const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 
+// ── BOUNDS (the frugality contract) ─────────────────────────────────────
+// The graph used to grow without limit and rewrite its whole file on every
+// upsert. It now has hard caps with importance/recency eviction and a
+// debounced save, matching every other bounded store in Quip.
+const MAX_ENTITIES = 500;
+const MAX_LINKS = 1500;
+const SAVE_DEBOUNCE_MS = 2_000;
+
 class KnowledgeGraphBrain {
   private graph: KnowledgeGraph = {
     schemaVersion: SCHEMA_VERSION,
@@ -65,6 +73,7 @@ class KnowledgeGraphBrain {
   };
   private filePath: string | null = null;
   private userEntityId: string | null = null;
+  private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
   init(userDataDir: string): void {
     this.filePath = path.join(userDataDir, FILENAME);
@@ -88,11 +97,52 @@ class KnowledgeGraphBrain {
 
   private save(): void {
     if (!this.filePath) return;
-    try {
-      this.graph.updatedAt = Date.now();
-      fs.writeFileSync(this.filePath, JSON.stringify(this.graph, null, 2));
-    } catch {
-      /* best effort */
+    // Debounced: bursts of upserts (memory extraction, conversation parsing)
+    // collapse into ONE write instead of rewriting the whole file per event.
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = null;
+      try {
+        this.graph.updatedAt = Date.now();
+        fs.writeFileSync(this.filePath!, JSON.stringify(this.graph, null, 2));
+      } catch {
+        /* best effort */
+      }
+    }, SAVE_DEBOUNCE_MS);
+  }
+
+  /** Enforce caps: evict lowest-value entities (never the user root) and
+   *  weakest links. Called before every save-shaped mutation. */
+  private enforceBounds(): void {
+    if (this.graph.entities.length > MAX_ENTITIES) {
+      const keep = new Set<string>();
+      for (const e of this.graph.entities) if (e.attributes.isSelf) keep.add(e.id);
+      const evictable = this.graph.entities
+        .filter((e) => !keep.has(e.id))
+        .sort(
+          (a, b) =>
+            a.importance * 0.7 +
+            Math.min(a.mentionCount, 10) * 0.02 +
+            a.lastMentionedAt / 1e13 -
+            (b.importance * 0.7 +
+              Math.min(b.mentionCount, 10) * 0.02 +
+              b.lastMentionedAt / 1e13)
+        );
+      const toRemove = new Set(
+        evictable.slice(0, this.graph.entities.length - MAX_ENTITIES).map((e) => e.id)
+      );
+      if (toRemove.size > 0) {
+        this.graph.entities = this.graph.entities.filter((e) => !toRemove.has(e.id));
+        this.graph.links = this.graph.links.filter(
+          (l) => !toRemove.has(l.sourceId) && !toRemove.has(l.targetId)
+        );
+      }
+    }
+    if (this.graph.links.length > MAX_LINKS) {
+      this.graph.links = this.graph.links
+        .slice()
+        .sort((a, b) => b.weight - a.weight)
+        .slice(0, MAX_LINKS);
     }
   }
 
@@ -111,6 +161,7 @@ class KnowledgeGraphBrain {
         mentionCount: 0,
       };
       this.graph.entities.push(user);
+      this.enforceBounds();
       this.save();
     }
     this.userEntityId = user.id;
@@ -131,6 +182,7 @@ class KnowledgeGraphBrain {
       existing.lastMentionedAt = Date.now();
       existing.mentionCount += 1;
       if (importance !== undefined) existing.importance = importance;
+      this.enforceBounds();
       this.save();
       return existing;
     }
@@ -145,6 +197,7 @@ class KnowledgeGraphBrain {
       mentionCount: 1,
     };
     this.graph.entities.push(entity);
+    this.enforceBounds();
     this.save();
     return entity;
   }
@@ -164,6 +217,7 @@ class KnowledgeGraphBrain {
     );
     if (existing) {
       existing.weight = Math.min(1, existing.weight + 0.1);
+      this.enforceBounds();
       this.save();
       return;
     }
@@ -174,6 +228,7 @@ class KnowledgeGraphBrain {
       weight,
       createdAt: Date.now(),
     });
+    this.enforceBounds();
     this.save();
   }
 
@@ -255,6 +310,7 @@ class KnowledgeGraphBrain {
     this.graph.links = this.graph.links.filter(
       (l) => l.sourceId !== id && l.targetId !== id
     );
+    this.enforceBounds();
     this.save();
   }
 

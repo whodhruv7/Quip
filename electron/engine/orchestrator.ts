@@ -24,6 +24,31 @@ import { contextStore } from "./context-store";
 import { runAgentLoop, agentBrain } from "./agent-loop";
 import type { ModelRouter } from "../system/model-router";
 
+/** Reject with an honest timeout result if the promise outlives the deadline. */
+async function withDeadline(
+  p: Promise<ToolResult>,
+  deadlineMs: number,
+  action: string
+): Promise<ToolResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<ToolResult>((resolve) => {
+    timer = setTimeout(
+      () =>
+        resolve({
+          success: false,
+          output: `Step "${action}" exceeded its ${Math.round(deadlineMs / 1000)}s deadline`,
+          note: "Deadline exceeded — the step was stopped instead of hanging forever.",
+        }),
+      deadlineMs
+    );
+  });
+  try {
+    return await Promise.race([p, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export interface ProgressUpdate {
   step: number;
   total: number;
@@ -511,8 +536,14 @@ class Orchestrator {
     const attempts = RETRYABLE_ACTIONS.has(step.action) ? maxRetries : 0;
     let lastError: ToolResult | null = null;
 
+    // PER-STEP DEADLINE: the deterministic path used to have no timeout at
+    // all, so a single hung fetch/PowerShell call stalled the whole task
+    // indefinitely. Every step now carries the same deadline discipline the
+    // Action Engine has — a hang is an honest failure, never an infinite wait.
+    const deadlineMs = 45_000;
+
     for (let attempt = 0; attempt <= attempts; attempt++) {
-      const result = await executeTool(step.action, step, ctx);
+      const result = await withDeadline(executeTool(step.action, step, ctx), deadlineMs, step.action);
       if (result.success) return result;
       lastError = result;
       if (attempt < attempts) {

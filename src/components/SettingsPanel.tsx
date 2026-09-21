@@ -18,6 +18,7 @@ import type { WindowMode } from "../../electron/shared";
 import { CompanionSwitch } from "./CompanionSwitch";
 import { ConfirmModal } from "./ConfirmModal";
 import { THEMES, applyTheme, currentTheme, isDarkTheme } from "@/lib/theme";
+import { getCompanion } from "@/lib/companion-config";
 import quipLogo from "@/assets/quip-logo.png";
 import quipMark from "@/assets/quip-mark.png";
 
@@ -156,6 +157,9 @@ export function SettingsPanel({
   // Desktop tab state
   const [companionVisible, setCompanionVisible] = useState(true);
   const [checkInsEnabled, setCheckInsEnabled] = useState(true);
+  // Permission mode — full backend (engine + IPC) existed with zero UI until
+  // this card landed; now the user can actually govern what auto-runs.
+  const [permMode, setPermMode] = useState<{ mode: string; label: string } | null>(null);
 
   // Theme picker state (General tab)
   const [theme, setTheme] = useState<string>(() => currentTheme());
@@ -198,7 +202,20 @@ export function SettingsPanel({
       .getCheckInsEnabled()
       .then(setCheckInsEnabled)
       .catch(() => {});
+    window.quip
+      .getPermissionMode()
+      .then(setPermMode)
+      .catch(() => {});
   }, [open]);
+
+  const handleSetPermMode = async (mode: string) => {
+    try {
+      const next = await window.quip.setPermissionMode(mode);
+      setPermMode(next);
+    } catch {
+      /* non-fatal — mode unchanged */
+    }
+  };
 
   /** Probe BOTH providers for real (main process) and auto-select the one
    *  that is genuinely CONNECTED — the user never has to guess. */
@@ -396,18 +413,30 @@ export function SettingsPanel({
   };
 
   const refreshMemory = async () => {
-    const fresh = await window.quip.getMemories();
-    setMemory(fresh);
+    try {
+      const fresh = await window.quip.getMemories();
+      setMemory(fresh);
+    } catch {
+      /* store read hiccup — keep current view; refresh retries next open */
+    }
   };
 
   const handleForget = async (id: string) => {
-    await window.quip.forgetMemory(id);
-    await refreshMemory();
+    try {
+      await window.quip.forgetMemory(id);
+      await refreshMemory();
+    } catch {
+      /* ignore */
+    }
   };
 
   const handlePin = async (id: string) => {
-    await window.quip.pinMemory(id);
-    await refreshMemory();
+    try {
+      await window.quip.pinMemory(id);
+      await refreshMemory();
+    } catch {
+      /* ignore */
+    }
   };
 
   const handlePrune = async () => {
@@ -425,9 +454,13 @@ export function SettingsPanel({
 
   const handleResetDNA = async () => {
     setConfirmResetDNA(false);
-    await window.quip.resetUserProfile();
-    const fresh = await window.quip.getUserProfile();
-    setProfile(fresh);
+    try {
+      await window.quip.resetUserProfile();
+      const fresh = await window.quip.getUserProfile();
+      setProfile(fresh);
+    } catch {
+      /* ignore — the profile view keeps its previous state */
+    }
   };
 
   /** Theme picker — applies instantly + persists for every future boot. */
@@ -1659,6 +1692,53 @@ export function SettingsPanel({
               </button>
             </div>
 
+            {/* Permission mode — what Quip may auto-run without asking */}
+            <div
+              className="rounded-xl px-3 py-3"
+              style={{ border: "1px solid rgba(var(--quip-line), 0.08)", background: "rgba(var(--quip-line), 0.02)" }}
+            >
+              <div className="flex flex-col" style={{ marginBottom: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "rgb(var(--quip-text))" }}>
+                  Ask before actions
+                </span>
+                <span style={{ fontSize: 10.5, color: "rgba(var(--quip-text-soft), 0.95)", marginTop: 2 }}>
+                  How much Quip may do on its own. Opening apps and reading your screen is always
+                  included; deleting, sending or buying always asks first in every mode.
+                </span>
+              </div>
+              <div className="flex gap-2">
+                {[
+                  { id: "ask_every_time", label: "Ask everything" },
+                  { id: "approve_task", label: "Smart (default)" },
+                  { id: "full_access", label: "Full trust" },
+                ].map((m) => {
+                  const active = permMode?.mode === m.id;
+                  return (
+                    <button
+                      key={m.id}
+                      onClick={() => handleSetPermMode(m.id)}
+                      aria-pressed={active}
+                      className="flex-1 rounded-lg px-2 py-2 text-[10.5px] font-semibold transition-all"
+                      style={{
+                        border: `1px solid ${active ? "rgb(var(--quip-accent))" : "rgba(var(--quip-line), 0.14)"}`,
+                        background: active ? "rgba(var(--quip-accent), 0.12)" : "transparent",
+                        color: active ? "rgb(var(--quip-accent-deep))" : "rgb(var(--quip-text-soft))",
+                      }}
+                    >
+                      {m.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 10, color: "rgba(var(--quip-text-soft), 0.8)", marginTop: 6 }}>
+                {permMode?.mode === "ask_every_time"
+                  ? "Quip asks before every action that changes anything."
+                  : permMode?.mode === "full_access"
+                    ? "Quip runs most actions without asking. Risky ones still get a gate."
+                    : "Quip runs everyday actions (open, search, read) on its own; sends, deletes and purchases always ask."}
+              </div>
+            </div>
+
             {/* The ONLY real quit */}
             <button
               onClick={() => setConfirmQuit(true)}
@@ -1886,7 +1966,7 @@ export function SettingsPanel({
                         style={{
                           height: "100%",
                           width: `${depthPct}%`,
-                          background: "linear-gradient(90deg, #6FD6FF, #FF9FEF)",
+                          background: `linear-gradient(90deg, ${getCompanion(companionId).primary}, ${getCompanion(companionId).secondary})`,
                           borderRadius: 3,
                           transition: "width 0.5s",
                         }}
@@ -2007,7 +2087,7 @@ function DNABar({ label, value, max, unit, display }: { label: string; value: nu
           style={{
             height: "100%",
             width: `${pct}%`,
-            background: "linear-gradient(90deg, #6FD6FF, #FF9FEF)",
+            background: `linear-gradient(90deg, ${getCompanion(companionId).primary}, ${getCompanion(companionId).secondary})`,
             borderRadius: 3,
             transition: "width 0.5s",
           }}

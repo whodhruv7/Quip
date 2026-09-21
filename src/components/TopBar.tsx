@@ -63,7 +63,11 @@ export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onRef
     }
   }, []);
 
-  const pillColor = !health || health.at === 0 ? "rgba(128,128,128,0.55)" : health.healthy ? "#22c55e" : "#ef4444";
+  const pillColor = !health || health.at === 0
+    ? "rgba(128,128,128,0.55)"
+    : health.healthy
+      ? "rgb(var(--quip-ok))"
+      : "rgb(var(--quip-bad))";
   const pillTitle = !health || health.at === 0
     ? "Brain: not checked yet"
     : health.healthy
@@ -150,14 +154,14 @@ export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onRef
       {speaking && (
         <div
           className="flex h-5 items-center gap-[2px] rounded-[6px] px-2"
-          style={{ background: "rgba(245,158,11,0.14)" }}
+          style={{ background: "rgba(var(--quip-warn),0.14)" }}
           title="Quip is speaking"
         >
           {[0, 1, 2].map((i) => (
             <span
               key={i}
               className="inline-block w-[2.5px] animate-bounce rounded-full"
-              style={{ background: "#f59e0b", height: 4 + i * 3, animationDelay: `${i * 0.12}s`, animationDuration: "0.8s" }}
+              style={{ background: "rgb(var(--quip-warn))", height: 4 + i * 3, animationDelay: `${i * 0.12}s`, animationDuration: "0.8s" }}
             />
           ))}
         </div>

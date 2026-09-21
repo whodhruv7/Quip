@@ -75,22 +75,22 @@ const api = {
 
   // ─── Set active companion (so the system prompt adapts personality/mood) ─
   setCompanion: (id: "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales") =>
-    ipcRenderer.send("quip:set-companion", id),
+    ipcRenderer.send(IPC.SET_COMPANION, id),
   
   // ─── Execution Engine V2 — Permission modes ────────────────────────
   getPermissionMode: () =>
-    ipcRenderer.invoke("quip:get-permission-mode"),
+    ipcRenderer.invoke(IPC.GET_PERMISSION_MODE),
   setPermissionMode: (mode: string) =>
-    ipcRenderer.invoke("quip:set-permission-mode", mode),
+    ipcRenderer.invoke(IPC.SET_PERMISSION_MODE, mode),
   cyclePermissionMode: () =>
-    ipcRenderer.invoke("quip:cycle-permission-mode"),
+    ipcRenderer.invoke(IPC.CYCLE_PERMISSION_MODE),
   onApprovalRequest: (cb: (request: any) => void) => {
     const handler = (_e: unknown, data: any) => cb(data);
     ipcRenderer.on("quip:approval-request", handler as any);
     return () => ipcRenderer.removeListener("quip:approval-request", handler as any);
   },
   resolveApproval: (id: string, approved: boolean) =>
-    ipcRenderer.send("quip:approval-resolve", { id, approved }),
+    ipcRenderer.send(IPC.APPROVAL_RESOLVE, { id, approved }),
   onTaskProgress: (cb: (p: any) => void) => {
     const handler = (_e: unknown, data: any) => cb(data);
     ipcRenderer.on(IPC.TASK_PROGRESS, handler as any);

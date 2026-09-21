@@ -71,7 +71,7 @@ import {
 import { probeProvider } from "./system/provider-probe";
 import { discoverModels } from "./system/model-discovery";
 import { speakText, stopSpeaking, getSpeakConfig, speakConfigEnvEntries, groqVoiceProbe, edgeEngineAvailable, localEngineAvailable, type SpeakConfig } from "./system/speech";
-import { connectionJournal, summarizeJournal } from "./system/connection-journal";
+import { connectionJournal } from "./system/connection-journal";
 import { probeNetworkPath, buildVerdict, SUGGESTION_COPY } from "./system/brain-health";
 import { autoMigrateModel, looksLikeModelRejection } from "./system/model-health";
 import { trimHistory, assembleSections, type PromptSection } from "./system/prompt-budget";
@@ -80,13 +80,12 @@ import { fetchUpdates } from "./system/app-updates";
 import { ensureQuipShortcut } from "./system/desktop-shortcut";
 import { clampRect } from "./window-geometry";
 
-import { ensureProfile, loadProfile } from "./brains/device-brain";
+import { ensureProfile } from "./brains/device-brain";
 import { ensureWorldModel } from "./brains/world-model";
 import { fsStorage } from "./brains/memory-brain-instance";
 import { environmentBrain } from "./brains/environment-brain";
 import { memoryBrain } from "./brains/memory-brain-instance";
 import { computeSpatial, watchSpatial } from "./brains/spatial-brain";
-import { runTask } from "./brains/task-brain";
 import { knowledgeGraph } from "./brains/knowledge-graph";
 import { workspaceContext } from "./brains/workspace-context";
 import { relationshipEngine } from "./brains/relationship-engine";
@@ -718,7 +717,13 @@ function createWindow(companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | 
   } else if (isDev) {
     win.loadURL(`http://localhost:5173?companion=${companionId}`);
   } else {
-    win.loadFile(path.join(__dirname, "../dist/index.html"), { search: `companion=${companionId}` });
+    // PRODUCTION PATH FIX — the app's quiet white-screen bug. __dirname here
+    // is <repo>/dist-electron/electron (main.js lives there), and Vite emits
+    // the renderer to <repo>/dist. The old "../dist/index.html" resolved to
+    // <repo>/dist-electron/dist/index.html, which does not exist — the
+    // production window silently rendered NOTHING (ERR_FILE_NOT_FOUND).
+    // "../../dist" is correct from dist-electron/electron/.
+    win.loadFile(path.join(__dirname, "../../dist/index.html"), { search: `companion=${companionId}` });
   }
 
   win.on("move", () => {
@@ -960,8 +965,27 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
     .reverse()
     .find((m) => m.role === "user");
 
-  // Build system prompt with relevance filtering based on the user message
-  const systemPrompt = buildSystemPrompt(lastUserMsg?.content, companionId);
+  // Build system prompt with relevance filtering based on the user message.
+  // GUARDED: a throw in any brain read (memory/KG/DNA/mood/timeline) must
+  // reach the renderer as a CHAT_ERROR — never as an unhandled rejection
+  // with no styled error bubble. Degrade to a minimal honest prompt.
+  let systemPrompt: string;
+  try {
+    systemPrompt = buildSystemPrompt(lastUserMsg?.content, companionId);
+  } catch (e: any) {
+    console.error("[chat] system prompt build failed:", e?.message ?? e);
+    try {
+      sendToWindow(win, IPC.CHAT_ERROR, {
+        requestId: payload.requestId,
+        kind: "internal",
+        message:
+          "Quip could not assemble its context for this reply (its memory services hiccuped). Nothing was sent. Try again — if it repeats, restart Quip.",
+      });
+    } catch {
+      /* best effort */
+    }
+    return { ok: false, error: "prompt-build-failed" };
+  }
   if (lastUserMsg) {
     try {
       relationshipEngine.observeUserMessage(lastUserMsg.content);
@@ -1088,7 +1112,7 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
 // ---------------------------------------------------------------------------
 // IPC — set current companion (so system prompt can adapt)
 // ---------------------------------------------------------------------------
-ipcMain.on("quip:set-companion", (_e, id: "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales") => {
+ipcMain.on(IPC.SET_COMPANION, (_e, id: "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales") => {
   if (id === "pix" || id === "kai" || id === "ren" || id === "bubbles" || id === "capy" || id === "skales") {
     defaultCompanionId = id;
     const win = BrowserWindow.fromWebContents(_e.sender);
@@ -1289,18 +1313,18 @@ function planMetaFromBrain(
 // ---------------------------------------------------------------------------
 // IPC — approval resolution (user taps Approve/Reject)
 // ---------------------------------------------------------------------------
-ipcMain.on("quip:approval-resolve", (_e, { id, approved }: { id: string; approved: boolean }) => {
+ipcMain.on(IPC.APPROVAL_RESOLVE, (_e, { id, approved }: { id: string; approved: boolean }) => {
   execPermissionSystem.resolveApproval(id, approved);
 });
 
 // ---------------------------------------------------------------------------
 // IPC — permission mode control
 // ---------------------------------------------------------------------------
-ipcMain.handle("quip:get-permission-mode", () => {
+ipcMain.handle(IPC.GET_PERMISSION_MODE, () => {
   return { mode: execPermissionSystem.getMode(), label: execPermissionSystem.getModeLabel() };
 });
 
-ipcMain.handle("quip:set-permission-mode", (_e, mode: string) => {
+ipcMain.handle(IPC.SET_PERMISSION_MODE, (_e, mode: string) => {
   if (mode === "ask_every_time" || mode === "approve_task" || mode === "full_access") {
     execPermissionSystem.setMode(mode);
     // §29 — a setting the user chose must survive restarts (env upsert,
@@ -1311,7 +1335,7 @@ ipcMain.handle("quip:set-permission-mode", (_e, mode: string) => {
   return { mode: execPermissionSystem.getMode(), label: execPermissionSystem.getModeLabel() };
 });
 
-ipcMain.handle("quip:cycle-permission-mode", () => {
+ipcMain.handle(IPC.CYCLE_PERMISSION_MODE, () => {
   execPermissionSystem.cycleMode();
   upsertEnvFile(path.join(app.getPath("userData"), ".env"), {
     QUIP_PERMISSION_MODE: execPermissionSystem.getMode(),
@@ -1788,39 +1812,42 @@ let brainHealthCache: { at: number; healthy: boolean; activeProvider: string | n
 const BRAIN_HEALTH_TTL_MS = 5 * 60_000;
 
 async function runProviderHealthCheck(): Promise<ProviderHealthRow[]> {
-  const rows: ProviderHealthRow[] = [];
-  for (const provider of PROVIDER_ORDER) {
-    const label = PROVIDER_LABEL[provider];
-    const enabled = isProviderEnabled(provider);
-    const modelVar = PROVIDER_MODEL_VAR[provider];
-    const model = process.env[modelVar] || DEFAULT_MODELS[provider];
-    const parkedForMs = modelRouter.breaker.parkedForMs(provider);
-    if (provider === "ollama") {
-      const r = await probeProvider("ollama", "", model);
-      rows.push({
-        provider, label, configured: true, enabled,
-        parkedForMs, ok: r.ok, latencyMs: r.latencyMs, kind: String(r.kind),
+  // PARALLEL: this used to await each provider serially — 6 providers x up
+  // to ~10s probe timeout each meant the boot health check could churn for
+  // a full minute. All probes now run concurrently; Promise.all keeps the
+  // row order stable so the Doctor renders identically, just ~6x sooner.
+  const rows: ProviderHealthRow[] = await Promise.all(
+    PROVIDER_ORDER.map(async (provider) => {
+      const label = PROVIDER_LABEL[provider];
+      const enabled = isProviderEnabled(provider);
+      const modelVar = PROVIDER_MODEL_VAR[provider];
+      const model = process.env[modelVar] || DEFAULT_MODELS[provider];
+      const parkedForMs = modelRouter.breaker.parkedForMs(provider);
+      if (provider === "ollama") {
+        const r = await probeProvider("ollama", "", model);
+        return {
+          provider, label, configured: true, enabled,
+          parkedForMs, ok: r.ok, latencyMs: r.latencyMs, kind: String(r.kind),
+          message: r.message, model,
+        } as ProviderHealthRow;
+      }
+      const apiKey = process.env[PROVIDER_KEY_VAR[provider]] || "";
+      if (!apiKey) {
+        return {
+          provider, label, configured: false, enabled, parkedForMs,
+          ok: false, latencyMs: 0, kind: "no-key",
+          message: "No key saved yet — paste one in Settings → AI Brain.",
+          model,
+        } as ProviderHealthRow;
+      }
+      const r = await probeProvider(provider, apiKey, model);
+      return {
+        provider, label, configured: true, enabled, parkedForMs,
+        ok: r.ok, latencyMs: r.latencyMs, kind: String(r.kind),
         message: r.message, model,
-      });
-      continue;
-    }
-    const apiKey = process.env[PROVIDER_KEY_VAR[provider]] || "";
-    if (!apiKey) {
-      rows.push({
-        provider, label, configured: false, enabled, parkedForMs,
-        ok: false, latencyMs: 0, kind: "no-key",
-        message: "No key saved yet — paste one in Settings → AI Brain.",
-        model,
-      });
-      continue;
-    }
-    const r = await probeProvider(provider, apiKey, model);
-    rows.push({
-      provider, label, configured: true, enabled, parkedForMs,
-      ok: r.ok, latencyMs: r.latencyMs, kind: String(r.kind),
-      message: r.message, model,
-    });
-  }
+      } as ProviderHealthRow;
+    })
+  );
   return rows;
 }
 
@@ -2060,7 +2087,20 @@ if (!app.requestSingleInstanceLock()) {
     // Structured execution log persists (debounced) for post-mortems.
     executionLog.setPersistPath(path.join(app.getPath("userData"), "quip-actions.json"));
 
-    // Run the full bootstrap pipeline.
+    // ── WINDOW FIRST, bootstrap second ───────────────────────────────────
+    // The single worst startup bug: the window used to be created only AFTER
+    // `await bootstrap(...)`, so a first-run device scan meant tens of seconds
+    // of nothing on screen — indistinguishable from "the app won't open".
+    // Now the companion sprite appears immediately, and the scan progress
+    // events actually reach it (the old broadcast fired into an empty window
+    // map, so the scan overlay could never be seen on the very first launch).
+    swarmManager.setWindowFactory((id, ox, oy) => createWindow(id, ox, oy));
+    companionVisible = readCompanionVisible();
+    createWindow(defaultCompanionId);
+    createTray();
+
+    // Run the full bootstrap pipeline (window already visible; the renderer's
+    // ScanOverlay now receives these events for real).
     let bootResult: BootstrapResult;
     try {
       bootResult = await bootstrap(sendBootstrapProgress);
@@ -2170,9 +2210,8 @@ if (!app.requestSingleInstanceLock()) {
     });
 
     // Phase 3: the PRIMARY companion boots through the single factory.
-    companionVisible = readCompanionVisible();
-    createWindow(defaultCompanionId);
-    createTray();
+    // (Window + tray are now created BEFORE bootstrap — see "WINDOW FIRST"
+    // above — so presence is instant and scan progress reaches the renderer.)
 
     // ── V3.1 connectivity round ─────────────────────────────────────────
     // Connection journal persists (debounced) so the Doctor can show
