@@ -189,6 +189,18 @@ The overnight upgrade that turns Quip from an assistant you instruct into an age
 
 > MailWing setup: Settings → **MailWing** → add your SMTP account (Gmail app password works great) → hit **Test** (verifies TLS + login, sends nothing) → done.
 
+### 📓 Problem Diary — every failure, remembered (new)
+The honesty system: **whenever a task fails — a tool call, a quest step, an email send, a chat error — Quip writes it down automatically**, with what broke, how many times, and the evidence (server replies, file paths, selectors). Nothing is hidden, nothing is faked.
+
+- **Settings → Problems** shows the whole diary: severity dots (HIGH problems flagged), open/resolved filters, occurrence counts, expandable evidence.
+- **Export report ↓** writes a readable `quip-problems-YYYY-MM-DD.md` to your Desktop — send that file back and every line can be fixed against real data.
+- Ask in chat: **"problems dikhao"** lists what failed, **"resolve problem 2"** marks one handled, **"export problem report"** writes the file.
+- If a problem you marked resolved **comes back, it reopens itself** with a higher count — you'll know it never really went away.
+- The diary is 100% local, fail-soft (it can never break a task that's already failing), and never records passwords or mail bodies.
+
+### ✨ Completion round — the polish wave (new)
+The remaining 50 roadmap items, all shipped: **Ctrl+Shift+Space** summons/hides Quip from anywhere; tray quick actions (New task, Organize downloads); taskbar progress + flash when a quest finishes; **autonomy budget** (Settings → Desktop: how many repeat destructive approvals a quest may auto-approve); ghost page **screenshots** and **wait-for**; window **snap** ("right side pe rakho"); contact cards under replies (Save/Copy/Email); drag & drop files onto the chat; **Ctrl+F chat search**; pin messages; export chats as Markdown; email draft cards with Send/Copy; what→where move tables; quick-reply chips after tasks; a first-run tour; settings search; doctor + MailWing outbox cards; and full personalization — font size, chat density, accent color picker, companion re-tint, bubble styles, custom quick replies, per-companion focus greetings, sound toggle.
+
 ### 🗣️ Speaks out loud (Voice)
 Replies are spoken through a 3-engine chain: **Groq neural voice** → free **Edge neural voice** (`en-IN-NeerjaNeural` reads Hinglish naturally) → your laptop's **built-in Windows voice** offline. If one fails, the next takes over mid-conversation.
 
@@ -234,7 +246,13 @@ First-launch device scan indexes your OS, hardware, installed apps and default b
 
 ## 📜 Full changelog — everything built so far
 
-**Build 11 — Autonomy Wave: Ghost Browser, MailWing, FileButler, Quests** *(latest)*
+**Build 12 — Problem Diary + Completion Round (150/150)** *(latest)*
+- **📓 Problem Diary** — the failure-memory system: every failed tool call, quest step, routine step and chat error auto-records to a local store with evidence; dedupe + auto-reopen on return; severity classification; **Settings → Problems** with filters, stats and live updates; **one-tap Markdown export to the Desktop**; chat verbs ("problems dikhao", "resolve problem 2", "export problem report"); never records secrets, never throws (fail-soft proven by test)
+- **Autonomy completion** — ghost **wait-for** + **screenshot** executors, window **snap** presets, deep file search with **content grep**, **reply-chain** awareness (Re:/Fwd: kept, thread-aware humanizer), **ambiguity rule** (two near-equal contacts → clarify, never guess), **context carry** ("usko mail kar" resolves the last extracted contact), **multi-verb chains** ("organize downloads phir battery batao"), specialized **failure classification + recovery** for smtp-auth/5xx, ghost-blocked, vault-locked, watch-stopped, and the **autonomy budget** (repeat destructive approvals ≤ N per quest, disclosed)
+- **UX wave (37 items)** — global hotkey **Ctrl+Shift+Space**, tray quick actions (New task / Organize downloads), taskbar progress mirror + finish flash, drag & drop files onto chat, Ctrl+F chat search, pin messages, export chat as Markdown, contact cards, email draft cards, what→where move tables, quick-reply chips, empty-state suggestions, jump-to-bottom pill, char counter, skeleton shimmer, latency badges, retry toasts, first-run tour, settings search, doctor card, MailWing outbox card, keyboard-complete approvals, aria/contrast/semantics passes, font size, chat density, accent picker, companion re-tint, theme crossfades, per-companion focus greetings, voice orb, bubble styles, custom quick replies, sound toggle
+- **522/522 tests** (27 new), `tsc` clean ×3, Vite build ✓
+
+**Build 11 — Autonomy Wave: Ghost Browser, MailWing, FileButler, Quests**
 - **Ghost Browser** — offscreen DOM automation: contact extraction (emails, phones, obfuscated addresses), contact-page following, click-by-text, form-fill, SSRF gate + navigation budget + idle auto-close; scripts JSON-encode every value (injection-proof)
 - **MailWing** — zero-dependency SMTP client with byte-tested protocol machine (STARTTLS, AUTH PLAIN/LOGIN with mechanism negotiation, MIME/attachments, dot-stuffing), safeStorage-encrypted account vault, humanized compose with honest fallback, approval-gated sends verified by SMTP 250, Gmail-compose fallback, outbox journal, and a reachability test that physically cannot send
 - **FileButler** — dry-run organize plans → apply → manifest → undo, collision-safe renames, SHA-256 duplicate finder with .quip-trash, storage reports, Downloads watch with auto-organize toasts, system-directory deny list

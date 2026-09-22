@@ -96,8 +96,26 @@ export type FileOp =
 /**
  * Local file search across the named base (or the user's common folders).
  * Pure Node — no Electron — so tests and the tool registry can reuse it.
+ * CAP-040: opts.content greps INSIDE small text files too (name hits still
+ * rank first; content hits are marked). Depth caps + skip-lists stay intact.
  */
-export function searchFiles(query: string, base?: string): { hits: string[]; searched: string[] } {
+export interface SearchOpts {
+  /** Also search file CONTENTS of small text files (default false). */
+  content?: boolean;
+  /** Max depth (default 4, hard cap 8). */
+  maxDepth?: number;
+  /** Max hits (default 15). */
+  limit?: number;
+}
+
+const TEXT_EXT = new Set([
+  ".txt", ".md", ".csv", ".json", ".xml", ".yml", ".yaml", ".log", ".ini", ".cfg", ".env",
+  ".js", ".ts", ".jsx", ".tsx", ".py", ".java", ".c", ".cpp", ".h", ".cs", ".go", ".rs", ".rb", ".php", ".html", ".css", ".sql", ".sh", ".bat", ".ps1", ".toml",
+]);
+const CONTENT_MAX_BYTES = 512 * 1024; // grep only small files
+const CONTENT_GREP_CAP = 400; // files grepped per search, max
+
+export function searchFiles(query: string, base?: string, opts?: SearchOpts): { hits: string[]; searched: string[]; contentHits?: string[] } {
   const baseR = base ? resolveUserPath(base) : { ok: true as const, path: os.homedir() };
   if (!baseR.ok) return { hits: [], searched: [] };
   const needle = query.toLowerCase().trim();
@@ -105,16 +123,18 @@ export function searchFiles(query: string, base?: string): { hits: string[]; sea
   const roots = [baseR.path, path.join(os.homedir(), "Desktop"), path.join(os.homedir(), "Documents"), path.join(os.homedir(), "Downloads")];
   const seen = new Set<string>();
   const hits: string[] = [];
+  const contentHits: string[] = [];
   const searched: string[] = [];
   const deadline = Date.now() + 6000;
+  const limit = Math.min(40, Math.max(1, opts?.limit ?? 15));
   for (const root of roots) {
     if (seen.has(root.toLowerCase()) || !statInfo(root).exists) continue;
     seen.add(root.toLowerCase());
     searched.push(root);
-    walkSearch(root, needle, hits, deadline, 0);
-    if (hits.length >= 15 || Date.now() > deadline) break;
+    walkSearch(root, needle, hits, contentHits, deadline, 0, opts, limit);
+    if (hits.length + contentHits.length >= limit || Date.now() > deadline) break;
   }
-  return { hits, searched };
+  return opts?.content ? { hits, searched, contentHits } : { hits, searched };
 }
 
 export function executeFileOp(action: FileOp): ActionVerification {
@@ -258,8 +278,18 @@ function safeList(dir: string): string[] {
   }
 }
 
-function walkSearch(dir: string, needle: string, hits: string[], deadline: number, depth: number): void {
-  if (depth > 4 || Date.now() > deadline || hits.length >= 15) return;
+function walkSearch(
+  dir: string,
+  needle: string,
+  hits: string[],
+  contentHits: string[],
+  deadline: number,
+  depth: number,
+  opts?: SearchOpts,
+  limit = 15,
+  grepBudget = { left: CONTENT_GREP_CAP }
+): void {
+  if (depth > Math.min(8, opts?.maxDepth ?? 4) || Date.now() > deadline || hits.length + contentHits.length >= limit) return;
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -267,11 +297,24 @@ function walkSearch(dir: string, needle: string, hits: string[], deadline: numbe
     return;
   }
   for (const e of entries) {
-    if (hits.length >= 15 || Date.now() > deadline) return;
+    if (hits.length + contentHits.length >= limit || Date.now() > deadline) return;
     if (e.name.startsWith(".") || e.name === "node_modules" || e.name === "$RECYCLE.BIN" || e.name === "AppData") continue;
+    const full = path.join(dir, e.name);
     if (e.name.toLowerCase().includes(needle)) {
-      hits.push(path.join(dir, e.name));
+      hits.push(full);
+    } else if (e.isFile() && opts?.content && grepBudget.left > 0 && TEXT_EXT.has(path.extname(e.name).toLowerCase())) {
+      // CAP-040: content grep — small text files only, budgeted, honest misses.
+      grepBudget.left -= 1;
+      try {
+        const st = fs.statSync(full);
+        if (st.size > 0 && st.size <= CONTENT_MAX_BYTES) {
+          const text = fs.readFileSync(full, "utf8");
+          if (text.toLowerCase().includes(needle)) contentHits.push(full);
+        }
+      } catch {
+        /* unreadable → skip silently, name search already covered it */
+      }
     }
-    if (e.isDirectory()) walkSearch(path.join(dir, e.name), needle, hits, deadline, depth + 1);
+    if (e.isDirectory()) walkSearch(full, needle, hits, contentHits, deadline, depth + 1, opts, limit, grepBudget);
   }
 }

@@ -68,6 +68,10 @@ export const TOOL_CATALOG: CatalogEntry[] = [
     width: { type: "string", description: "resize: width" },
     height: { type: "string", description: "resize: height" },
   }, ["op"], "Adjusting window…"),
+  fn("window_snap", "Snap a window to the left or right half of the screen, maximize or restore ('right side pe rakho').", {
+    preset: { type: "string", enum: ["left", "right", "maximize", "restore"], description: "Snap preset" },
+    window: { type: "string", description: "Window/app title (optional)" },
+  }, ["preset"], "Snapping the window…"),
   fn("windows_list", "List all open desktop windows with titles. Use to see what's on screen before acting.", {}, [], "Checking open windows…"),
 
   // ── Web, search, reading (Agent-Reach role) ──────────────────────────────
@@ -244,6 +248,13 @@ export const TOOL_CATALOG: CatalogEntry[] = [
     url: { type: "string", description: "Page URL" },
     fields: { type: "string", description: "JSON array of {hint, value, selector?}" },
   }, ["url", "fields"], "Ghost-filling the form…"),
+  fn("web_ghost_wait", "Wait until specific text appears on the ghost page (bounded) — use between ghost steps so flows don't race.", {
+    text: { type: "string", description: "Text to wait for" },
+    timeout: { type: "string", description: "Max seconds to wait (2-30, default 10)" },
+  }, ["text"], "Waiting for the page…"),
+  fn("web_ghost_screenshot", "Screenshot the ghost page as PNG (saved to Pictures/Quip) — see a page the user never opened.", {
+    url: { type: "string", description: "Page URL to capture" },
+  }, ["url"], "Capturing the page…"),
 
   // ── Autonomy wave: MailWing (real email) ──────────────────────────────────
   fn("mailwing_draft", "Write an email draft and humanize it. Stages the draft — say the user should approve with 'send it'.", {
@@ -330,6 +341,11 @@ export const TOOL_CATALOG: CatalogEntry[] = [
     name: { type: "string", description: "Routine name" },
   }, ["name"], "Running the routine…"),
   fn("routine_list", "List saved routines.", {}, [], "Listing routines…"),
+  fn("problem_diary", "The Problem Diary: everything Quip failed at, remembered. list (default), resolve <id>, export (Markdown report to Desktop), clear.", {
+    verb: { type: "string", enum: ["list", "resolve", "export", "clear"], description: "What to do" },
+    id: { type: "string", description: "resolve: the problem number from the list" },
+    source: { type: "string", description: "list: filter by source (tool/quest/chat/mail/ghost/file)" },
+  }, [], "Checking the problem diary…"),
 ];
 
 /** Schemas for the model (OpenAI tools array). */

@@ -444,6 +444,66 @@ export async function ghostReadPage(rawUrl: string): Promise<{ ok: boolean; titl
   return { ok: true, title: harvest.data.title, text: harvest.data.text };
 }
 
+// ─── Screenshot (CAP-008) ────────────────────────────────────────────────────
+
+/** Pure: where a ghost screenshot for this URL is saved (unit-tested). */
+export function ghostScreenshotTarget(baseDir: string, url: string, now = Date.now()): { dir: string; file: string } {
+  let host = "page";
+  try {
+    host = new URL(url).hostname.replace(/^www\./, "").replace(/[^a-z0-9.-]/gi, "").slice(0, 40) || "page";
+  } catch {
+    /* keep fallback */
+  }
+  const stamp = new Date(now).toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  return { dir: baseDir, file: `ghost-${host}-${stamp}.png` };
+}
+
+/**
+ * Capture the ghost page as a PNG (vision on pages the user never opened).
+ * Navigates first (SSRF-gated), captures via capturePage, writes a real file
+ * and reports its byte size — no fake "saved" without evidence.
+ */
+export async function ghostScreenshot(rawUrl: string, picturesDir?: string): Promise<{ ok: boolean; path?: string; size?: number; title?: string; error?: string }> {
+  const nav = await ghostNavigate(rawUrl);
+  if (!nav.ok) return { ok: false, error: nav.error };
+  try {
+    const image = await session!.win.webContents.capturePage();
+    if (image.isEmpty()) {
+      return { ok: false, error: "the capture came out empty — the page may block rendering" };
+    }
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const base = picturesDir ?? path.join(process.env.USERPROFILE ?? process.env.HOME ?? ".", "Pictures", "Quip");
+    const { dir, file } = ghostScreenshotTarget(base, nav.url ?? rawUrl);
+    fs.mkdirSync(dir, { recursive: true });
+    const target = path.join(dir, file);
+    const buf = image.toPNG();
+    fs.writeFileSync(target, buf);
+    const size = fs.statSync(target).size;
+    return { ok: true, path: target, size, title: nav.title };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message ?? e).slice(0, 200) };
+  }
+}
+
+// ─── Session contact memory (CAP-069: "usko mail kar") ──────────────────
+
+let lastRemembered: { contact: GhostContact; url?: string; at: number } | null = null;
+
+/** The last contact Quip extracted or picked — "usko mail kar" resolves to it. */
+export function rememberLastContact(contact: GhostContact, url?: string): void {
+  lastRemembered = { contact, url, at: Date.now() };
+}
+
+export function lastRememberedContact(maxAgeMs = 30 * 60_000): GhostContact | null {
+  if (!lastRemembered || Date.now() - lastRemembered.at > maxAgeMs) return null;
+  return lastRemembered.contact;
+}
+
+export function forgetLastContact(): void {
+  lastRemembered = null;
+}
+
 export async function ghostExtractContacts(
   rawUrl: string
 ): Promise<{ ok: boolean; contacts: GhostContact[]; title?: string; followedContactPage?: boolean; error?: string }> {
@@ -466,7 +526,31 @@ export async function ghostExtractContacts(
       }
     }
   }
+  // Session memory: the best contact becomes "usko" for the next message.
+  if (contacts.length > 0) rememberLastContact(contacts[0], harvest.data.url);
   return { ok: true, contacts, title: harvest.data.title, followedContactPage };
+}
+
+// ─── Ambiguity (CAP-068: two close contacts → clarify, never guess) ──────
+
+/**
+ * Pure: are the top two contacts so close in score that picking one would be
+ * a GUESS? Within 5 points and no hint → ambiguous. Unit-tested.
+ */
+export function isAmbiguousContact(contacts: GhostContact[], hint?: string): boolean {
+  if (!hint || !hint.trim()) {
+    if (contacts.length < 2) return false;
+    return Math.abs(contacts[0].score - contacts[1].score) <= 5;
+  }
+  return false;
+}
+
+/** Pure: the human-readable choice line for an ambiguous pair. */
+export function ambiguousChoiceLine(contacts: GhostContact[]): string {
+  return contacts
+    .slice(0, 2)
+    .map((c) => `${c.name ?? c.email ?? c.phone} (${c.email ?? c.phone})`)
+    .join(" or ");
 }
 
 export async function ghostClickText(rawUrl: string, text: string): Promise<{ ok: boolean; clicked?: boolean; label?: string; error?: string }> {

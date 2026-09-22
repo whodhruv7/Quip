@@ -77,7 +77,8 @@ export type ActionType =
   | "quest_run"
   | "routine_save"
   | "routine_run"
-  | "routine_list";
+  | "routine_list"
+  | "problem_diary";
 
 export interface TaskStep {
   action: ActionType;
@@ -513,6 +514,33 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
   const text = normalized;
   const context: ExecutionContextState = opts.context ?? { updatedAt: 0 };
   const base = { original: raw, normalized: text };
+
+  // ─── CAP-070: multi-verb chains ("organize downloads phir report bhejo") ──
+  // Split on Hinglish/English sequencing words; when BOTH halves parse into
+  // real tasks, run them as one sequential plan (shared context).
+  const CHAIN_SPLIT = /\s+(?:phir|then|uske baad|and then|baad me(?:in)?|after that)\s+/i;
+  if (CHAIN_SPLIT.test(text)) {
+    const halves = text.split(CHAIN_SPLIT).map((h) => h.trim()).filter((h) => h.length > 2);
+    if (halves.length >= 2 && halves.length <= 3) {
+      const subIntents = halves.map((h) => parseIntentV2(h, { ...opts, context: undefined as any }));
+      const allTasks = subIntents.every((p) => p.isTask && p.steps && p.steps.length > 0);
+      const distinct = new Set(subIntents.map((p) => p.normalized)).size === subIntents.length;
+      if (allTasks && distinct) {
+        const steps = subIntents.flatMap((p) => p.steps!);
+        return {
+          ...base,
+          action: subIntents[0].action,
+          target: subIntents[0].target,
+          query: subIntents[0].query,
+          isTask: true,
+          isMultiStep: true,
+          steps,
+          summary: subIntents.map((p) => p.summary).join("; then "),
+          confidence: Math.min(...subIntents.map((p) => p.confidence ?? 0.8)) * 0.97,
+        };
+      }
+    }
+  }
 
   // ─── Direct URL ──────────────────────────────────────────────────────────
   const urlInRaw = raw.match(/https?:\/\/[^\s"<>]+/i);
@@ -1670,6 +1698,54 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
       summary: `Installed ${appQuery}`,
       confidence: 0.85,
     };
+  }
+
+  // ── Problem Diary — "kya problems aayi?", "export problem report" ───────
+  // Deterministic routing: the user can always ask what failed and get the
+  // real diary, never a model-guessed answer.
+  if (/\b(problem|problems|error|errors|prblm|galti)\b/i.test(text) && !/\b(solve|fix|theek|thik)\b/i.test(text)) {
+    const exportMatch = /\b(export|report|file|download|save)\b/i.test(text) && /\b(problem|diary|report)\b/i.test(text);
+    const resolveMatch = text.match(/\b(?:resolve|mark|solved)\b[^]*?\bproblem\b/i) ?? text.match(/\bproblem\s*#?(\d+)\s*(?:resolve|solved|done|ho gaya)/i);
+    if (exportMatch) {
+      return {
+        ...base,
+        action: "problems",
+        target: "export",
+        query: "",
+        isTask: true,
+        isMultiStep: false,
+        steps: [{ action: "problem_diary", target: "export", params: { verb: "export" }, description: "Write the problem report (Markdown) to the Desktop" }],
+        summary: "Problem report exported",
+        confidence: 0.9,
+      };
+    }
+    if (resolveMatch) {
+      const num = text.match(/#?(\d+)/)?.[1] ?? "";
+      return {
+        ...base,
+        action: "problems",
+        target: "resolve",
+        query: num,
+        isTask: true,
+        isMultiStep: false,
+        steps: [{ action: "problem_diary", target: "resolve", params: { verb: "resolve", id: num }, description: `Mark problem ${num || "chosen"} resolved` }],
+        summary: "Problem resolved",
+        confidence: 0.85,
+      };
+    }
+    if (/\b(problem|problems|error|errors|prblm|diary)\b/i.test(text) && /\b(list|show|dikhao|kya|kaun|konsi|kaise|check|batao|any|hai|thi)\b/i.test(text)) {
+      return {
+        ...base,
+        action: "problems",
+        target: "list",
+        query: "",
+        isTask: true,
+        isMultiStep: false,
+        steps: [{ action: "problem_diary", target: "list", params: { verb: "list" }, description: "Show the open problems from the diary" }],
+        summary: "Problems listed",
+        confidence: 0.9,
+      };
+    }
   }
 
   // ── Routines ──────────────────────────────────────────────────────────────

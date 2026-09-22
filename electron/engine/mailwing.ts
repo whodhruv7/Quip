@@ -373,6 +373,42 @@ function firstLineAsSubject(text: string): string {
   return line.trim().slice(0, 80);
 }
 
+// ─── Reply-chain awareness (CAP-022) ────────────────────────────────────────
+
+export interface ReplyChain {
+  isReply: boolean;
+  isForward: boolean;
+  /** Subject with Re:/Fwd: prefixes stripped. */
+  cleaned: string;
+}
+
+/** Pure: detect Re:/Fwd: (any casing, repeated prefixes, Fw: too). */
+export function parseReplyChain(subject: string): ReplyChain {
+  let s = String(subject ?? "").trim();
+  let isReply = false;
+  let isForward = false;
+  // Strip repeated prefixes like "Re: Re: Fwd:"
+  for (;;) {
+    const next = s.replace(/^(?:re|fw|fwd)\s*:\s*/i, "");
+    if (next === s) break;
+    if (/^re\s*:/i.test(s)) isReply = true;
+    else isForward = true;
+    s = next.trim();
+  }
+  return { isReply, isForward, cleaned: s };
+}
+
+/** Pure: the context line the humanizer gets for a reply — thread-aware tone. */
+export function buildReplyContext(chain: ReplyChain, originalSubject?: string): string {
+  if (chain.isReply) {
+    return `This is a REPLY in the existing thread "${(originalSubject ?? chain.cleaned).slice(0, 120)}" — keep the continuity, reference the thread naturally, do not reintroduce yourself from scratch.`;
+  }
+  if (chain.isForward) {
+    return `This is a FORWARD of "${chain.cleaned.slice(0, 120)}" — add a short human note on top, keep the forwarded facts intact.`;
+  }
+  return "";
+}
+
 // ─── Send pipeline ───────────────────────────────────────────────────────────
 
 export interface SendMailInput {
@@ -413,7 +449,12 @@ export function gmailComposeUrl(input: { to?: string; subject?: string; body?: s
  * journaled to the outbox with honest status.
  */
 export async function sendMail(input: SendMailInput): Promise<SendMailResult> {
-  const account = resolveAccount(input.accountId);
+  // CAP-022: a subject that already carries Re:/Fwd: is thread continuity —
+  // keep it verbatim and tell the humanizer to respect the thread.
+  const chain = parseReplyChain(input.subject ?? "");
+  const context = [input.context, buildReplyContext(chain, input.subject)].filter(Boolean).join(" ");
+  const effectiveInput: SendMailInput = chain.isReply || chain.isForward ? { ...input, context } : input;
+  const account = resolveAccount(effectiveInput.accountId);
   if (!account) {
     const detail = "no MailWing account is set up — add one in Settings → MailWing, or let me open a prefilled Gmail draft instead";
     journalOutbox({ status: "failed", accountId: null, to: input.to, subject: input.subject ?? "", detail });

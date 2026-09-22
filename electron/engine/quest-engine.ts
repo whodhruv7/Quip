@@ -16,6 +16,10 @@ import path from "node:path";
 import {
   ghostExtractContacts,
   pickBestContact,
+  isAmbiguousContact,
+  ambiguousChoiceLine,
+  rememberLastContact,
+  lastRememberedContact,
   type GhostContact,
 } from "./web-ghost";
 import {
@@ -33,6 +37,7 @@ import {
 } from "./file-butler";
 import { batteryStatus } from "./ghost-hands";
 import { weatherRead } from "./weather";
+import { noteProblem } from "./problem-diary";
 
 // ─── Runtime injection ───────────────────────────────────────────────────────
 
@@ -46,6 +51,19 @@ export interface QuestRuntime {
 }
 
 let runtime: QuestRuntime | null = null;
+
+// CAP-060: autonomy budget — the SAME destructive confirmation inside one
+// quest (e.g. a second send in a loop) can be auto-approved up to N times.
+// 0 (default) = ask every time. Never applies across different quests.
+let approvalBudget = 0;
+
+export function setQuestApprovalBudget(maxSameApproval: number): void {
+  approvalBudget = Math.max(0, Math.min(20, Math.floor(maxSameApproval)));
+}
+
+export function getQuestApprovalBudget(): number {
+  return approvalBudget;
+}
 
 export function configureQuestRuntime(rt: QuestRuntime): void {
   runtime = rt;
@@ -180,9 +198,18 @@ function buildEmailFromWebsiteQuest(params: Record<string, string>): Quest {
         risk: "safe",
         run: async (ctx) => {
           const contacts = (ctx.data.contacts as GhostContact[]) ?? [];
+          // CAP-068: two near-equal candidates and no hint → clarify, NEVER guess.
+          if (isAmbiguousContact(contacts, ctx.params.hint)) {
+            return {
+              ok: false,
+              detail: `two contacts match equally — ${ambiguousChoiceLine(contacts)} — tell me which one and I'll continue`,
+              data: { ambiguous: true },
+            };
+          }
           const best = pickBestContact(contacts, ctx.params.hint);
           if (!best) return { ok: false, detail: "no contact survived selection" };
           const alternates = contacts.filter((c) => c !== best).slice(0, 3);
+          rememberLastContact(best, ctx.params.url);
           ctx.data.contact = best;
           return {
             ok: true,
@@ -431,6 +458,26 @@ export async function runQuest(
   const notes: string[] = [];
   let completed = 0;
 
+  // CAP-060 budget: repeat approvals of the SAME title inside THIS quest can
+  // be auto-approved up to approvalBudget times — everything else still asks.
+  const approvalsSeen = new Map<string, { count: number; auto: number }>();
+  const gatedApproval = async (title: string, lines: string[]): Promise<boolean> => {
+    const key = title.toLowerCase().trim();
+    const rec = approvalsSeen.get(key);
+    if (rec) {
+      rec.count += 1;
+      if (rec.auto < approvalBudget) {
+        rec.auto += 1;
+        notes.push(`autonomy budget: "${title}" repeated → auto-approved (${rec.auto}/${approvalBudget})`);
+        return true;
+      }
+    } else {
+      approvalsSeen.set(key, { count: 1, auto: 0 });
+    }
+    return rt.requestApproval(title, lines);
+  };
+  ctx.rt = { ...rt, requestApproval: gatedApproval };
+
   for (let i = 0; i < quest.steps.length; i++) {
     if (rt.signal?.aborted) {
       emitEvent(quest, i, "cancelled", "task cancelled");
@@ -478,6 +525,18 @@ export async function runQuest(
         if (out.data) Object.assign(ctx.data, out.data);
         ctx.emit("failed", out.detail);
         const declinedNow = ctx.data.declined === true;
+        // Problem Diary: a real step failure is a problem the user should be
+        // able to see and report later. A DECLINE is not a problem — consent
+        // working as designed is never recorded as a failure.
+        if (!declinedNow) {
+          noteProblem({
+            source: "quest",
+            kind: "quest-step-failed",
+            title: `${quest.id} failed at step "${step.name}"`,
+            detail: out.detail,
+            evidence: [`quest: ${quest.id}`, `step ${i + 1}/${quest.steps.length}: ${step.name}`],
+          });
+        }
         return {
           ok: false,
           ...(declinedNow ? { cancelled: true } : {}),
@@ -495,6 +554,14 @@ export async function runQuest(
     } catch (e: any) {
       const detail = String(e?.message ?? e).slice(0, 200);
       ctx.emit("failed", detail);
+      noteProblem({
+        source: "quest",
+        kind: "quest-step-crashed",
+        severity: "high",
+        title: `${quest.id} crashed at step "${step.name}"`,
+        detail,
+        evidence: [`quest: ${quest.id}`, `step ${i + 1}/${quest.steps.length}: ${step.name}`],
+      });
       return {
         ok: false,
         summary: `Step "${step.name}" crashed — ${detail}`,
@@ -649,6 +716,7 @@ export async function runRoutine(
         const built = buildQuest(step.questId, step.params ?? {});
         if (!built.ok || !built.quest) {
           results.push(`${label} quest: ${built.error}`);
+          noteProblem({ source: "routine", kind: "routine-quest-build-failed", title: `routine "${routine.name}" — quest "${step.questId}" failed to build`, detail: built.error });
           allOk = false;
           continue;
         }
@@ -662,7 +730,14 @@ export async function runRoutine(
       }
       onProgress?.(results[results.length - 1]);
     } catch (e: any) {
-      results.push(`${label} failed: ${String(e?.message ?? e).slice(0, 140)}`);
+      const detail = String(e?.message ?? e).slice(0, 140);
+      results.push(`${label} failed: ${detail}`);
+      noteProblem({
+        source: "routine",
+        kind: "routine-step-crashed",
+        title: `routine "${routine.name}" — step ${i + 1} crashed`,
+        detail,
+      });
       allOk = false;
     }
   }

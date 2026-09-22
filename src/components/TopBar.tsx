@@ -29,9 +29,12 @@ interface TopBarProps {
   onToggleFullscreen?: () => void;
   /** Opens Settings straight on the AI tab (health pill click). */
   onBrainClick?: () => void;
+  /** UX-011: export the conversation as Markdown. Provided only while
+   *  messages exist, so the button simply hides on an empty chat. */
+  onExport?: () => void;
 }
 
-export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onReflectionToggle, onNewChat, onClose, onHideChat, mode = "panel", onToggleExpand, onToggleFullscreen, onBrainClick }: TopBarProps) {
+export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onReflectionToggle, onNewChat, onClose, onHideChat, mode = "panel", onToggleExpand, onToggleFullscreen, onBrainClick, onExport }: TopBarProps) {
   const handleClose = onClose ?? onHideChat;
   const accent = getCompanion(companionId);
 
@@ -250,6 +253,18 @@ export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onRef
         () => onReflectionToggle(),
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
           <path d="M3 3v18h18M7 14l5-5 4 4 5-5" />
+        </svg>
+      )}
+
+      {/* UX-011: export the conversation as a Markdown file (Downloads) */}
+      {onExport && iconBtn(
+        "Export conversation as Markdown",
+        "Export conversation as Markdown",
+        onExport,
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <path d="M7 10l5 5 5-5" />
+          <path d="M12 15V3" />
         </svg>
       )}
 

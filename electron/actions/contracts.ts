@@ -59,6 +59,8 @@ export function safetyClass(action: string, params: Record<string, string> = {})
     case "web_ghost_extract":
     case "web_ghost_click":
     case "web_ghost_fill":
+    case "web_ghost_wait":
+    case "web_ghost_screenshot":
       return "EXTERNAL";
 
     // ── DESTRUCTIVE: deletes / overrides / sends / raw shell ────────────
@@ -91,6 +93,7 @@ export function safetyClass(action: string, params: Record<string, string> = {})
     case "battery":
     case "clipboard_history":
     case "routine_list":
+    case "problem_diary":
       return "READ";
 
     // file_op is compound — the op decides
@@ -171,6 +174,10 @@ export const TOOL_CONTRACTS: Record<string, ToolContract> = {
     [["op", true, "window operation"], ["target", false, "window title hint"]], "WRITE", 8_000,
     "the window is in the requested state",
     ["window-not-found", "op-unsupported"], "window state query"),
+  window_snap: C("window_snap", "Snap a window to the left/right half, maximize or restore",
+    [["preset", true, "left|right|maximize|restore"], ["window", false, "window title hint"]], "WRITE", 10_000,
+    "the window occupies the snapped rect (move + resize both verified)",
+    ["unknown-preset", "window-not-found", "no-workarea"], "snap rect + move/resize results"),
   windows_list: C("windows_list", "Enumerate open window titles",
     [], "READ", 8_000, "window titles were enumerated",
     ["desktop-query-failed"], "observation returned list"),
@@ -414,6 +421,14 @@ export const TOOL_CONTRACTS: Record<string, ToolContract> = {
     [["url", true, "page URL"], ["fields", true, "JSON [{hint,value,selector?}]"]], "EXTERNAL", 30_000,
     "each field is reported filled or not-found",
     ["unsafe-url", "bad-fields-json", "load-failed"], "per-field fill report"),
+  web_ghost_wait: C("web_ghost_wait", "Wait (bounded) until text appears in the ghost page — anti-race for multi-step flows",
+    [["text", true, "text to wait for"], ["timeout", false, "seconds (2-30)"]], "EXTERNAL", 35_000,
+    "the text appeared before the deadline, or an honest timeout",
+    ["missing-text", "wait-timeout", "no-session"], "waited duration + page title"),
+  web_ghost_screenshot: C("web_ghost_screenshot", "Capture the ghost page as a PNG saved to Pictures/Quip",
+    [["url", true, "page URL"]], "EXTERNAL", 30_000,
+    "a real PNG on disk with its byte size",
+    ["unsafe-url", "capture-empty", "write-failed", "load-failed"], "file path + byte size"),
 
   // MailWing: real email. Draft is WRITE (stages, sends nothing); send is
   // DESTRUCTIVE (always confirmed; verified only by SMTP 250).
@@ -508,6 +523,10 @@ export const TOOL_CONTRACTS: Record<string, ToolContract> = {
   routine_list: C("routine_list", "List saved routines",
     [], "READ", 3_000, "routine names with step counts",
     ["no-routines"], "routine count"),
+  problem_diary: C("problem_diary", "The Problem Diary: list / resolve / export every failure Quip recorded",
+    [["verb", false, "list|resolve|export|clear"], ["id", false, "resolve: problem number or id"], ["source", false, "list: filter by source"]],
+    "READ", 5_000, "open problems with severity + counts, or the export path",
+    ["empty-diary", "resolve-failed", "export-failed"], "entry ids + severity in output"),
 };
 
 export function contractFor(action: string): ToolContract | null {

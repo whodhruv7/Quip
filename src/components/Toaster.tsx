@@ -18,6 +18,9 @@ export interface ToastItem {
   title: string;
   body?: string;
   kind: "info" | "success" | "error" | "quest";
+  /** UX-029: single optional action (e.g. a retry). Keep it honest — only
+   *  pass one when the click actually does the thing it names. */
+  action?: ToastAction;
   actions?: ToastAction[];
   /** ms; 0 = stay until dismissed */
   ttl: number;
@@ -51,6 +54,17 @@ const KIND_COLOR: Record<ToastItem["kind"], string> = {
   success: "--quip-ok",
   error: "--quip-bad",
   quest: "--quip-accent",
+};
+
+const ACTION_BTN_STYLE: React.CSSProperties = {
+  fontSize: 10.5,
+  fontWeight: 600,
+  color: "rgb(var(--quip-accent-deep))",
+  background: "rgba(var(--quip-accent), 0.12)",
+  border: "1px solid rgba(var(--quip-accent), 0.35)",
+  borderRadius: 8,
+  padding: "3px 9px",
+  cursor: "pointer",
 };
 
 export function Toaster() {
@@ -122,6 +136,22 @@ export function Toaster() {
                     {t.body}
                   </div>
                 )}
+                {t.action && (
+                  <div style={{ marginTop: 7 }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        t.action!.onClick();
+                        dismissToast(t.id);
+                      }}
+                      aria-label={t.action.label}
+                      className="quip-focusable"
+                      style={ACTION_BTN_STYLE}
+                    >
+                      {t.action.label}
+                    </button>
+                  </div>
+                )}
                 {t.actions && t.actions.length > 0 && (
                   <div style={{ display: "flex", gap: 6, marginTop: 7 }}>
                     {t.actions.map((a) => (
@@ -131,17 +161,9 @@ export function Toaster() {
                           a.onClick();
                           dismissToast(t.id);
                         }}
+                        aria-label={a.label}
                         className="quip-focusable"
-                        style={{
-                          fontSize: 10.5,
-                          fontWeight: 600,
-                          color: "rgb(var(--quip-accent-deep))",
-                          background: "rgba(var(--quip-accent), 0.12)",
-                          border: "1px solid rgba(var(--quip-accent), 0.35)",
-                          borderRadius: 8,
-                          padding: "3px 9px",
-                          cursor: "pointer",
-                        }}
+                        style={ACTION_BTN_STYLE}
                       >
                         {a.label}
                       </button>

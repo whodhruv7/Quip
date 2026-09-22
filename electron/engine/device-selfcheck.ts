@@ -113,6 +113,75 @@ export async function deviceSelfCheck(): Promise<ActionVerification> {
     checks.push(line("Default browser", false, `error: ${String(e?.message ?? e)}`));
   }
 
+  // ── self_check v2 (CAP-050): the autonomy-wave subsystems ──
+  // 8. Ghost browser — the offscreen window engine (probe = can Electron build
+  //    the session surface; the SSRF gate runs a real check with no network).
+  try {
+    const ghost = await import("./browser-automation");
+    const gate = ghost.isSafePublicUrl("https://example.com");
+    const blocked = ghost.isSafePublicUrl("http://127.0.0.1:5/");
+    checks.push(
+      line(
+        "Ghost browser (SSRF gate)",
+        gate.safe === true && blocked.safe === false,
+        `public URLs ${gate.safe ? "pass" : "BLOCKED"}, private hosts ${blocked.safe ? "pass (BAD)" : "blocked"}`
+      )
+    );
+  } catch (e: any) {
+    checks.push(line("Ghost browser (SSRF gate)", false, `error: ${String(e?.message ?? e)}`));
+  }
+
+  // 9. MailWing — configuration probe ONLY (connects to nothing, sends nothing).
+  try {
+    const mw = await import("./mailwing");
+    const accounts = mw.listAccounts();
+    checks.push(
+      line(
+        "MailWing (config)",
+        true,
+        accounts.length === 0
+          ? "no accounts configured — sending falls back to prefilled Gmail drafts"
+          : `${accounts.length} account(s) ready${accounts.some((a) => a.passEncrypted) ? ", passwords encrypted" : ""}`
+      )
+    );
+  } catch (e: any) {
+    checks.push(line("MailWing (config)", false, `error: ${String(e?.message ?? e)}`));
+  }
+
+  // 10. File watch — the Downloads auto-organizer state.
+  try {
+    const butler = await import("./file-butler");
+    const watches = butler.watchStatus();
+    const active = watches.filter((w) => w.autoOrganize).length;
+    checks.push(
+      line(
+        "File watch",
+        true,
+        active > 0 ? `${active} folder watch(es) auto-organizing` : "no auto-organize watch active (turn on with \"watch my downloads\")"
+      )
+    );
+  } catch (e: any) {
+    checks.push(line("File watch", false, `error: ${String(e?.message ?? e)}`));
+  }
+
+  // 11. OS notifications — can Quip toast at all?
+  try {
+    const { Notification } = await import("electron");
+    const supported = typeof Notification !== "undefined" && typeof Notification.isSupported === "function" && Notification.isSupported();
+    checks.push(line("OS notifications", supported, supported ? "Electron Notification available" : "toasts unsupported on this OS"));
+  } catch (e: any) {
+    checks.push(line("OS notifications", false, `error: ${String(e?.message ?? e)}`));
+  }
+
+  // 12. Problem Diary — the failure memory itself is writable.
+  try {
+    const pd = await import("./problem-diary");
+    const stats = pd.problemStats();
+    checks.push(line("Problem Diary", true, `${stats.total} entr${stats.total === 1 ? "y" : "ies"} remembered (${stats.open} open, ${stats.resolved} resolved)`));
+  } catch (e: any) {
+    checks.push(line("Problem Diary", false, `error: ${String(e?.message ?? e)}`));
+  }
+
   const passed = checks.filter((c) => c.pass).length;
   const failed = checks.length - passed;
   const report = checks

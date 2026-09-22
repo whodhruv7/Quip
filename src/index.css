@@ -322,14 +322,14 @@ body {
   border-left: 3px solid rgba(var(--quip-accent), 0.5);
   margin: 0.4em 0;
   padding: 0.1em 0 0.1em 0.8em;
-  color: rgba(var(--quip-text), 0.6);
+  color: rgba(var(--quip-text), 0.78);
 }
 
 /* Trust-layer note styling. */
 .quip-note {
   font-size: 11px;
   line-height: 15px;
-  color: rgba(var(--quip-text-soft), 0.85);
+  color: rgba(var(--quip-text-soft), 0.95);
   font-weight: 500;
 }
 
@@ -344,7 +344,7 @@ body {
   background: rgba(var(--quip-line), 0.03);
   font-size: 11px;
   line-height: 14px;
-  color: rgba(var(--quip-text-soft), 0.9);
+  color: rgba(var(--quip-text-soft), 0.95);
   font-weight: 500;
   font-style: italic;
 }
@@ -452,7 +452,7 @@ body {
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .quip-input::placeholder {
-  color: rgba(var(--quip-text-soft), 0.7);
+  color: rgba(var(--quip-text-soft), 0.85);
 }
 .quip-input:focus {
   border-color: rgba(var(--quip-accent), 0.65);
@@ -583,4 +583,64 @@ textarea:focus-visible,
   .quip-palette-row[data-selected="true"] {
     border-color: rgba(var(--quip-text), 0.45) !important;
   }
+}
+
+/* ═══ UX-042/046 — UI type scale + chat density (Settings-driven) ═════════
+   theme.ts toggles data-quip-size / data-quip-density on <html>. The scale
+   var adjusts base chat text; density tightens message line spacing. */
+:root {
+  --quip-font-scale: 1;
+}
+[data-quip-size="compact"] {
+  --quip-font-scale: 0.9;
+}
+[data-quip-size="spacious"] {
+  --quip-font-scale: 1.1;
+}
+[data-quip-size="compact"] .quip-md,
+[data-quip-size="spacious"] .quip-md {
+  font-size: calc(14px * var(--quip-font-scale));
+}
+[data-quip-size="compact"] p.whitespace-pre-wrap,
+[data-quip-size="spacious"] p.whitespace-pre-wrap {
+  font-size: calc(14px * var(--quip-font-scale));
+}
+[data-quip-density="compact"] .quip-md {
+  line-height: 1.45;
+}
+[data-quip-density="compact"] .quip-md p {
+  margin: 0 0 0.3em;
+}
+[data-quip-density="compact"] .quip-md li {
+  margin: 0.05em 0;
+}
+
+/* ═══ UX-044 — gentle 150ms crossfade between themes ══════════════════════
+   Color-only transitions (never layout properties). Users with
+   prefers-reduced-motion already get instant switching via the global
+   reduced-motion override above. */
+.quip-settings-surface,
+.quip-card,
+.quip-card-quiet,
+.quip-glass {
+  transition-property: background-color, color, border-color;
+  transition-duration: 150ms;
+  transition-timing-function: ease;
+}
+.quip-tab,
+.quip-chip {
+  transition-property: background-color, color, border-color;
+  transition-duration: 150ms;
+  transition-timing-function: ease;
+}
+
+/* ═══ UX-012 — pinned message strip (App chatBody) ═══════════════════════ */
+.quip-pin-text {
+  cursor: pointer;
+  min-width: 0;
+}
+.quip-pin-text:focus-visible {
+  outline: 2px solid rgba(var(--quip-accent), 0.65);
+  outline-offset: 2px;
+  border-radius: 6px;
 }

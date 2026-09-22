@@ -17,8 +17,11 @@ import type { ModelRouterStatus } from "@/types/models";
 import type { WindowMode } from "../../electron/shared";
 import { CompanionSwitch } from "./CompanionSwitch";
 import { ConfirmModal } from "./ConfirmModal";
-import { THEMES, applyTheme, currentTheme, isDarkTheme } from "@/lib/theme";
+import { THEMES, applyTheme, currentTheme, isDarkTheme, applyUIScale, applyDensity, applyAccent, applyCompanionTint, savedAccent } from "@/lib/theme";
+import { loadPrefs, savePrefs } from "@/lib/storage";
+import { setSoundsMuted } from "@/lib/sounds";
 import { getCompanion } from "@/lib/companion-config";
+import { ProblemDiaryPanel } from "./ProblemDiaryPanel";
 import quipLogo from "@/assets/quip-logo.png";
 import quipMark from "@/assets/quip-mark.png";
 
@@ -30,7 +33,37 @@ interface SettingsPanelProps {
   initialTab?: Tab;
 }
 
-type Tab = "ai" | "appearance" | "general" | "desktop" | "device" | "memory" | "dna" | "progression";
+type Tab = "ai" | "appearance" | "general" | "desktop" | "device" | "memory" | "dna" | "progression" | "problems";
+
+// UX-020 — keyword → tab index for the settings search. First matching entry
+// in this order wins; honest and boring on purpose (no fuzzy fake results).
+const SETTINGS_SEARCH_INDEX: Array<{ tab: Tab; keywords: string[] }> = [
+  { tab: "ai", keywords: ["key", "api", "groq", "model", "provider", "email", "mailwing", "outbox", "smtp", "voice", "speak", "tts", "brain"] },
+  { tab: "appearance", keywords: ["theme", "color", "colour", "font", "size", "density", "bubble", "palette", "screen"] },
+  { tab: "general", keywords: ["sound", "language", "name", "quick", "reply", "greeting", "companion"] },
+  { tab: "desktop", keywords: ["shortcut", "desktop", "permission", "tray", "autonomy", "budget", "check-in", "update", "quit"] },
+  { tab: "memory", keywords: ["memory", "knowledge", "forget"] },
+  { tab: "problems", keywords: ["problem", "error", "diary", "failure"] },
+  { tab: "dna", keywords: ["dna", "tone", "communication"] },
+  { tab: "progression", keywords: ["progress", "level", "xp", "cosmetic", "unlock"] },
+  { tab: "device", keywords: ["device", "hardware", "battery", "cpu", "storage"] },
+];
+
+function matchSettingsTab(query: string): Tab | null {
+  const q = query.trim().toLowerCase();
+  if (!q) return null;
+  for (const entry of SETTINGS_SEARCH_INDEX) {
+    if (entry.keywords.some((k) => q.includes(k))) return entry.tab;
+  }
+  return null;
+}
+
+// CAP-060: the autonomy budget lives in preload but isn't on the hand-written
+// Window API type yet — guarded access keeps tsc green without touching types.
+type QuestBudgetAPI = {
+  getQuestBudget?: () => Promise<{ budget: number }>;
+  setQuestBudget?: (budget: number) => Promise<{ ok: boolean; budget: number; message: string }>;
+};
 
 type ProviderId = "openrouter" | "groq" | "cerebras" | "nvidia" | "gemini" | "ollama";
 
@@ -163,6 +196,8 @@ export function SettingsPanel({
 
   // Theme picker state (General tab)
   const [theme, setTheme] = useState<string>(() => currentTheme());
+  // UX-002: sound effects toggle (persisted mute state)
+  const [soundsOn, setSoundsOn] = useState<boolean>(() => !(loadPrefs().soundsMuted ?? false));
 
   // Quip Appearance + Fetch Updates state (Desktop tab)
   const [bringing, setBringing] = useState(false);
@@ -173,9 +208,53 @@ export function SettingsPanel({
   const [shortcutBusy, setShortcutBusy] = useState(false);
   const [shortcutResult, setShortcutResult] = useState<{ ok: boolean; message: string } | null>(null);
 
+  // UX-020: settings search — filters (auto-jumps) to the matching tab.
+  const [searchQuery, setSearchQuery] = useState("");
+  // UX-042/046: UI type scale + chat density (persisted in prefs + theme keys).
+  const [uiSize, setUiSize] = useState<"compact" | "comfortable" | "spacious">(() => loadPrefs().uiSize ?? "comfortable");
+  const [density, setDensity] = useState<"comfortable" | "compact">(() => loadPrefs().density ?? "comfortable");
+  // UX-043/045: accent override + companion re-tint.
+  const [accent, setAccent] = useState<string | null>(() => savedAccent());
+  const [tintOn, setTintOn] = useState<boolean>(() => loadPrefs().companionTint ?? false);
+  // UX-049: custom quick replies (one chip per line, max 8 × 60 chars).
+  const [quickReplies, setQuickReplies] = useState<string>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem("quip.quickReplies") ?? "[]");
+      return Array.isArray(raw) ? raw.filter((r) => typeof r === "string").join("\n") : "";
+    } catch {
+      return "";
+    }
+  });
+  // UX-050: chat bubble style (QuipSay/ChatMessage read this key).
+  const [bubbleStyle, setBubbleStyle] = useState<"glass" | "solid" | "outline">(() => {
+    try {
+      const v = localStorage.getItem("quip.bubbleStyle");
+      return v === "solid" || v === "outline" ? v : "glass";
+    } catch {
+      return "glass";
+    }
+  });
+  // UX-033: MailWing — configured accounts + the last 12 real sends.
+  const [mailOutbox, setMailOutbox] = useState<Array<{ id: string; ts: number; status: "sent" | "failed"; to: string[]; subject: string; detail: string }>>([]);
+  const [mailAccounts, setMailAccounts] = useState<Array<{ id: string; label: string; user: string; smtpHost: string; smtpPort: number; secure: boolean; isDefault: boolean; passEncrypted: boolean; lastTestOk?: boolean }>>([]);
+  const [mailLoading, setMailLoading] = useState(false);
+  // CAP-060: autonomy budget (0 = ask every time, >10 rarely useful).
+  const [questBudget, setQuestBudget] = useState<number | null>(null);
+  const [budgetDraft, setBudgetDraft] = useState<number | null>(null);
+  const [budgetNote, setBudgetNote] = useState<string | null>(null);
+
   useEffect(() => {
     setTab(initialTab);
+    // Fresh open → drop any stale filter so the note never lies about the view.
+    setSearchQuery("");
   }, [initialTab, open]);
+
+  // UX-020: as you type, auto-jump to the first tab whose keywords match.
+  const searchMatch = matchSettingsTab(searchQuery);
+  useEffect(() => {
+    if (searchMatch && searchMatch !== tab) setTab(searchMatch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery]);
 
   useEffect(() => {
     if (!open) return;
@@ -205,6 +284,21 @@ export function SettingsPanel({
     window.quip
       .getPermissionMode()
       .then(setPermMode)
+      .catch(() => {});
+    // MailWing outbox + accounts (UX-033) — honest empty states when absent.
+    setMailLoading(true);
+    window.quip
+      .mailwingOutboxGet()
+      .then((rows) => setMailOutbox(Array.isArray(rows) ? rows : []))
+      .catch(() => {})
+      .finally(() => setMailLoading(false));
+    window.quip
+      .mailwingAccountsList()
+      .then((rows) => setMailAccounts(Array.isArray(rows) ? rows : []))
+      .catch(() => {});
+    // CAP-060 autonomy budget.
+    (window.quip as unknown as QuestBudgetAPI).getQuestBudget?.()
+      .then((r) => setQuestBudget(typeof r?.budget === "number" ? r.budget : 0))
       .catch(() => {});
   }, [open]);
 
@@ -513,6 +607,86 @@ export function SettingsPanel({
     }
   };
 
+  /** UX-042: UI type scale — applies live via <html data-quip-size>. */
+  const handleSetUISize = (size: "compact" | "comfortable" | "spacious") => {
+    setUiSize(size);
+    applyUIScale(size);
+    savePrefs({ uiSize: size });
+  };
+
+  /** UX-046: chat density — line spacing via <html data-quip-density>. */
+  const handleSetDensity = (d: "comfortable" | "compact") => {
+    setDensity(d);
+    applyDensity(d);
+    savePrefs({ density: d });
+  };
+
+  /** UX-043: accent override — null resets to the active theme palette. */
+  const handleSetAccent = (color: string | null) => {
+    setAccent(color);
+    applyAccent(color);
+  };
+
+  /** UX-045: companion re-tint — the sprite's primary color becomes the UI accent. */
+  const handleToggleTint = () => {
+    const next = !tintOn;
+    setTintOn(next);
+    savePrefs({ companionTint: next });
+    applyCompanionTint(next ? getCompanion(companionId).primary : null);
+  };
+
+  /** UX-049: quick replies — one chip per line, max 8 chips × 60 chars. */
+  const handleQuickRepliesChange = (text: string) => {
+    setQuickReplies(text);
+    const chips = text
+      .split("\n")
+      .slice(0, 8)
+      .map((l) => l.slice(0, 60))
+      .filter((l) => l.trim());
+    try {
+      localStorage.setItem("quip.quickReplies", JSON.stringify(chips));
+    } catch {
+      /* non-fatal */
+    }
+  };
+
+  /** UX-050: bubble style for the chat bubbles (read by QuipSay/ChatMessage). */
+  const handleSetBubbleStyle = (style: "glass" | "solid" | "outline") => {
+    setBubbleStyle(style);
+    try {
+      localStorage.setItem("quip.bubbleStyle", style);
+    } catch {
+      /* non-fatal */
+    }
+  };
+
+  /** CAP-060: autonomy budget — honest save + the backend's own message. */
+  const handleSetQuestBudget = async (value: number) => {
+    const clamped = Math.max(0, Math.min(20, Math.round(value)));
+    setBudgetDraft(null);
+    setQuestBudget(clamped);
+    setBudgetNote(null);
+    try {
+      const r = await (window.quip as unknown as QuestBudgetAPI).setQuestBudget?.(clamped);
+      setBudgetNote(r?.message || `Autonomy budget set to ${r?.budget ?? clamped}.`);
+    } catch {
+      setBudgetNote("Couldn't save the budget — try again.");
+    }
+  };
+
+  /** UX-033: re-read the outbox on demand. */
+  const refreshMailwing = async () => {
+    setMailLoading(true);
+    try {
+      const rows = await window.quip.mailwingOutboxGet();
+      setMailOutbox(Array.isArray(rows) ? rows : []);
+    } catch {
+      /* keep whatever we had — the panel shows the honest last known state */
+    } finally {
+      setMailLoading(false);
+    }
+  };
+
   /** Screen Mode — companion / panel / full app / TRUE full screen. */
   const [screenMode, setScreenMode] = useState<WindowMode>("companion");
   useEffect(() => {
@@ -577,12 +751,38 @@ export function SettingsPanel({
         </button>
       </div>
 
+      {/* UX-020 — settings search: jumps to the tab that owns the keyword */}
+      <div className="px-3 pt-3" style={{ borderBottom: "none" }}>
+        <input
+          type="search"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              setSearchQuery("");
+            }
+          }}
+          placeholder="Search settings — key, theme, density, budget…"
+          aria-label="Search settings"
+          className="quip-input"
+          style={{ padding: "7px 12px", fontSize: 11.5 }}
+        />
+        {searchQuery.trim() !== "" && (
+          <div style={{ fontSize: 9.5, marginTop: 4, color: "rgba(var(--quip-text-soft), 0.95)" }}>
+            {searchMatch
+              ? <>Filtered to <strong style={{ color: "rgb(var(--quip-accent-deep))" }}>{searchMatch}</strong> — Esc or clear to browse everything.</>
+              : "No section matches that — try: key, theme, density, budget, memory, problem…"}
+          </div>
+        )}
+      </div>
+
       {/* Tabs — animated theme-colored pill */}
       <div
         className="flex gap-1 px-3 py-2 overflow-x-auto"
         style={{ borderBottom: `1px solid rgba(var(--quip-line), 0.05)` }}
       >
-        {(["ai", "appearance", "general", "desktop", "device", "memory", "dna", "progression"] as Tab[]).map((t) => (
+        {(["ai", "appearance", "general", "desktop", "device", "memory", "dna", "progression", "problems"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -603,7 +803,7 @@ export function SettingsPanel({
               />
             )}
             <span style={{ position: "relative" }}>
-              {t === "dna" ? "Communication DNA" : t === "ai" ? "AI Brain" : t}
+              {t === "dna" ? "Communication DNA" : t === "ai" ? "AI Brain" : t === "problems" ? "Problems" : t}
             </span>
           </button>
         ))}
@@ -694,6 +894,41 @@ export function SettingsPanel({
                   >
                     {doctorReport.verdict}
                   </div>
+                  {/* Network status — shown either way, so "ok" is evidence too */}
+                  {doctorReport.network && (
+                    <div style={{ fontSize: 9.5, color: doctorReport.network.ok ? "rgb(var(--quip-ok))" : "rgb(var(--quip-bad))" }}>
+                      {doctorReport.network.ok ? "✓ Network reachable" : "✗ Network blocked"}
+                      {doctorReport.network.message ? ` — ${doctorReport.network.message}` : ""}
+                    </div>
+                  )}
+                  {/* Per-provider rows — ok / latency / failure kind, honestly */}
+                  {(doctorReport.providers ?? []).length > 0 && (
+                    <div className="flex flex-col gap-1">
+                      {(doctorReport.providers as Array<{ provider: string; label: string; ok: boolean; configured: boolean; enabled: boolean; latencyMs: number; kind: string; parkedForMs: number }>).map((p) => (
+                        <div key={p.provider} className="flex items-center gap-2" style={{ minWidth: 0 }}>
+                          <span
+                            className="h-2 w-2 shrink-0 rounded-full"
+                            style={{ background: p.ok ? "rgb(var(--quip-ok))" : p.configured ? "rgb(var(--quip-bad))" : "rgba(var(--quip-line), 0.25)" }}
+                          />
+                          <span style={{ fontSize: 10, fontWeight: 600, color: "rgb(var(--quip-text))" }}>
+                            {p.label || p.provider}
+                          </span>
+                          <span style={{ fontSize: 9.5, color: p.ok ? "rgb(var(--quip-ok))" : "rgba(var(--quip-text-soft), 0.95)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {p.ok
+                              ? `ok · ${Math.round(p.latencyMs)}ms`
+                              : !p.enabled
+                                ? "turned off"
+                                : p.kind}
+                          </span>
+                          {!p.ok && p.parkedForMs > 0 && (
+                            <span style={{ fontSize: 9, color: "rgb(var(--quip-warn))", whiteSpace: "nowrap" }}>
+                              parked {Math.round(p.parkedForMs / 1000)}s
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {doctorReport.network?.ok === false && doctorReport.network?.message && (
                     <div style={{ fontSize: 9.5, color: "rgb(var(--quip-bad))" }}>{doctorReport.network.message}</div>
                   )}
@@ -1219,6 +1454,105 @@ export function SettingsPanel({
                 {saveResult.ok ? "✓ " : "✗ "}{saveResult.message}
               </div>
             )}
+
+            {/* UX-033: MailWing — the mail brain's accounts + real outbox */}
+            <div
+              className="rounded-xl px-3 py-2.5"
+              style={{ border: "1px solid rgba(var(--quip-line), 0.08)", background: "rgba(var(--quip-line), 0.02)" }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span style={{ fontSize: 11.5, fontWeight: 600, color: "rgb(var(--quip-text))" }}>MailWing outbox</span>
+                <button
+                  onClick={refreshMailwing}
+                  disabled={mailLoading}
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 600,
+                    color: "rgb(var(--quip-accent-deep))",
+                    background: "rgba(var(--quip-accent), 0.14)",
+                    border: "none",
+                    borderRadius: 7,
+                    padding: "3px 10px",
+                    cursor: mailLoading ? "default" : "pointer",
+                  }}
+                >
+                  {mailLoading ? "Checking…" : "Refresh"}
+                </button>
+              </div>
+
+              {/* Configured accounts — label, user, host:port, encryption badge */}
+              {mailAccounts.length > 0 && (
+                <div className="mt-2 flex flex-col gap-1.5">
+                  {mailAccounts.map((a) => (
+                    <div key={a.id} className="flex items-center gap-2" style={{ minWidth: 0 }}>
+                      <span
+                        className="h-2 w-2 shrink-0 rounded-full"
+                        style={{ background: a.lastTestOk === false ? "rgb(var(--quip-bad))" : a.lastTestOk === true ? "rgb(var(--quip-ok))" : "rgba(var(--quip-line), 0.25)" }}
+                      />
+                      <span style={{ fontSize: 10, fontWeight: 600, color: "rgb(var(--quip-text))", whiteSpace: "nowrap" }}>
+                        {a.label}{a.isDefault ? " · default" : ""}
+                      </span>
+                      <span style={{ fontSize: 9.5, color: "rgba(var(--quip-text-soft), 0.95)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {a.user} — {a.smtpHost}:{a.smtpPort}
+                      </span>
+                      <span
+                        className="ml-auto shrink-0"
+                        style={{
+                          fontSize: 8.5,
+                          fontWeight: 700,
+                          letterSpacing: "0.04em",
+                          textTransform: "uppercase",
+                          padding: "1px 6px",
+                          borderRadius: 6,
+                          color: a.passEncrypted ? "rgb(var(--quip-ok))" : "rgb(var(--quip-warn))",
+                          background: a.passEncrypted ? "rgba(var(--quip-ok), 0.1)" : "rgba(var(--quip-warn), 0.12)",
+                        }}
+                      >
+                        {a.passEncrypted ? "encrypted" : "no password"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Last 12 real sends — status pills, honest empty state */}
+              {mailOutbox.length === 0 ? (
+                <div style={{ fontSize: 10, marginTop: 8, color: "rgba(var(--quip-text-soft), 0.95)" }}>
+                  {mailLoading ? "Checking the outbox…" : "Nothing sent yet — Quip hasn't mailed anyone."}
+                </div>
+              ) : (
+                <div className="mt-2 flex flex-col gap-1.5">
+                  {mailOutbox.slice(0, 12).map((o) => (
+                    <div key={o.id} className="flex items-center gap-2" style={{ minWidth: 0 }}>
+                      <span
+                        className="shrink-0"
+                        style={{
+                          fontSize: 8.5,
+                          fontWeight: 700,
+                          letterSpacing: "0.04em",
+                          textTransform: "uppercase",
+                          padding: "1px 7px",
+                          borderRadius: 7,
+                          color: o.status === "sent" ? "rgb(var(--quip-ok))" : "rgb(var(--quip-bad))",
+                          background: o.status === "sent" ? "rgba(var(--quip-ok), 0.1)" : "rgba(var(--quip-bad), 0.1)",
+                        }}
+                      >
+                        {o.status}
+                      </span>
+                      <span style={{ fontSize: 10, fontWeight: 600, color: "rgb(var(--quip-text))", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {o.subject || "(no subject)"}
+                      </span>
+                      <span style={{ fontSize: 9.5, color: "rgba(var(--quip-text-soft), 0.95)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        to {o.to.join(", ")}
+                      </span>
+                      <span className="ml-auto shrink-0" style={{ fontSize: 9, color: "rgba(var(--quip-text-soft), 0.95)" }}>
+                        {new Date(o.ts).toLocaleTimeString()}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -1367,11 +1701,87 @@ export function SettingsPanel({
                 Open themes
               </button>
             </div>
+
+            {/* UX-050: bubble style — how chat bubbles render (QuipSay reads it) */}
+            <div
+              className="rounded-2xl px-4 py-4"
+              style={{ border: "1px solid rgba(var(--quip-line), 0.09)", background: "rgba(var(--quip-line), 0.035)" }}
+            >
+              <span style={{ fontSize: 12, fontWeight: 700, color: "rgb(var(--quip-text))" }}>Bubble style</span>
+              <div className="mt-2.5 grid grid-cols-3 gap-2">
+                {([
+                  { id: "glass", label: "Glass", desc: "Frosted, translucent" },
+                  { id: "solid", label: "Solid", desc: "Opaque, max readability" },
+                  { id: "outline", label: "Outline", desc: "Border-only, lightest" },
+                ] as Array<{ id: "glass" | "solid" | "outline"; label: string; desc: string }>).map((s) => {
+                  const active = bubbleStyle === s.id;
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => handleSetBubbleStyle(s.id)}
+                      aria-pressed={active}
+                      style={{
+                        textAlign: "left",
+                        borderRadius: 12,
+                        padding: "9px 11px",
+                        cursor: "pointer",
+                        border: active ? "1.5px solid rgba(var(--quip-accent), 0.7)" : "1px solid rgba(var(--quip-line), 0.1)",
+                        background: active ? "rgba(var(--quip-accent), 0.09)" : "rgba(var(--quip-line), 0.03)",
+                      }}
+                    >
+                      <span style={{ display: "block", fontSize: 11, fontWeight: 700, color: active ? "rgb(var(--quip-accent-deep))" : "rgb(var(--quip-text))" }}>
+                        {s.label}
+                      </span>
+                      <span style={{ display: "block", fontSize: 9.5, color: "rgba(var(--quip-text-soft), 0.95)", marginTop: 2 }}>
+                        {s.desc}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <span data-tone="soft" style={{ fontSize: 10, color: "rgba(var(--quip-text-soft), 0.9)", marginTop: 6, display: "block" }}>
+                Applies to chat bubbles and the companion's speech bubble.
+              </span>
+            </div>
           </div>
         )}
 
         {tab === "general" && (
           <div className="flex flex-col gap-5">
+            {/* UX-002: sound effects — per-companion pitched blips, honest toggle */}
+            <div
+              className="flex items-center justify-between rounded-xl px-3 py-2.5"
+              style={{ background: "rgba(var(--quip-line), 0.03)", border: "1px solid rgba(var(--quip-line), 0.09)" }}
+            >
+              <div>
+                <div style={{ fontSize: 11.5, fontWeight: 600, color: "rgb(var(--quip-text))" }}>Sound effects</div>
+                <div style={{ fontSize: 10, color: "rgba(var(--quip-text-soft), 0.9)", marginTop: 1 }}>
+                  Send, success, failure and quest blips — each companion has its own pitch.
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  const next = !(loadPrefs().soundsMuted ?? false);
+                  savePrefs({ soundsMuted: next });
+                  setSoundsMuted(next);
+                  setSoundsOn(!next);
+                }}
+                aria-pressed={!soundsOn}
+                aria-label="Toggle sound effects"
+                style={{
+                  fontSize: 10.5,
+                  fontWeight: 700,
+                  padding: "4px 12px",
+                  borderRadius: 999,
+                  cursor: "pointer",
+                  border: "none",
+                  color: soundsOn ? "#fff" : "rgba(var(--quip-text-soft), 0.95)",
+                  background: soundsOn ? "linear-gradient(135deg, rgb(var(--quip-accent)), rgb(var(--quip-accent-3)))" : "rgba(var(--quip-line), 0.08)",
+                }}
+              >
+                {soundsOn ? "On" : "Muted"}
+              </button>
+            </div>
             {/* Theme picker — the palette, the user's way. Applies live. */}
             <div>
               <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide" style={{ color: "rgba(var(--quip-text-soft), 1)" }}>
@@ -1423,6 +1833,243 @@ export function SettingsPanel({
                 Companion
               </label>
               <CompanionSwitch activeId={companionId} onSelect={onCompanionChange} />
+            </div>
+
+            {/* UX-042: UI type scale — chat text grows/shrinks everywhere */}
+            <div>
+              <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide" style={{ color: "rgba(var(--quip-text-soft), 1)" }}>
+                Text size
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {([
+                  { id: "compact", label: "Compact", desc: "Small & dense" },
+                  { id: "comfortable", label: "Comfortable", desc: "The default" },
+                  { id: "spacious", label: "Spacious", desc: "Easy on the eyes" },
+                ] as Array<{ id: "compact" | "comfortable" | "spacious"; label: string; desc: string }>).map((s) => {
+                  const active = uiSize === s.id;
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => handleSetUISize(s.id)}
+                      aria-pressed={active}
+                      style={{
+                        textAlign: "left",
+                        borderRadius: 12,
+                        padding: "9px 11px",
+                        cursor: "pointer",
+                        border: active ? "1.5px solid rgba(var(--quip-accent), 0.7)" : "1px solid rgba(var(--quip-line), 0.1)",
+                        background: active ? "rgba(var(--quip-accent), 0.09)" : "rgba(var(--quip-line), 0.03)",
+                      }}
+                    >
+                      <span style={{ display: "block", fontSize: 11, fontWeight: 700, color: active ? "rgb(var(--quip-accent-deep))" : "rgb(var(--quip-text))" }}>
+                        {s.label}
+                      </span>
+                      <span style={{ display: "block", fontSize: 9.5, color: "rgba(var(--quip-text-soft), 0.95)", marginTop: 2 }}>
+                        {s.desc}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* UX-046: chat density — line spacing inside messages */}
+            <div>
+              <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide" style={{ color: "rgba(var(--quip-text-soft), 1)" }}>
+                Chat density
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {([
+                  { id: "comfortable", label: "Comfortable", desc: "Relaxed line spacing" },
+                  { id: "compact", label: "Compact", desc: "Tighter lines, more on screen" },
+                ] as Array<{ id: "comfortable" | "compact"; label: string; desc: string }>).map((s) => {
+                  const active = density === s.id;
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => handleSetDensity(s.id)}
+                      aria-pressed={active}
+                      style={{
+                        textAlign: "left",
+                        borderRadius: 12,
+                        padding: "9px 11px",
+                        cursor: "pointer",
+                        border: active ? "1.5px solid rgba(var(--quip-accent), 0.7)" : "1px solid rgba(var(--quip-line), 0.1)",
+                        background: active ? "rgba(var(--quip-accent), 0.09)" : "rgba(var(--quip-line), 0.03)",
+                      }}
+                    >
+                      <span style={{ display: "block", fontSize: 11, fontWeight: 700, color: active ? "rgb(var(--quip-accent-deep))" : "rgb(var(--quip-text))" }}>
+                        {s.label}
+                      </span>
+                      <span style={{ display: "block", fontSize: 9.5, color: "rgba(var(--quip-text-soft), 0.95)", marginTop: 2 }}>
+                        {s.desc}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* UX-043: accent color — swatches + custom + honest reset */}
+            <div>
+              <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide" style={{ color: "rgba(var(--quip-text-soft), 1)" }}>
+                Accent color
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                {["#6FD6FF", "#7B8CFF", "#B98AFF", "#F472D6", "#34D399", "#F97316", "#E8B98A", "#A3E635"].map((hex) => {
+                  const active = (accent ?? "").toLowerCase() === hex.toLowerCase();
+                  return (
+                    <button
+                      key={hex}
+                      onClick={() => handleSetAccent(hex)}
+                      aria-label={`Accent color ${hex}`}
+                      aria-pressed={active}
+                      title={hex}
+                      style={{
+                        width: 26,
+                        height: 26,
+                        borderRadius: 9,
+                        cursor: "pointer",
+                        background: hex,
+                        border: active ? "2px solid rgb(var(--quip-text))" : "1px solid rgba(var(--quip-line), 0.2)",
+                        boxShadow: active ? "0 2px 10px rgba(var(--quip-accent), 0.45)" : "none",
+                        padding: 0,
+                      }}
+                    />
+                  );
+                })}
+                <input
+                  type="color"
+                  aria-label="Custom accent color"
+                  title="Custom accent color"
+                  value={accent && /^#[0-9a-fA-F]{6}$/.test(accent) ? accent : "#6fd6ff"}
+                  onChange={(e) => handleSetAccent(e.target.value)}
+                  style={{
+                    width: 26,
+                    height: 26,
+                    borderRadius: 9,
+                    border: "1px dashed rgba(var(--quip-line), 0.3)",
+                    background: "transparent",
+                    cursor: "pointer",
+                    padding: 0,
+                  }}
+                />
+                {accent && (
+                  <button
+                    onClick={() => handleSetAccent(null)}
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 600,
+                      color: "rgb(var(--quip-text-soft))",
+                      background: "rgba(var(--quip-line), 0.06)",
+                      border: "none",
+                      borderRadius: 8,
+                      padding: "4px 10px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Reset to theme
+                  </button>
+                )}
+              </div>
+              <div data-tone="soft" style={{ fontSize: 9.5, color: "rgba(var(--quip-text-soft), 0.9)", marginTop: 5 }}>
+                {accent
+                  ? `Custom accent applied (${accent}) — it overrides the theme until reset.`
+                  : "Following the theme palette — pick a swatch to override it."}
+              </div>
+            </div>
+
+            {/* UX-045: companion re-tint — the sprite colors the UI */}
+            <div
+              className="flex items-center justify-between gap-3 rounded-xl px-3 py-3"
+              style={{ border: "1px solid rgba(var(--quip-line), 0.08)", background: "rgba(var(--quip-line), 0.02)" }}
+            >
+              <div className="flex flex-col" style={{ minWidth: 0 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "rgb(var(--quip-text))" }}>
+                  Companion re-tints the UI
+                </span>
+                <span style={{ fontSize: 10.5, color: "rgba(var(--quip-text-soft), 0.95)", marginTop: 2 }}>
+                  {tintOn
+                    ? `${getCompanion(companionId).name}'s color (${getCompanion(companionId).primary}) is now the UI accent.`
+                    : "Off — the theme (or your custom accent) stays in charge."}
+                </span>
+              </div>
+              <button
+                role="switch"
+                aria-checked={tintOn}
+                aria-label="Companion re-tints the UI"
+                onClick={handleToggleTint}
+                className="relative shrink-0 rounded-full transition-colors"
+                style={{
+                  width: 44,
+                  height: 25,
+                  background: tintOn ? "linear-gradient(135deg, rgb(var(--quip-accent)), rgb(var(--quip-accent-3)))" : "rgba(var(--quip-line), 0.18)",
+                }}
+              >
+                <motion.span
+                  layout
+                  transition={{ type: "spring", stiffness: 500, damping: 32 }}
+                  style={{
+                    position: "absolute",
+                    top: 3,
+                    left: tintOn ? 22 : 3,
+                    width: 19,
+                    height: 19,
+                    borderRadius: "50%",
+                    background: "#fff",
+                    boxShadow: "0 1px 4px rgba(0,0,0,0.2)",
+                  }}
+                />
+              </button>
+            </div>
+
+            {/* UX-049: custom quick replies — A1's ChatInput renders the chips */}
+            <div>
+              <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide" style={{ color: "rgba(var(--quip-text-soft), 1)" }}>
+                Custom quick replies
+              </label>
+              <textarea
+                className="quip-input"
+                aria-label="Custom quick replies, one chip per line"
+                rows={3}
+                value={quickReplies}
+                onChange={(e) => handleQuickRepliesChange(e.target.value)}
+                placeholder={"One chip per line, e.g.\nSummarize this\nDraft a reply"}
+                style={{ padding: "8px 10px", fontSize: 11, resize: "vertical", lineHeight: 1.5 }}
+              />
+              <div style={{ fontSize: 9.5, color: "rgba(var(--quip-text-soft), 0.95)", marginTop: 4 }}>
+                Max 8 chips, 60 characters each — shown above the composer.
+              </div>
+              {(() => {
+                const chips = quickReplies.split("\n").map((l) => l.trim()).filter(Boolean).slice(0, 8);
+                if (chips.length === 0) return null;
+                return (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {chips.map((c, i) => (
+                      <span
+                        key={i}
+                        style={{
+                          fontSize: 9.5,
+                          fontWeight: 600,
+                          color: "rgb(var(--quip-text))",
+                          background: "rgba(var(--quip-accent), 0.12)",
+                          border: "1px solid rgba(var(--quip-accent), 0.3)",
+                          borderRadius: 8,
+                          padding: "3px 9px",
+                        }}
+                      >
+                        {c.slice(0, 60)}
+                      </span>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* UX-018: global summon hotkey — lives in General so it's findable */}
+            <div style={{ fontSize: 10.5, color: "rgba(var(--quip-text-soft), 0.95)" }}>
+              <strong style={{ color: "rgb(var(--quip-text))", fontFamily: "ui-monospace, monospace" }}>Ctrl+Shift+Space</strong>{" "}
+              — summon/hide Quip from anywhere, even while another app is focused.
             </div>
           </div>
         )}
@@ -1739,6 +2386,111 @@ export function SettingsPanel({
               </div>
             </div>
 
+            {/* CAP-060: autonomy budget — how often the SAME destructive
+                confirmation may auto-approve inside one quest. */}
+            <div
+              className="rounded-xl px-3 py-3"
+              style={{ border: "1px solid rgba(var(--quip-line), 0.08)", background: "rgba(var(--quip-line), 0.02)" }}
+            >
+              <div className="flex flex-col" style={{ marginBottom: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "rgb(var(--quip-text))" }}>
+                  Autonomy budget
+                </span>
+                <span style={{ fontSize: 10.5, color: "rgba(var(--quip-text-soft), 0.95)", marginTop: 2 }}>
+                  How many times the SAME destructive confirmation may auto-approve inside one quest (0 = ask every time).
+                </span>
+              </div>
+              <div className="flex items-center gap-2.5">
+                <button
+                  onClick={() => handleSetQuestBudget(Math.max(0, (questBudget ?? 0) - 1))}
+                  disabled={questBudget === null || questBudget <= 0}
+                  aria-label="Decrease autonomy budget"
+                  style={{
+                    width: 26,
+                    height: 26,
+                    fontSize: 13,
+                    fontWeight: 700,
+                    lineHeight: 1,
+                    color: "rgb(var(--quip-text))",
+                    background: "rgba(var(--quip-line), 0.06)",
+                    border: "1px solid rgba(var(--quip-line), 0.12)",
+                    borderRadius: 8,
+                    cursor: questBudget !== null && questBudget > 0 ? "pointer" : "default",
+                    opacity: questBudget !== null && questBudget > 0 ? 1 : 0.4,
+                  }}
+                >
+                  −
+                </button>
+                <span
+                  aria-live="polite"
+                  style={{
+                    minWidth: 34,
+                    textAlign: "center",
+                    fontSize: 14,
+                    fontWeight: 700,
+                    color: "rgb(var(--quip-text))",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {questBudget === null ? "…" : budgetDraft ?? questBudget}
+                </span>
+                <button
+                  onClick={() => handleSetQuestBudget(Math.min(20, (questBudget ?? 0) + 1))}
+                  disabled={questBudget === null || questBudget >= 20}
+                  aria-label="Increase autonomy budget"
+                  style={{
+                    width: 26,
+                    height: 26,
+                    fontSize: 13,
+                    fontWeight: 700,
+                    lineHeight: 1,
+                    color: "rgb(var(--quip-text))",
+                    background: "rgba(var(--quip-line), 0.06)",
+                    border: "1px solid rgba(var(--quip-line), 0.12)",
+                    borderRadius: 8,
+                    cursor: questBudget !== null && questBudget < 20 ? "pointer" : "default",
+                    opacity: questBudget !== null && questBudget < 20 ? 1 : 0.4,
+                  }}
+                >
+                  +
+                </button>
+                <input
+                  type="range"
+                  min={0}
+                  max={10}
+                  step={1}
+                  value={budgetDraft ?? Math.min(questBudget ?? 0, 10)}
+                  aria-label="Autonomy budget slider"
+                  onChange={(e) => setBudgetDraft(Number(e.target.value))}
+                  onMouseUp={() => budgetDraft !== null && handleSetQuestBudget(budgetDraft)}
+                  onTouchEnd={() => budgetDraft !== null && handleSetQuestBudget(budgetDraft)}
+                  onKeyUp={() => budgetDraft !== null && handleSetQuestBudget(budgetDraft)}
+                  style={{ flex: 1, accentColor: "rgb(var(--quip-accent))", cursor: "pointer" }}
+                />
+                <span style={{ fontSize: 9, color: "rgba(var(--quip-text-soft), 0.9)", whiteSpace: "nowrap" }}>
+                  slider caps at 10
+                </span>
+              </div>
+              <div style={{ fontSize: 9.5, color: (questBudget ?? 0) === 0 ? "rgb(var(--quip-accent-deep))" : "rgba(var(--quip-text-soft), 0.9)", marginTop: 6 }}>
+                {(questBudget ?? 0) === 0
+                  ? "Ask every time — nothing destructive happens without you."
+                  : `Quip may reuse your approval up to ${questBudget} time(s) per quest, then asks again.`}
+              </div>
+              {budgetNote && (
+                <div
+                  className="mt-2 rounded-lg px-2.5 py-1.5"
+                  style={{
+                    fontSize: 10,
+                    color: "rgb(var(--quip-text))",
+                    background: "rgba(var(--quip-ok), 0.08)",
+                    border: "1px solid rgba(var(--quip-ok), 0.22)",
+                  }}
+                >
+                  {budgetNote}
+                </div>
+              )}
+            </div>
+
             {/* The ONLY real quit */}
             <button
               onClick={() => setConfirmQuit(true)}
@@ -2011,6 +2763,13 @@ export function SettingsPanel({
               </div>
             )}
           </div>
+        )}
+
+        {tab === "problems" && (
+          <ProblemDiaryPanel
+            companionId={companionId}
+            onOpenAI={() => setTab("ai")}
+          />
         )}
           </motion.div>
         </AnimatePresence>

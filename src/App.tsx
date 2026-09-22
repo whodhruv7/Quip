@@ -26,8 +26,9 @@ import { QuipSay } from "@/components/QuipSay";
 import { Toaster, pushToast } from "@/components/Toaster";
 import { QuestCard } from "@/components/QuestCard";
 import { CommandPalette, ShortcutsOverlay, buildPaletteActions } from "@/components/CommandPalette";
+import { FirstRunTour } from "@/components/FirstRunTour";
 import { playSound, setSoundsMuted } from "@/lib/sounds";
-import { applyTheme } from "@/lib/theme";
+import { applyTheme, applyThemeExtras, applyUIScale, applyDensity, applyCompanionTint } from "@/lib/theme";
 import { useChat } from "@/hooks/useChat";
 import { useWindowDrag } from "@/hooks/useWindowDrag";
 import {
@@ -50,6 +51,40 @@ const STAGE_COMPANION_SIZE = 168;   // sprite size in the full app stage
 const PANEL_GAP = 8;                // gap between panel card and companion
 const PANEL_MARGIN = 12;
 
+// UX-047: welcome-back greetings (6 variants per companion, Hinglish-friendly).
+const GREETINGS: Record<CompanionId, string[]> = {
+  pix: [
+    "Wapas aa gaye! Kya karna hai? 😄",
+    "Main yahin tha — bolo, kya banayein aaj?",
+    "Missed you! Ready for the next thing?",
+  ],
+  kai: [
+    "Welcome back. Shall we continue where we left off?",
+    "Aa gaye aap — chaliye, aage badhein.",
+    "Good to see you. What shall we look at?",
+  ],
+  ren: [
+    "Back already? I like the energy! ⚡",
+    "Naya mission? Bhejo!",
+    "The explorer returns — where to next?",
+  ],
+  bubbles: [
+    "Hehe, you're back! 🎈",
+    "Yay! Kya karein aaj?",
+    "Bubbles missed you! Let's do something fun.",
+  ],
+  capy: [
+    "Easy does it. Welcome back. 🌿",
+    "Sab shaant hai. Bolo, kya karna hai?",
+    "Slow and steady — what's on your mind?",
+  ],
+  skales: [
+    "Sssup! Back on the desk? 🦎",
+    "Wapas aa gaye — kaam shuru karein?",
+    "The gecko kept your seat warm. What's the plan?",
+  ],
+};
+
 export default function App() {
   const [companionId, setCompanionId] = useState<CompanionId>(() => loadPrefs().companionId);
   const [viewMode, setViewMode] = useState<WindowMode>("companion");
@@ -61,6 +96,12 @@ export default function App() {
   const [cosmetics, setCosmetics] = useState<string[]>([]);
   const [unlockToast, setUnlockToast] = useState<string | null>(null);
 
+  // UX-012: pinned message strip above the composer (persisted in prefs).
+  const [pinnedMessage, setPinnedMessage] = useState<{ id: string; text: string } | null>(() => loadPrefs().pinnedMessage ?? null);
+  const [pinExpanded, setPinExpanded] = useState(false);
+  // UX-031: first-run tour — shown once after the first scan completes.
+  const [tourOpen, setTourOpen] = useState(false);
+
   const [restoredMessages, setRestoredMessages] = useState<ChatMessage[]>(() =>
     loadCurrentMessages(companionId)
   );
@@ -70,8 +111,8 @@ export default function App() {
     useChat(companionId, restoredMessages);
 
   // Settings can open straight to a tab (e.g. "ai" from the no-key banner).
-  const [settingsTab, setSettingsTab] = useState<"ai" | "general">("general");
-  const openSettings = useCallback((tab: "ai" | "general" = "general") => {
+  const [settingsTab, setSettingsTab] = useState<"ai" | "general" | "problems" | "appearance">("general");
+  const openSettings = useCallback((tab: "ai" | "general" | "problems" | "appearance" = "general") => {
     setSettingsTab(tab);
     setSettingsOpen(true);
   }, []);
@@ -108,6 +149,152 @@ export default function App() {
     window.addEventListener("quip:quick-task", onQuickTask);
     return () => window.removeEventListener("quip:quick-task", onQuickTask);
   }, [send]);
+
+  // ─── Appearance extras: type scale, density, accent override, tint ─────
+  // Applied once at boot (persisted in prefs + theme.ts localStorage keys).
+  useEffect(() => {
+    const p = loadPrefs();
+    if (p.uiSize) applyUIScale(p.uiSize);
+    if (p.density) applyDensity(p.density);
+    applyThemeExtras();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Companion tint follows the active companion while the toggle is ON.
+  useEffect(() => {
+    if (!loadPrefs().companionTint) return;
+    applyCompanionTint(getCompanion(companionId).primary);
+  }, [companionId]);
+
+  // ─── UX-018: tray integration — window.quip.onAutoTask ─────────────────
+  // task === ""  → tray "New task": surface the composer and focus it.
+  // non-empty    → sent through the SAME chat pipeline as typing.
+  useEffect(() => {
+    type AutoTaskAPI = { onAutoTask?: (cb: (payload: { task: string }) => void) => () => void };
+    let off: (() => void) | undefined;
+    try {
+      off = (window.quip as unknown as AutoTaskAPI).onAutoTask?.((payload) => {
+        const task = String(payload?.task ?? "");
+        // Bigger stays bigger; companion grows to the panel so it's visible.
+        setViewMode((m) => (m === "companion" ? "panel" : m));
+        if (task === "") {
+          try {
+            window.dispatchEvent(new CustomEvent("quip:focus-composer"));
+          } catch {
+            /* non-fatal */
+          }
+        } else {
+          send(task);
+        }
+      });
+    } catch {
+      /* non-fatal — tray auto-task unavailable */
+    }
+    return () => off?.();
+  }, [send]);
+
+  // ─── UX-029: error toast with a real Retry action ──────────────────────
+  // Only for retryable failures; "no-key" keeps its Add-key button banner.
+  const lastErrorToasted = useRef<string | null>(null);
+  useEffect(() => {
+    if (!error || errorKind === "no-key") return;
+    if (lastErrorToasted.current === error) return; // one toast per failure
+    lastErrorToasted.current = error;
+    pushToast({
+      title: "That didn't go through",
+      body: error,
+      kind: "error",
+      ttl: 9000,
+      actions: [{ label: "Retry", onClick: () => retryLast() }],
+    });
+  }, [error, errorKind, retryLast]);
+  useEffect(() => {
+    if (!error) lastErrorToasted.current = null;
+  }, [error]);
+
+  // ─── UX-047: welcome-back greeting after ≥5 minutes away ───────────────
+  const hiddenAtRef = useRef<number | null>(null);
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden) {
+        hiddenAtRef.current = Date.now();
+        return;
+      }
+      const awayMs = hiddenAtRef.current ? Date.now() - hiddenAtRef.current : 0;
+      hiddenAtRef.current = null;
+      if (awayMs >= 5 * 60_000) {
+        const lines = GREETINGS[companionId] ?? GREETINGS.pix;
+        // Text only — no extra animation, which also respects reduced motion.
+        setQuipSay(lines[Math.floor(Math.random() * lines.length)]);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [companionId]);
+
+  // ─── UX-031: first-run tour — once, right after the first scan ─────────
+  useEffect(() => {
+    if (scanDone && loadPrefs().tourDone !== true) setTourOpen(true);
+  }, [scanDone]);
+  const handleTourFinish = useCallback(() => {
+    setTourOpen(false);
+    savePrefs({ tourDone: true });
+    try {
+      window.dispatchEvent(new CustomEvent("quip:focus-composer"));
+    } catch {
+      /* non-fatal */
+    }
+  }, []);
+
+  // ─── UX-012: pin / unpin helpers ────────────────────────────────────────
+  const pinMessage = useCallback((m: { id: string; content: string }) => {
+    const p = { id: m.id, text: m.content };
+    setPinnedMessage(p);
+    setPinExpanded(false);
+    savePrefs({ pinnedMessage: p });
+  }, []);
+  const unpinMessage = useCallback(() => {
+    setPinnedMessage(null);
+    setPinExpanded(false);
+    savePrefs({ pinnedMessage: null });
+    try {
+      window.dispatchEvent(new CustomEvent("quip:focus-composer"));
+    } catch {
+      /* non-fatal */
+    }
+  }, []);
+  const handlePinLastReply = useCallback(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "assistant") {
+        pinMessage(messages[i]);
+        return;
+      }
+    }
+  }, [messages, pinMessage]);
+
+  // ─── UX-011: export the conversation as a Markdown download ────────────
+  const handleExportChat = useCallback(() => {
+    if (messages.length === 0) return;
+    const md = messages
+      .map((m) => `**${m.role === "user" ? "You" : "Quip"}** (${new Date(m.ts).toLocaleString()}):\n\n${m.content}\n\n---`)
+      .join("\n");
+    try {
+      const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const d = new Date();
+      const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      a.href = url;
+      a.download = `quip-chat-${stamp}.md`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      pushToast({ title: "Conversation exported", body: `quip-chat-${stamp}.md saved to your Downloads folder.`, kind: "success" });
+    } catch {
+      pushToast({ title: "Export failed", body: "The Markdown file could not be created — try again.", kind: "error" });
+    }
+  }, [messages]);
+
   // Global keys: Ctrl+K palette, "?" shortcuts (never while typing).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -580,6 +767,96 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* UX-012 — pinned message strip: keeps one reply at hand, persisted */}
+      {(pinnedMessage || messages.length > 0) && (
+        <div
+          style={{
+            margin: "0 12px 6px",
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 8,
+            borderRadius: 12,
+            border: "1px solid rgba(var(--quip-accent), 0.3)",
+            background: "rgba(var(--quip-accent), 0.07)",
+            padding: "5px 10px",
+            fontSize: 11,
+          }}
+        >
+          {pinnedMessage ? (
+            <>
+              <span aria-hidden style={{ flexShrink: 0, lineHeight: "16px" }}>📌</span>
+              <span
+                className="quip-pin-text"
+                role="button"
+                tabIndex={0}
+                aria-expanded={pinExpanded}
+                aria-label={pinExpanded ? "Collapse pinned message" : "Expand pinned message"}
+                onClick={() => setPinExpanded((v) => !v)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setPinExpanded((v) => !v);
+                  }
+                }}
+                style={{
+                  flex: 1,
+                  lineHeight: "16px",
+                  color: "rgb(var(--quip-text))",
+                  maxHeight: pinExpanded ? 88 : undefined,
+                  overflowY: pinExpanded ? "auto" : undefined,
+                  whiteSpace: pinExpanded ? "pre-wrap" : "nowrap",
+                  overflow: pinExpanded ? "auto" : "hidden",
+                  textOverflow: pinExpanded ? undefined : "ellipsis",
+                }}
+              >
+                {pinnedMessage.text}
+              </span>
+              <button
+                onClick={unpinMessage}
+                aria-label="Unpin message"
+                style={{
+                  flexShrink: 0,
+                  fontSize: 10,
+                  fontWeight: 600,
+                  color: "rgb(var(--quip-text-soft))",
+                  background: "rgba(var(--quip-line), 0.06)",
+                  border: "none",
+                  borderRadius: 7,
+                  padding: "2px 8px",
+                  cursor: "pointer",
+                }}
+              >
+                Unpin
+              </button>
+            </>
+          ) : (
+            <span style={{ flex: 1, fontSize: 10.5, color: "rgba(var(--quip-text-soft), 0.95)", lineHeight: "16px" }}>
+              Pin a reply to keep it at hand while you work.
+            </span>
+          )}
+          {messages.length > 0 && (
+            <button
+              onClick={handlePinLastReply}
+              aria-label="Pin last reply"
+              style={{
+                flexShrink: 0,
+                fontSize: 10,
+                fontWeight: 600,
+                color: "rgb(var(--quip-accent-deep))",
+                background: "rgba(var(--quip-accent), 0.12)",
+                border: "1px solid rgba(var(--quip-accent), 0.3)",
+                borderRadius: 7,
+                padding: "2px 8px",
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Pin last reply
+            </button>
+          )}
+        </div>
+      )}
+
       <ChatInput onSend={send} busy={chatBusy} companionId={companionId} />
     </>
   );
@@ -596,6 +873,7 @@ export default function App() {
       onToggleExpand={() => enterMode(viewMode === "full" ? "panel" : "full")}
       onToggleFullscreen={() => enterMode(viewMode === "fullscreen" ? "full" : "fullscreen")}
       onBrainClick={() => openSettings("ai")}
+      onExport={messages.length > 0 ? handleExportChat : undefined}
     />
   );
 
@@ -1047,6 +1325,8 @@ export default function App() {
         }}
       />
       <ShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      {/* UX-031: first-run tour — shows once, then prefs.tourDone ends it */}
+      <FirstRunTour open={tourOpen} onFinish={handleTourFinish} />
       <AnimatePresence>
         {unlockToast && (
           <motion.div

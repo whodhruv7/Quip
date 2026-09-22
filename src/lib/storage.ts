@@ -28,12 +28,23 @@ export interface QuipPrefs {
   scanned?: boolean;
   /** UX-002: sound feedback toggle (persisted). */
   soundsMuted?: boolean;
+  /** UX-012: the pinned message shown in the strip above the composer. */
+  pinnedMessage?: { id: string; text: string } | null;
+  /** UX-031: the first-run tour has been finished or skipped. */
+  tourDone?: boolean;
+  /** UX-042: UI type scale (mirrors theme.ts's "quip.uiSize" key). */
+  uiSize?: "compact" | "comfortable" | "spacious";
+  /** UX-046: chat line spacing (mirrors theme.ts's "quip.density" key). */
+  density?: "comfortable" | "compact";
+  /** UX-045: the active companion re-tints the UI with its primary color. */
+  companionTint?: boolean;
 }
 
 const DEFAULT_PREFS: QuipPrefs = {
   companionId: "pix",
   theme: "light",
   scanned: false,
+  pinnedMessage: null,
 };
 
 export function loadPrefs(): QuipPrefs {

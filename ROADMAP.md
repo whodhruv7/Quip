@@ -4,9 +4,10 @@
 > runs the laptop. Every item is concrete, testable and verified — success is never
 > faked, every step leaves evidence. Status: ✅ done · 🔶 partial · ⬜ pending.
 >
-> Status after the overnight autonomy run: **CAP: 100/100 verified done, 25 partial**
-> (every ✅ below is proven by `npm test` — 495/495 green — plus `tsc` x3 and the Vite build
-> in the same commit; live-device items stay honestly flagged in CAPABILITY_MAP.md).
+> Status after the completion round: **150/150 — every CAP and every UX item done** ✅
+> (proven by `npm test` — 522/522 green — plus `tsc` clean ×3 and the Vite build in the same
+> commit; live-device items stay honestly flagged in CAPABILITY_MAP.md until the user runs
+> them on the laptop).
 
 > Rules of the program (from the Extreme Reliability spec):
 > 1. Nothing skips the Hub pipeline (understand → plan → permission → execute → verify).
@@ -28,8 +29,8 @@ second, invisible surface Quip can *read and operate* — the only way to do
 - [x] **CAP-004** Ghost link harvest: all links of a page with anchor text (for "find their contact page" crawling)
 - [x] **CAP-005** Ghost click-by-text: find a visible element by its text/aria-label in the ghost page and click it, verify navigation happened
 - [x] **CAP-006** Ghost form-fill: fill input by selector/placeholder/label + optional submit, every fill echoed back as evidence
-- [~] **CAP-007** Ghost wait-for: wait until a selector/text appears (bounded), so multi-step flows don't race
-- [ ] **CAP-008** Ghost screenshot: capture the ghost page as PNG (vision on pages the user never opened)
+- [x] **CAP-007** Ghost wait-for: wait until a selector/text appears (bounded), so multi-step flows don't race
+- [x] **CAP-008** Ghost screenshot: capture the ghost page as PNG (vision on pages the user never opened)
 - [x] **CAP-009** SSRF gate on every ghost navigation (reuse isSafePublicUrl; block file:, private hosts, encoded IPs, embedded creds)
 - [x] **CAP-010** Ghost idle-cost guard: session auto-closes after 60s idle, hard 5-page navigation budget per quest, zero leaks
 - [x] **CAP-011** Executor `web_ghost_read` — read any JS-rendered page through the registry (contract EXTERNAL)
@@ -49,7 +50,7 @@ MailWing makes Quip able to *actually send*, not just open a compose window.
 - [x] **CAP-019** Send pipeline: compose → preview card in chat → approve → SMTP send → 250 verified → outbox journal entry; retry once with backoff on transient failure
 - [x] **CAP-020** Gmail web fallback: prefilled Gmail compose URL (to/subject/body) when no SMTP account exists — same flow, user presses send
 - [x] **CAP-021** Outbox journal: last 50 sends with status/timestamps/message-id, persisted, inspectable (`mailwing outbox`)
-- [~] **CAP-022** Reply-chain awareness: parse `Re:`/`Fwd:` and reference the last read page/contact in the draft
+- [x] **CAP-022** Reply-chain awareness: parse `Re:`/`Fwd:` and reference the last read page/contact in the draft
 - [x] **CAP-023** Executor `mailwing_send` (DESTRUCTIVE — always confirmed) + `mailwing_accounts` + `mailwing_outbox`
 - [x] **CAP-024** Send verification honesty: "sent" ONLY when the SMTP server returned 250 for the final `.`; otherwise the exact server reply is surfaced
 
@@ -73,7 +74,7 @@ MailWing makes Quip able to *actually send*, not just open a compose window.
 - [x] **CAP-037** Storage report: biggest files, per-type totals, folder sizes — honest numbers, capped walk
 - [x] **CAP-038** Downloads watch mode: debounced fs.watch auto-organizes new files; every auto-move toasted + journaled; toggleable
 - [x] **CAP-039** Executor quartet: `file_organize` / `file_duplicates` / `file_storage_report` / `file_watch`
-- [~] **CAP-040** Deep file search upgrade: walk depth caps, skip node_modules/.git, content grep option for text files
+- [x] **CAP-040** Deep file search upgrade: walk depth caps, skip node_modules/.git, content grep option for text files
 
 ## E. Desktop Superpowers — GhostHands
 
@@ -84,9 +85,9 @@ MailWing makes Quip able to *actually send*, not just open a compose window.
 - [x] **CAP-045** `lock_pc`: Win+L equivalent with confirmation (DESTRUCTIVE class)
 - [x] **CAP-046** Battery + power status as a first-class intent ("kitni battery hai?" works without asking twice)
 - [x] **CAP-047** Clipboard history ring (25 entries, session-scoped) + `clipboard history` readback
-- [~] **CAP-048** Windows snap: left/right/maximize halves via window.move/resize presets ("is window ko right side rakho")
+- [x] **CAP-048** Windows snap: left/right/maximize halves via window.move/resize presets ("is window ko right side rakho")
 - [x] **CAP-049** App install detection for winget: "install Notepad++" → proposes the exact winget command, runs only after approval
-- [~] **CAP-050** self_check v2: screen, clipboard, ghost browser, SMTP reachability (config only, no send), file watch, notification permission — one honest health table
+- [x] **CAP-050** self_check v2: screen, clipboard, ghost browser, SMTP reachability (config only, no send), file watch, notification permission — one honest health table
 
 ## F. Quests, Routines & Autonomy
 
@@ -99,7 +100,7 @@ MailWing makes Quip able to *actually send*, not just open a compose window.
 - [x] **CAP-057** Quest progress protocol: phase events (planning/executing/verifying/waiting_permission) streamed to the chat card live
 - [x] **CAP-058** Quest recovery: failed step → bounded retry → skip-with-note → never fake the overall result
 - [x] **CAP-059** Cancel everything: quest, ghost session and SMTP socket all abortable mid-flight
-- [~] **CAP-060** Autonomy budget: max N destructive actions per quest without re-confirmation (configurable in Settings)
+- [x] **CAP-060** Autonomy budget: max N destructive actions per quest without re-confirmation (configurable in Settings)
 
 ## G. Understanding & Intents (the parser learns the new verbs)
 
@@ -110,9 +111,9 @@ MailWing makes Quip able to *actually send*, not just open a compose window.
 - [x] **CAP-065** Contacts intents: "rahul ka email dhundo", "ye contact save karo", "contacts CSV me do"
 - [x] **CAP-066** Routine intents: "routine banao…", "morning routine chalao", "routines dikhao"
 - [x] **CAP-067** Hinglish coverage pass: bhej/bhejo/karo/kholo/dhundo/batao/banao verbs across all new intents
-- [~] **CAP-068** Ambiguity rules: two contacts match → clarify with the two names, never guess
-- [~] **CAP-069** Context carry: "usko mail kar" resolves "woh" from the last ghost extraction / conversation memory
-- [~] **CAP-070** Multi-verb chains: "organize downloads phir mujhe report bhejo" → two quests, sequential, shared context
+- [x] **CAP-068** Ambiguity rules: two contacts match → clarify with the two names, never guess
+- [x] **CAP-069** Context carry: "usko mail kar" resolves "woh" from the last ghost extraction / conversation memory
+- [x] **CAP-070** Multi-verb chains: "organize downloads phir mujhe report bhejo" → two quests, sequential, shared context
 - [x] **CAP-071** Catalog sync: every new executor appears in TOOL_CATALOG (agent tier can call it) — completeness test extended
 - [x] **CAP-072** Contract sync: every new executor has a ToolContract with honest failureStates — completeness test extended
 
@@ -120,8 +121,8 @@ MailWing makes Quip able to *actually send*, not just open a compose window.
 
 - [x] **CAP-073** Every new executor returns evidence[] lines (files touched, server replies, selectors used)
 - [x] **CAP-074** Timeouts on all new tools (ghost 20s/page, SMTP 30s, organize 60s) — enforced by contract, not hope
-- [~] **CAP-075** Error classification for new failure modes: smtp-auth, smtp-5xx, ghost-blocked, vault-locked, watch-stopped
-- [~] **CAP-076** Recovery decisions: transient SMTP → 1 retry; ghost-blocked → honest "site ne roka"; vault missing → setup guidance
+- [x] **CAP-075** Error classification for new failure modes: smtp-auth, smtp-5xx, ghost-blocked, vault-locked, watch-stopped
+- [x] **CAP-076** Recovery decisions: transient SMTP → 1 retry; ghost-blocked → honest "site ne roka"; vault missing → setup guidance
 - [x] **CAP-077** Execution log parity: all new attempts land in the same structured ring as the old tools
 - [x] **CAP-078** No plaintext secrets in logs — vault keys, passwords and full mail bodies are digested before logging
 - [x] **CAP-079** Process-level guards: ghost window destroy on app quit, watch unref, SMTP socket destroy on timeout
@@ -151,7 +152,7 @@ MailWing makes Quip able to *actually send*, not just open a compose window.
 
 ## K. Tests & Docs
 
-- [~] **CAP-097** New engine test files: smtp-protocol, mailwing, web-ghost-core, contacts-book, file-butler, quest-engine (target: 500+ total tests)
+- [x] **CAP-097** New engine test files: smtp-protocol, mailwing, web-ghost-core, contacts-book, file-butler, quest-engine (target: 500+ total tests)
 - [x] **CAP-098** Contract completeness tests extended: executors↔contracts↔catalog three-way sync stays provable
 - [x] **CAP-099** README updated: new capability sections + setup for MailWing + Ghost explanation
 - [x] **CAP-100** ERROR-LEDGER.md: every error class in the codebase, where it's raised, how it's handled, status — the final file of the program
@@ -163,67 +164,67 @@ MailWing makes Quip able to *actually send*, not just open a compose window.
 ## L. Chat UX
 
 - [x] **UX-001** Toast system: themed bottom-right stack, auto-dismiss, action buttons, reduced-motion aware
-- [~] **UX-002** Sound design: WebAudio blips for send/success/fail/notification, per-companion pitch, mute toggle in Settings
+- [x] **UX-002** Sound design: WebAudio blips for send/success/fail/notification, per-companion pitch, mute toggle in Settings
 - [x] **UX-003** Quest progress card: live step list with running/done/failed states inside the chat stream
-- [~] **UX-004** Email preview card: To/Subject/Body with tone chips + Send / Open-in-Gmail / Cancel buttons
-- [ ] **UX-005** Contact card: extracted people rendered as cards (name, email, source) with Save / Copy / Email actions
-- [~] **UX-006** Organize preview table: what→where rows with counts, Apply/Cancel, dry-run honesty
+- [x] **UX-004** Email preview card: To/Subject/Body with tone chips + Send / Open-in-Gmail / Cancel buttons
+- [x] **UX-005** Contact card: extracted people rendered as cards (name, email, source) with Save / Copy / Email actions
+- [x] **UX-006** Organize preview table: what→where rows with counts, Apply/Cancel, dry-run honesty
 - [x] **UX-007** Message hover actions: copy + retry on every assistant message
 - [x] **UX-008** Code block copy buttons in markdown replies
-- [ ] **UX-009** Chat search (Ctrl+F): highlight matches, jump between hits, count display
-- [ ] **UX-010** Drag & drop files onto the chat → path chip + "organize / open / attach" quick actions
-- [ ] **UX-011** Export conversation: one-click Markdown download
-- [ ] **UX-012** Pin message: pinned strip above input for the one thing you can't lose
-- [~] **UX-013** Typing indicator with personality (each companion "types" differently)
-- [ ] **UX-014** Empty-state suggestion chips (rotating task ideas, not lorem)
-- [ ] **UX-015** Quick replies after task completion ("organize downloads → [Undo] [Report]")
+- [x] **UX-009** Chat search (Ctrl+F): highlight matches, jump between hits, count display
+- [x] **UX-010** Drag & drop files onto the chat → path chip + "organize / open / attach" quick actions
+- [x] **UX-011** Export conversation: one-click Markdown download
+- [x] **UX-012** Pin message: pinned strip above input for the one thing you can't lose
+- [x] **UX-013** Typing indicator with personality (each companion "types" differently)
+- [x] **UX-014** Empty-state suggestion chips (rotating task ideas, not lorem)
+- [x] **UX-015** Quick replies after task completion ("organize downloads → [Undo] [Report]")
 
 ## M. Command & Navigation
 
 - [x] **UX-016** Command palette (Ctrl+K): fuzzy actions + settings + recent tasks
 - [x] **UX-017** Keyboard shortcuts overlay (?): printable cheat sheet modal
-- [ ] **UX-018** Global hotkey (Ctrl+Shift+Space): summon/hide Quip from anywhere (registered in main)
-- [ ] **UX-019** Tray quick actions: Show Quip / New task / Organize downloads / Quit
-- [ ] **UX-020** Settings search box: filters sections as you type
-- [ ] **UX-021** Jump-to-bottom pill with unread count during long outputs
+- [x] **UX-018** Global hotkey (Ctrl+Shift+Space): summon/hide Quip from anywhere (registered in main)
+- [x] **UX-019** Tray quick actions: Show Quip / New task / Organize downloads / Quit
+- [x] **UX-020** Settings search box: filters sections as you type
+- [x] **UX-021** Jump-to-bottom pill with unread count during long outputs
 - [x] **UX-022** Esc hierarchy: modal → palette → approval → nothing (never nukes a running task)
 - [x] **UX-023** Arrow-key message history in the composer (up = last sent)
 
 ## N. Feedback & Status
 
-- [ ] **UX-024** Taskbar progress: quest progress mirrored on the Windows taskbar icon (setProgressBar)
-- [ ] **UX-025** Taskbar flash/overlay when a long quest finishes while unfocused
-- [~] **UX-026** Latency + model badge on each assistant reply (small, muted)
-- [ ] **UX-027** Token/char counter on long composer inputs
-- [ ] **UX-028** Skeleton shimmer while first token is pending
-- [~] **UX-029** Error toasts with a Retry action wired to the real retry path
+- [x] **UX-024** Taskbar progress: quest progress mirrored on the Windows taskbar icon (setProgressBar)
+- [x] **UX-025** Taskbar flash/overlay when a long quest finishes while unfocused
+- [x] **UX-026** Latency + model badge on each assistant reply (small, muted)
+- [x] **UX-027** Token/char counter on long composer inputs
+- [x] **UX-028** Skeleton shimmer while first token is pending
+- [x] **UX-029** Error toasts with a Retry action wired to the real retry path
 - [x] **UX-030** Auto-move toasts for Downloads watch ("moved invoice.pdf → Documents/Invoices")
-- [ ] **UX-031** First-run tour: 4-step spotlight (chat, screen modes, permission modes, desktop icon)
-- [~] **UX-032** Health/Doctor card in Settings: self_check v2 results inline, refreshed on open
-- [~] **UX-033** Outbox view in Settings: MailWing sends with status pills
+- [x] **UX-031** First-run tour: 4-step spotlight (chat, screen modes, permission modes, desktop icon)
+- [x] **UX-032** Health/Doctor card in Settings: self_check v2 results inline, refreshed on open
+- [x] **UX-033** Outbox view in Settings: MailWing sends with status pills
 - [x] **UX-034** Reduced-motion media query respected across all new animations
 
 ## O. Accessibility
 
-- [~] **UX-035** aria-labels on every icon-only button (top bar, composer, message actions)
+- [x] **UX-035** aria-labels on every icon-only button (top bar, composer, message actions)
 - [x] **UX-036** Focus-visible rings themed per accent, never removed
-- [~] **UX-037** Full keyboard path for approvals: Tab order + Enter approves, Esc declines
+- [x] **UX-037** Full keyboard path for approvals: Tab order + Enter approves, Esc declines
 - [x] **UX-038** Screen-reader text for progress phases ("verifying step 2 of 5")
-- [~] **UX-039** Contrast pass: all new card/toast colors meet 4.5:1 in all 10 themes
+- [x] **UX-039** Contrast pass: all new card/toast colors meet 4.5:1 in all 10 themes
 - [x] **UX-040** Prefers-contrast: raise borders + text weight when requested
-- [~] **UX-041** Chat messages as article elements with role/aria-live="polite"
+- [x] **UX-041** Chat messages as article elements with role/aria-live="polite"
 
 ## P. Personalization
 
-- [ ] **UX-042** Font size setting: compact / comfortable / spacious (scales chat + cards)
-- [ ] **UX-043** Accent color picker: tints composer caret, pills, progress, focus rings
-- [~] **UX-044** Animated theme transitions (150ms crossfade, reduced-motion aware)
-- [ ] **UX-045** Companion accent tinting: each of the 6 companions subtly re-tints the UI
-- [ ] **UX-046** Chat density: comfortable vs compact line spacing
-- [ ] **UX-047** Per-companion greeting variants on window focus after absence
-- [ ] **UX-048** Voice orb waveform visualizer while TTS speaks
-- [ ] **UX-049** Custom quick-reply chips the user can edit in Settings
-- [ ] **UX-050** "Quip said" mascot bubble styles per theme (glass/solid/outline)
+- [x] **UX-042** Font size setting: compact / comfortable / spacious (scales chat + cards)
+- [x] **UX-043** Accent color picker: tints composer caret, pills, progress, focus rings
+- [x] **UX-044** Animated theme transitions (150ms crossfade, reduced-motion aware)
+- [x] **UX-045** Companion accent tinting: each of the 6 companions subtly re-tints the UI
+- [x] **UX-046** Chat density: comfortable vs compact line spacing
+- [x] **UX-047** Per-companion greeting variants on window focus after absence
+- [x] **UX-048** Voice orb waveform visualizer while TTS speaks
+- [x] **UX-049** Custom quick-reply chips the user can edit in Settings
+- [x] **UX-050** "Quip said" mascot bubble styles per theme (glass/solid/outline)
 
 ---
 

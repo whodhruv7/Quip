@@ -182,7 +182,20 @@ export interface AutonomyAPI {
   contactsSearch: (query: string) => Promise<unknown>;
   contactsList: (limit?: number) => Promise<unknown>;
   contactsExport: (filePath?: string) => Promise<{ ok: boolean; path?: string; count?: number; error?: string }>;
+  contactsSave: (input: { email?: string; phone?: string; name?: string; company?: string; note?: string; source?: string }) =>
+    Promise<{ ok: boolean; contact?: { id: string; email?: string }; error?: string }>;
   clipboardHistoryGet: () => Promise<{ ts: number; text: string; origin: string }[]>;
+  // ─── Problem Diary (Settings → Problems) ───
+  problemDiaryGet: (opts?: { status?: "open" | "resolved" | "all"; limit?: number }) =>
+    Promise<import("../../electron/shared").ProblemDiaryGetResult>;
+  problemDiaryResolve: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  problemDiaryExport: () => Promise<{ ok: boolean; path?: string; count?: number; error?: string }>;
+  problemDiaryClear: (scope?: "resolved" | "all") => Promise<{ ok: boolean; removed: number }>;
+  onProblemDiaryChanged: (cb: (stats: import("../../electron/shared").ProblemDiaryStats) => void) => () => void;
+  // ─── Drag & drop + CAP-060 autonomy budget ───
+  getPathForFile: (file: File) => string;
+  getQuestBudget: () => Promise<{ budget: number }>;
+  setQuestBudget: (budget: number) => Promise<{ ok: boolean; budget: number; message: string }>;
   onQuestEvent: (cb: (event: {
     questId: string; questTitle: string; stepIndex: number; stepTotal: number;
     stepName: string; status: "running" | "done" | "failed" | "skipped" | "waiting_permission" | "cancelled";

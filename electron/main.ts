@@ -1,7 +1,7 @@
 // Quip V2 — Electron main process (orchestration hub).
 // Wires all 10 brain layers + bootstrap + IPC. API keys stay in env only.
 
-import { app, BrowserWindow, ipcMain, screen, Tray, nativeImage, Menu } from "electron";
+import { app, BrowserWindow, ipcMain, screen, Tray, nativeImage, Menu, globalShortcut } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 
@@ -140,8 +140,21 @@ import {
   testAccount as mailwingTest,
   readOutbox as mailwingOutboxRead,
 } from "./engine/mailwing";
-import { searchContacts, listContacts, exportContactsCsv } from "./engine/contacts-book";
+import { searchContacts, listContacts, exportContactsCsv, upsertContact } from "./engine/contacts-book";
 import { clipboardHistory } from "./engine/ghost-hands";
+import { setQuestApprovalBudget, getQuestApprovalBudget } from "./engine/quest-engine";
+import {
+  configureProblemDiary,
+  setProblemDiaryMeta,
+  setProblemChangedSink,
+  noteProblem,
+  listProblems,
+  resolveProblem as diaryResolve,
+  clearResolved as diaryClearResolved,
+  clearAllProblems as diaryClearAll,
+  exportProblemsMarkdown as diaryExport,
+  problemStats as diaryStats,
+} from "./engine/problem-diary";
 
 // The orchestrator uses the model ONLY for ambiguous intent (compact schema,
 // one small call) — deterministic tools handle the obvious actions.
@@ -924,11 +937,97 @@ function createTray() {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: "Show Quip", click: () => showFromTray() },
+      {
+        // UX-019: open Quip with a fresh task — the composer gets focus and
+        // the panel opens (the renderer reacts to AUTO_TASK with an empty task).
+        label: "New task…",
+        click: () => {
+          showFromTray();
+          broadcastToRenderers(IPC.AUTO_TASK, { task: "" });
+        },
+      },
+      {
+        // UX-019: one-tap organize — runs the SAME approval-gated quest as
+        // chatting it; the plan card shows up in the panel, nothing moves
+        // without the user's OK.
+        label: "Organize downloads",
+        click: () => {
+          showFromTray();
+          setTimeout(() => {
+            executeTool("quest_run", {
+              target: "organize-downloads",
+              params: { kind: "organize-downloads" },
+            } as any, { platform: process.platform } as any).catch(() => {});
+          }, 900);
+        },
+      },
       { type: "separator" },
       { label: "Quit Quip", click: () => app.quit() },
     ])
   );
 }
+
+// ─── Global hotkey (UX-018): Ctrl+Shift+Space summons/hides Quip anywhere ──
+const GLOBAL_HOTKEY = "Control+Shift+Space";
+
+function toggleQuipFromHotkey(): void {
+  if (companionVisible) {
+    // Visible → hide everything (the tray tooltip reflects it honestly).
+    applyCompanionVisible(false);
+  } else {
+    showFromTray();
+  }
+}
+
+function registerGlobalHotkey(): void {
+  try {
+    globalShortcut.register(GLOBAL_HOTKEY, toggleQuipFromHotkey);
+  } catch {
+    /* another app owns the combo — the tray still works */
+  }
+}
+
+function unregisterGlobalHotkey(): void {
+  try {
+    globalShortcut.unregister(GLOBAL_HOTKEY);
+  } catch {
+    /* nothing registered */
+  }
+}
+
+// ─── Taskbar mirroring (UX-024 + UX-025) ───────────────────────────────────
+
+/** Quest progress → Windows taskbar. Values: 0..1, 2 = indeterminate, -1 = off. */
+function mirrorQuestProgress(pct: number | null): void {
+  for (const win of windows.values()) {
+    if (win.isDestroyed()) continue;
+    try {
+      win.setProgressBar(pct === null ? -1 : pct);
+    } catch {
+      /* not every platform supports it */
+    }
+  }
+}
+
+/** Flash the taskbar icon when a quest finishes while the user is elsewhere. */
+function flashIfUnfocused(): void {
+  for (const win of windows.values()) {
+    if (win.isDestroyed()) continue;
+    try {
+      if (!win.isFocused()) win.flashFrame(true);
+    } catch {
+      /* best effort */
+    }
+  }
+}
+
+app.on("browser-window-focus", (_e, win) => {
+  try {
+    win.flashFrame(false);
+  } catch {
+    /* best effort */
+  }
+});
 
 // ---------------------------------------------------------------------------
 // IPC — window movement
@@ -990,6 +1089,13 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
     systemPrompt = buildSystemPrompt(lastUserMsg?.content, companionId);
   } catch (e: any) {
     console.error("[chat] system prompt build failed:", e?.message ?? e);
+    noteProblem({
+      source: "chat",
+      kind: "prompt-build-failed",
+      severity: "high",
+      title: "chat reply crashed: system prompt could not be assembled",
+      detail: String(e?.message ?? e).slice(0, 500),
+    });
     try {
       sendToWindow(win, IPC.CHAT_ERROR, {
         requestId: payload.requestId,
@@ -1119,6 +1225,14 @@ ipcMain.handle(IPC.CHAT_SEND, async (_e, payload: ChatSendPayload) => {
       requestId: payload.requestId,
       message,
       kind,
+    });
+    // Problem Diary: every chat failure (no key, network, provider errors)
+    // lands in the diary so the user can export and report it later.
+    noteProblem({
+      source: "chat",
+      kind: `chat-${kind}`,
+      title: kind === "no-key" ? "chat failed: no AI key configured" : `chat failed: ${firstLineOf(message)}`,
+      detail: message.slice(0, 800),
     });
 
     return { ok: false };
@@ -1955,6 +2069,11 @@ ipcMain.handle(IPC.GET_CONNECTION_JOURNAL, () => connectionJournal.all());
 // Structured execution log — the per-action evidence trail (spec Phase 2).
 ipcMain.handle(IPC.GET_ACTION_LOG, () => executionLog.recent(60));
 
+/** First line of an error message — diary titles stay one honest line. */
+function firstLineOf(text: string): string {
+  return String(text ?? "").split("\n")[0].slice(0, 120);
+}
+
 // ── Autonomy wave IPC (Settings cards + renderer toasts) ───────────────────
 ipcMain.handle(IPC.MAILWING_ACCOUNTS_LIST, () => mailwingList());
 ipcMain.handle(IPC.MAILWING_ACCOUNTS_UPSERT, (_e, input) => mailwingUpsert(input ?? {}));
@@ -1964,7 +2083,45 @@ ipcMain.handle(IPC.MAILWING_OUTBOX_GET, () => mailwingOutboxRead());
 ipcMain.handle(IPC.CONTACTS_SEARCH, (_e, query: string) => searchContacts(String(query ?? "")));
 ipcMain.handle(IPC.CONTACTS_LIST, (_e, limit?: number) => listContacts(Number(limit) || 50));
 ipcMain.handle(IPC.CONTACTS_EXPORT, (_e, filePath?: string) => exportContactsCsv(filePath || undefined));
+ipcMain.handle(IPC.CONTACTS_SAVE, (_e, input: { email?: string; phone?: string; name?: string; company?: string; note?: string; source?: string }) =>
+  upsertContact(input ?? {})
+);
 ipcMain.handle(IPC.CLIPBOARD_HISTORY_GET, () => clipboardHistory());
+
+// ── Problem Diary IPC (Settings → Problems + live updates) ─────────────────
+ipcMain.handle(IPC.PROBLEM_DIARY_GET, (_e, opts?: { status?: "open" | "resolved" | "all"; limit?: number }) => ({
+  entries: listProblems(opts),
+  stats: diaryStats(),
+}));
+ipcMain.handle(IPC.PROBLEM_DIARY_RESOLVE, (_e, id: string) => {
+  const res = diaryResolve(String(id ?? ""));
+  if (res.ok) broadcastToRenderers(IPC.PROBLEM_DIARY_CHANGED, diaryStats());
+  return res;
+});
+ipcMain.handle(IPC.PROBLEM_DIARY_EXPORT, () => diaryExport());
+ipcMain.handle(IPC.PROBLEM_DIARY_CLEAR, (_e, scope?: "resolved" | "all") => {
+  const res = scope === "all" ? diaryClearAll() : diaryClearResolved();
+  if (res.ok) broadcastToRenderers(IPC.PROBLEM_DIARY_CHANGED, diaryStats());
+  return res;
+});
+
+// ── CAP-060 autonomy budget (persisted in the userData .env) ───────────────
+ipcMain.handle(IPC.QUEST_BUDGET_GET, () => {
+  const n = parseInt(process.env.QUIP_QUEST_BUDGET ?? "0", 10);
+  return { budget: Number.isFinite(n) ? Math.max(0, Math.min(20, n)) : 0 };
+});
+ipcMain.handle(IPC.QUEST_BUDGET_SET, (_e, budget: number) => {
+  const n = Math.max(0, Math.min(20, Math.floor(Number(budget) || 0)));
+  const res = upsertEnvFile(path.join(app.getPath("userData"), ".env"), { QUIP_QUEST_BUDGET: String(n) });
+  if (!res.ok) return { ok: false, budget: getQuestApprovalBudget(), message: `Couldn't save: ${res.error}` };
+  process.env.QUIP_QUEST_BUDGET = String(n);
+  setQuestApprovalBudget(n);
+  return {
+    ok: true,
+    budget: n,
+    message: n === 0 ? "Budget off — every destructive step asks you." : `Autonomy budget: the same destructive confirmation can auto-approve up to ${n}× per quest.`,
+  };
+});
 
 // Settings → Appearance → "Fetch Updates": fetch + fast-forward the running
 // repo, with an honest plain-language result (offline / dirty tree / not-a-repo
@@ -2119,6 +2276,14 @@ if (!app.requestSingleInstanceLock()) {
     configureContactsBook(app.getPath("userData"));
     configureFileButler(app.getPath("userData"));
     configureRoutines(app.getPath("userData"));
+    // Problem Diary — the memory of every failure (Settings → Problems).
+    // Boots BEFORE anything that can fail, so even a first-boot crash lands
+    // in the diary with evidence.
+    configureProblemDiary(app.getPath("userData"));
+    setProblemDiaryMeta({ appVersion: app.getVersion() });
+    setProblemChangedSink(() => broadcastToRenderers(IPC.PROBLEM_DIARY_CHANGED, diaryStats()));
+    // CAP-060: restore the persisted autonomy budget before anything can run.
+    setQuestApprovalBudget(parseInt(process.env.QUIP_QUEST_BUDGET ?? "0", 10) || 0);
     // Quests reuse the SAME permission system as the Action Engine — the
     // approval card the user already knows is what gates quest sends/moves.
     configureQuestRuntime({
@@ -2133,8 +2298,22 @@ if (!app.requestSingleInstanceLock()) {
         return verdict.approved;
       },
     });
-    // Quest step events → renderer quest cards (live progress).
-    setQuestEventSink((event) => broadcastToRenderers(IPC.QUEST_EVENT, event));
+    // Quest step events → renderer quest cards (live progress) + taskbar.
+    setQuestEventSink((event) => {
+      broadcastToRenderers(IPC.QUEST_EVENT, event);
+      // UX-024: mirror step progress on the taskbar icon.
+      if (event.status === "running" || event.status === "waiting_permission") {
+        mirrorQuestProgress(event.stepTotal > 0 ? event.stepIndex / event.stepTotal : 2);
+      } else if (event.status === "done" && event.stepIndex >= event.stepTotal - 1) {
+        mirrorQuestProgress(1); // completes visually, cleared below
+        setTimeout(() => mirrorQuestProgress(null), 1_500);
+        flashIfUnfocused(); // UX-025: nudge when the user is elsewhere
+      } else if (event.status === "failed" || event.status === "cancelled" || event.status === "skipped") {
+        if (event.stepIndex >= event.stepTotal - 1 || event.status === "cancelled") {
+          mirrorQuestProgress(null);
+        }
+      }
+    });
     // Downloads-watch auto-moves → renderer toasts.
     setWatchEventSink((e: WatchEvent) => broadcastToRenderers(IPC.WATCH_EVENT, e));
 
@@ -2149,6 +2328,7 @@ if (!app.requestSingleInstanceLock()) {
     companionVisible = readCompanionVisible();
     createWindow(defaultCompanionId);
     createTray();
+    registerGlobalHotkey();
 
     // Run the full bootstrap pipeline (window already visible; the renderer's
     // ScanOverlay now receives these events for real).
@@ -2333,6 +2513,7 @@ if (!app.requestSingleInstanceLock()) {
     try {
       destroyGhostSession("app quitting");
       stopAllWatches();
+      unregisterGlobalHotkey();
     } catch {
       /* non-fatal */
     }

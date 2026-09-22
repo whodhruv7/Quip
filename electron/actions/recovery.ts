@@ -20,6 +20,11 @@ export type FailureKind =
   | "permission"
   | "not-found"
   | "transient"
+  | "smtp-auth"
+  | "smtp-rejected"
+  | "ghost-blocked"
+  | "vault-locked"
+  | "watch-stopped"
   | "fatal";
 
 export type RecoveryStrategy = "retry" | "reobserve" | "give-up";
@@ -51,6 +56,12 @@ export function classifyFailure(input: {
   ) {
     return "permission";
   }
+  // ── CAP-075: the autonomy wave's new failure modes, first-class ──
+  if (/smtp.*(auth|login|authentication)|535|530|auth failed|bad credentials/.test(note)) return "smtp-auth";
+  if (/\b5\d\d\b|550|551|552|553|554|mailbox unavailable|rejected by the server/.test(note)) return "smtp-rejected";
+  if (/site (ne )?blocked|captcha|cloudflare|access forbidden|bot detection|403 forbidden/.test(note)) return "ghost-blocked";
+  if (/vault|could not be decrypted|safeStorage|re-enter (your )?password/.test(note)) return "vault-locked";
+  if (/watch (stopped|died)|fs\.watch|watcher/.test(note)) return "watch-stopped";
   if (
     /couldn'?t find|no matching|not found|doesn'?t exist|no results|no confident|empty|not installed/.test(
       note
@@ -127,6 +138,44 @@ export function decideRecovery(input: {
         strategy: "give-up",
         backoffMs: 0,
         reason: "It kept failing the same way, so I stopped.",
+      };
+
+    // ── CAP-076: recovery decisions for the new failure modes ──
+    case "smtp-auth":
+      // Wrong credentials NEVER fix themselves — one retry can't help.
+      return {
+        strategy: "give-up",
+        backoffMs: 0,
+        reason: "The mail server rejected the login — the password needs re-entering in Settings → MailWing.",
+      };
+
+    case "smtp-rejected":
+      // The server's 5xx word is final (spec: never argue with the MX).
+      return {
+        strategy: "give-up",
+        backoffMs: 0,
+        reason: "The mail server refused this message — I won't retry what it already rejected.",
+      };
+
+    case "ghost-blocked":
+      return {
+        strategy: "give-up",
+        backoffMs: 0,
+        reason: "The site blocked the ghost browser (bot protection). I report it honestly instead of fighting the site.",
+      };
+
+    case "vault-locked":
+      return {
+        strategy: "give-up",
+        backoffMs: 0,
+        reason: "The stored secret can't be decrypted on this machine — re-enter it once and everything works again.",
+      };
+
+    case "watch-stopped":
+      return {
+        strategy: "reobserve",
+        backoffMs: 1_000,
+        reason: "The folder watch stopped — I'll check its state once more.",
       };
 
     case "fatal":

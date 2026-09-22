@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { playSound } from "@/lib/sounds";
+import { dispatchQuickTask } from "./chat-ux";
 
 interface QuestStep {
   name: string;
@@ -40,6 +41,17 @@ const STEP_COLOR: Record<QuestStep["status"], string> = {
   skipped: "--quip-text-soft",
   waiting_permission: "--quip-warn, 1",
   cancelled: "--quip-text-soft",
+};
+
+const QUEST_CHIP_STYLE: React.CSSProperties = {
+  fontSize: 10.5,
+  fontWeight: 600,
+  color: "rgb(var(--quip-accent-deep))",
+  background: "rgba(var(--quip-accent), 0.12)",
+  border: "1px solid rgba(var(--quip-accent), 0.35)",
+  borderRadius: 8,
+  padding: "4px 9px",
+  cursor: "pointer",
 };
 
 export function QuestCard() {
@@ -177,6 +189,35 @@ export function QuestCard() {
               </div>
             ))}
           </div>
+
+          {/* UX-015: honest follow-ups on a finished quest. The card auto-hides
+              10s after the terminal state — that's the window to act. */}
+          {quest.terminalSince && quest.ok === true && (
+            <div style={{ display: "flex", gap: 6, padding: "0 12px 11px" }}>
+              <button
+                type="button"
+                onClick={() => dispatchQuickTask(quest.title)}
+                aria-label={`Run the quest again: ${quest.title}`}
+                className="quip-focusable"
+                style={QUEST_CHIP_STYLE}
+              >
+                ↻ Run again
+              </button>
+            </div>
+          )}
+          {quest.terminalSince && quest.ok === false && (
+            <div style={{ display: "flex", gap: 6, padding: "0 12px 11px" }}>
+              <button
+                type="button"
+                onClick={() => dispatchQuickTask("problems dikhao")}
+                aria-label="Show what failed"
+                className="quip-focusable"
+                style={QUEST_CHIP_STYLE}
+              >
+                What failed?
+              </button>
+            </div>
+          )}
         </motion.div>
       )}
     </AnimatePresence>

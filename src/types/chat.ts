@@ -40,6 +40,9 @@ export interface ChatMessage {
   contextNote?: string;
   action?: ExecutionResult;
   proactive?: boolean;
+  /** UX-026: which brain answered + how fast (set on chat completion). */
+  provider?: string;
+  latencyMs?: number;
 }
 
 export interface ChatSession {

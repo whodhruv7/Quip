@@ -20,6 +20,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import type { CompanionId, PixState } from "@/types";
 import type { CompanionTheme } from "@/lib/companion-config";
 import { COMPANIONS } from "@/lib/companion-config";
+import { prefersReducedMotion, useUxStyles } from "./chat-ux";
 
 // ---------------------------------------------------------------------------
 // Motion variants — subtle, calm, alive
@@ -412,10 +413,24 @@ export function Companion({ id, state, size = 80, unlockedCosmetics = [], moodSp
   const [gesture, setGesture] = useState<"none" | "lookAround" | "doubleBlink" | "wiggle">("none");
   const [showSparkle, setShowSparkle] = useState(false);
   const [showConcern, setShowConcern] = useState(false);
+  // UX-048: true while the companion's TTS voice plays (useChat dispatches
+  // the "quip-speaking" window event with detail true/false).
+  const [voiceSpeaking, setVoiceSpeaking] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const theme = COMPANIONS.find((c) => c.id === id) ?? COMPANIONS[0];
   const asleep = state === "sleeping";
   const prevState = useRef(state);
+
+  useUxStyles();
+
+  // Voice orb listener — hides instantly when detail is false.
+  useEffect(() => {
+    const onSpeak = (e: Event) => {
+      setVoiceSpeaking((e as CustomEvent<boolean>).detail === true);
+    };
+    window.addEventListener("quip-speaking", onSpeak);
+    return () => window.removeEventListener("quip-speaking", onSpeak);
+  }, []);
 
   // Success/error accent overlays fire when those states begin.
   useEffect(() => {
@@ -681,7 +696,71 @@ export function Companion({ id, state, size = 80, unlockedCosmetics = [], moodSp
           </motion.g>
         )}
       </svg>
+
+      {/* UX-048: waveform orb while the companion's voice is playing */}
+      {voiceSpeaking && <VoiceOrb color={theme.primary} />}
     </motion.div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// UX-048 — Voice orb: a tiny 5-bar waveform shown while TTS audio plays.
+// Pure CSS animation (quipOrbBar, injected by useUxStyles). Reduced motion →
+// a static ring instead of dancing bars. Decorative: aria-hidden.
+// ---------------------------------------------------------------------------
+function VoiceOrb({ color }: { color: string }) {
+  const reduced = prefersReducedMotion();
+  return (
+    <div
+      aria-hidden
+      style={{
+        position: "absolute",
+        right: -4,
+        bottom: -2,
+        zIndex: 5,
+        width: 30,
+        height: 20,
+        borderRadius: 10,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 2,
+        background: "rgba(0,0,0,0.42)",
+        border: `1px solid ${color}44`,
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
+        pointerEvents: "none",
+      }}
+    >
+      {reduced ? (
+        <span
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: "50%",
+            border: `2px solid ${color}`,
+            display: "block",
+          }}
+        />
+      ) : (
+        <span style={{ display: "inline-flex", gap: 2 }}>
+          {[0, 1, 2, 3, 4].map((i) => (
+            <span
+              key={i}
+              style={{
+                width: 2.5,
+                height: 12,
+                borderRadius: 2,
+                background: color,
+                transformOrigin: "center",
+                display: "block",
+                animation: `quipOrbBar 0.9s ease-in-out ${i * 0.09}s infinite`,
+              }}
+            />
+          ))}
+        </span>
+      )}
+    </div>
   );
 }
 

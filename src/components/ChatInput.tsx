@@ -14,6 +14,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { getCompanion } from "@/lib/companion-config";
 import { playSound } from "@/lib/sounds";
 import type { CompanionId } from "@/types";
+import { loadQuickReplies } from "./chat-ux";
 
 interface ChatInputProps {
   onSend: (text: string) => void;
@@ -59,6 +60,9 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
   const [history, setHistory] = useState<string[]>(() => loadHistory());
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [urlChip, setUrlChip] = useState<string | null>(null);
+  // Custom quick replies from Settings (localStorage "quip.quickReplies").
+  // Re-read when the input empties so edits in Settings show up live.
+  const [quickReplies, setQuickReplies] = useState<string[]>(() => loadQuickReplies());
   const ref = useRef<HTMLTextAreaElement>(null);
 
   const theme = companionId ? getCompanion(companionId) : null;
@@ -69,6 +73,10 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
     if (!el) return;
     el.style.height = "0px";
     el.style.height = Math.min(el.scrollHeight, 110) + "px";
+  }, [value]);
+
+  useEffect(() => {
+    if (value === "") setQuickReplies(loadQuickReplies());
   }, [value]);
 
   const checkClipboard = useCallback(async () => {
@@ -180,6 +188,36 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
         </button>
       )}
 
+      {quickReplies.length > 0 && !value && (
+        <div className="mb-2 flex flex-wrap items-center gap-1.5" aria-label="Your quick replies">
+          {quickReplies.map((qr) => (
+            <button
+              key={qr}
+              type="button"
+              onClick={() => submit(qr)}
+              aria-label={`Send quick reply: ${qr}`}
+              className="quip-focusable"
+              style={{
+                fontSize: 10.5,
+                fontWeight: 600,
+                color: "rgb(var(--quip-accent-deep))",
+                background: "rgba(var(--quip-accent), 0.10)",
+                border: "1px solid rgba(var(--quip-accent), 0.35)",
+                borderRadius: 999,
+                padding: "3px 10px",
+                cursor: "pointer",
+                maxWidth: 220,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {qr}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="flex items-end gap-2">
         <div className="relative flex-1">
           <textarea
@@ -208,6 +246,21 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
             }}
           />
         </div>
+
+        {/* UX-027: purely informational length counter near the send button */}
+        {value.length > 200 && (
+          <span
+            aria-hidden
+            style={{
+              fontSize: 10,
+              color: "rgba(var(--quip-text-soft), 0.6)",
+              paddingBottom: 12,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {value.length} chars
+          </span>
+        )}
 
         <button
           onClick={() => submit()}

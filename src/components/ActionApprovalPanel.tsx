@@ -3,8 +3,14 @@
 // Compact inline permission panel that sits directly ABOVE the chat input.
 // Shows WHAT Quip wants to do + Allow/Cancel. Part of the conversation —
 // not a giant modal. Used for every medium/dangerous action confirmation.
+//
+// UX-037: full keyboard path — the panel grabs focus when it mounts, Enter
+// approves, Esc declines. Keys are handled ON the panel (local to it), so it
+// can never auto-fire while another modal owns the keyboard, and buttons
+// keep their natural Enter/Space behavior when tabbed to.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import type { ApprovalRequestUI } from "@/types/api";
 
@@ -22,9 +28,35 @@ const RISK_STYLES: Record<string, { bg: string; border: string; label: string }>
 
 export function ActionApprovalPanel({ request, companionColor, onResolve }: ActionApprovalPanelProps) {
   const risk = RISK_STYLES[request.risk ?? "medium"] ?? RISK_STYLES.medium;
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Autofocus the panel itself (not a button) when it mounts — so Enter=Allow
+  // works immediately and Tab moves Cancel → Allow in a sensible order.
+  useEffect(() => {
+    panelRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      onResolve(request.id, false);
+      return;
+    }
+    if (e.key === "Enter") {
+      // If a specific button has focus, let the browser's native click run.
+      const target = e.target as HTMLElement | null;
+      if (target && target.tagName === "BUTTON") return;
+      e.preventDefault();
+      onResolve(request.id, true);
+    }
+  };
 
   return (
     <motion.div
+      ref={panelRef}
+      tabIndex={-1}
+      onKeyDown={handleKeyDown}
       initial={{ opacity: 0, y: 10, scale: 0.98 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: 8, scale: 0.98 }}
@@ -36,6 +68,7 @@ export function ActionApprovalPanel({ request, companionColor, onResolve }: Acti
         background: `rgb(var(--quip-bg))`,
         border: `1px solid ${risk.border}`,
         boxShadow: `0 8px 24px rgba(0,0,0,0.14), 0 0 0 3px ${risk.bg}`,
+        outline: "none",
       }}
       role="alertdialog"
       aria-label="Quip wants to do something"
@@ -61,9 +94,15 @@ export function ActionApprovalPanel({ request, companionColor, onResolve }: Acti
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center", marginTop: 8 }}>
+        <span aria-hidden style={{ fontSize: 9, color: "rgba(var(--quip-text-soft), 0.6)", marginRight: "auto" }}>
+          ↵ Allow · Esc Cancel
+        </span>
         <button
+          type="button"
           onClick={() => onResolve(request.id, false)}
+          aria-label="Cancel — do not allow this action (Escape)"
+          className="quip-focusable"
           style={{
             border: "1px solid rgba(var(--quip-line), 0.12)",
             borderRadius: 10,
@@ -78,7 +117,10 @@ export function ActionApprovalPanel({ request, companionColor, onResolve }: Acti
           Cancel
         </button>
         <button
+          type="button"
           onClick={() => onResolve(request.id, true)}
+          aria-label="Allow this action (Enter)"
+          className="quip-focusable"
           style={{
             border: "none",
             borderRadius: 10,

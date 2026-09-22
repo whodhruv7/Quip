@@ -142,11 +142,24 @@ export const IPC = {
   CONTACTS_SEARCH: "quip:contacts-search",
   CONTACTS_LIST: "quip:contacts-list",
   CONTACTS_EXPORT: "quip:contacts-export",
+  CONTACTS_SAVE: "quip:contacts-save",
   CLIPBOARD_HISTORY_GET: "quip:clipboard-history-get",
   /** main → renderer: quest step progress (drives the live quest card). */
   QUEST_EVENT: "quip:quest-event",
   /** main → renderer: a Downloads-watch auto-move happened (toast). */
   WATCH_EVENT: "quip:watch-event",
+
+  // ── Problem Diary (Settings → Problems: every failure, remembered) ──
+  PROBLEM_DIARY_GET: "quip:problem-diary-get",
+  PROBLEM_DIARY_RESOLVE: "quip:problem-diary-resolve",
+  PROBLEM_DIARY_EXPORT: "quip:problem-diary-export",
+  PROBLEM_DIARY_CLEAR: "quip:problem-diary-clear",
+  /** main → renderer: stats changed (new problem / resolved / cleared). */
+  PROBLEM_DIARY_CHANGED: "quip:problem-diary-changed",
+
+  // ── CAP-060 autonomy budget (Settings → Desktop) ──
+  QUEST_BUDGET_GET: "quip:quest-budget-get",
+  QUEST_BUDGET_SET: "quip:quest-budget-set",
 } as const;
 
 // ─── Window mode ───────────────────────────────────────────────────────────
@@ -311,6 +324,38 @@ export interface QuestEventPayload {
 export interface WatchEventPayload {
   dir: string;
   moved: { name: string; to: string }[];
+}
+
+// ─── Problem Diary payloads ────────────────────────────────────────────────
+
+export interface ProblemDiaryEntry {
+  id: string;
+  key: string;
+  source: "quest" | "tool" | "chat" | "mail" | "ghost" | "file" | "routine" | "watch" | "startup" | "manual";
+  kind: string;
+  severity: "low" | "medium" | "high";
+  title: string;
+  detail: string;
+  evidence?: string[];
+  status: "open" | "resolved";
+  firstSeen: number;
+  lastSeen: number;
+  resolvedAt?: number;
+  occurrences: number;
+  reopenCount: number;
+  appVersion?: string;
+}
+
+export interface ProblemDiaryStats {
+  open: number;
+  resolved: number;
+  high: number;
+  total: number;
+}
+
+export interface ProblemDiaryGetResult {
+  entries: ProblemDiaryEntry[];
+  stats: ProblemDiaryStats;
 }
 
 export interface SwarmInstance {

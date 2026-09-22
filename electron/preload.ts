@@ -3,7 +3,7 @@
 // Exposes a complete bridge to the renderer for all brain layers.
 // API keys never leave main — the renderer only asks main to do things.
 
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { IPC } from "./shared";
 import type {
   ChatSendPayload,
@@ -364,6 +364,8 @@ const api = {
   contactsSearch: (query: string) => ipcRenderer.invoke(IPC.CONTACTS_SEARCH, query),
   contactsList: (limit?: number) => ipcRenderer.invoke(IPC.CONTACTS_LIST, limit),
   contactsExport: (filePath?: string) => ipcRenderer.invoke(IPC.CONTACTS_EXPORT, filePath) as Promise<{ ok: boolean; path?: string; count?: number; error?: string }>,
+  contactsSave: (input: { email?: string; phone?: string; name?: string; company?: string; note?: string; source?: string }) =>
+    ipcRenderer.invoke(IPC.CONTACTS_SAVE, input) as Promise<{ ok: boolean; contact?: { id: string; email?: string }; error?: string }>,
   clipboardHistoryGet: () => ipcRenderer.invoke(IPC.CLIPBOARD_HISTORY_GET) as Promise<{ ts: number; text: string; origin: string }[]>,
   onQuestEvent: (cb: (event: {
     questId: string; questTitle: string; stepIndex: number; stepTotal: number;
@@ -379,6 +381,38 @@ const api = {
     ipcRenderer.on(IPC.WATCH_EVENT, handler as any);
     return () => ipcRenderer.removeListener(IPC.WATCH_EVENT, handler as any);
   },
+
+  // ─── Problem Diary (Settings → Problems: every failure, remembered) ────
+  problemDiaryGet: (opts?: { status?: "open" | "resolved" | "all"; limit?: number }) =>
+    ipcRenderer.invoke(IPC.PROBLEM_DIARY_GET, opts) as Promise<
+      import("./shared").ProblemDiaryGetResult
+    >,
+  problemDiaryResolve: (id: string) =>
+    ipcRenderer.invoke(IPC.PROBLEM_DIARY_RESOLVE, id) as Promise<{ ok: boolean; error?: string }>,
+  problemDiaryExport: () =>
+    ipcRenderer.invoke(IPC.PROBLEM_DIARY_EXPORT) as Promise<{ ok: boolean; path?: string; count?: number; error?: string }>,
+  problemDiaryClear: (scope?: "resolved" | "all") =>
+    ipcRenderer.invoke(IPC.PROBLEM_DIARY_CLEAR, scope) as Promise<{ ok: boolean; removed: number }>,
+  onProblemDiaryChanged: (cb: (stats: import("./shared").ProblemDiaryStats) => void) => {
+    const handler = (_e: unknown, data: any) => cb(data);
+    ipcRenderer.on(IPC.PROBLEM_DIARY_CHANGED, handler as any);
+    return () => ipcRenderer.removeListener(IPC.PROBLEM_DIARY_CHANGED, handler as any);
+  },
+
+  // ─── Drag & drop (UX-010): absolute path of a dropped File ─────────────
+  getPathForFile: (file: File) => {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch {
+      return "";
+    }
+  },
+
+  // ─── CAP-060 autonomy budget (Settings → Desktop) ──────────────────────
+  getQuestBudget: () =>
+    ipcRenderer.invoke(IPC.QUEST_BUDGET_GET) as Promise<{ budget: number }>,
+  setQuestBudget: (budget: number) =>
+    ipcRenderer.invoke(IPC.QUEST_BUDGET_SET, budget) as Promise<{ ok: boolean; budget: number; message: string }>,
 };
 
 

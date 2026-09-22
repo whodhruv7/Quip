@@ -60,6 +60,9 @@ import {
   ghostExtractContacts,
   ghostClickText,
   ghostFill,
+  ghostWaitForText,
+  ghostScreenshot,
+  lastRememberedContact,
   type GhostField,
 } from "./web-ghost";
 import {
@@ -73,6 +76,8 @@ import {
   gmailComposeUrl,
   readOutbox,
   digestOutboxForLog,
+  parseReplyChain,
+  buildReplyContext,
   type MailTone,
   type SendMailInput,
 } from "./mailwing";
@@ -108,6 +113,7 @@ import {
   notify,
   clipboardHistory,
   proposeInstall,
+  snapRect,
 } from "./ghost-hands";
 import {
   buildQuest,
@@ -118,6 +124,16 @@ import {
   type RoutineStep,
 } from "./quest-engine";
 import type { WatchEvent } from "./file-butler";
+import {
+  noteProblem,
+  listProblems,
+  resolveProblem,
+  clearResolved as diaryClearResolved,
+  clearAllProblems,
+  problemStats,
+  exportProblemsMarkdown,
+  type ProblemSource,
+} from "./problem-diary";
 
 const TAB_ACTIONS: TabAction[] = [
   "new", "close", "next", "previous", "reopen", "back", "forward", "reload",
@@ -447,6 +463,43 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
     }));
   },
 
+  // CAP-048: snap presets — "is window ko right side rakho".
+  async window_snap(step, _ctx) {
+    const preset = (String(step.params.preset ?? step.target ?? "").toLowerCase().trim() || "") as "left" | "right" | "maximize" | "restore";
+    if (!["left", "right", "maximize", "restore"].includes(preset)) {
+      return { success: false, output: "Which snap? left / right / maximize / restore.", note: "unknown snap preset" };
+    }
+    const target = step.params.window ?? step.params.target ?? "";
+    if (preset === "maximize" || preset === "restore") {
+      return fromVerification(await executeDesktopAction({
+        type: "window.control",
+        op: preset,
+        target,
+      }));
+    }
+    // Half-screen snap: workArea → snapRect → move + resize (verified twice).
+    let workArea: { x: number; y: number; width: number; height: number } | null = null;
+    try {
+      const { screen } = await import("electron");
+      workArea = screen.getPrimaryDisplay().workArea;
+    } catch {
+      return { success: false, output: "Screen geometry isn't available right now (running outside the desktop app?).", note: "screen unavailable" };
+    }
+    if (!workArea) return { success: false, output: "I couldn't read the screen work area.", note: "no workarea" };
+    const rect = snapRect(preset, workArea);
+    const moved = await executeDesktopAction({ type: "window.move", target, x: rect.x, y: rect.y });
+    if (!moved.ok) return fromVerification(moved);
+    const resized = await executeDesktopAction({ type: "window.resize", target, width: rect.width, height: rect.height });
+    return {
+      success: resized.ok,
+      output: resized.ok
+        ? `Snapped ${target ? `"${target}"` : "the window"} to the ${preset} half (${rect.width}×${rect.height}).`
+        : `Moved it, but the resize failed — ${resized.summary}`,
+      note: `snap-${preset}`,
+      evidence: [`rect: ${rect.x},${rect.y} ${rect.width}×${rect.height}`, moved.evidence?.join("; ") ?? ""],
+    };
+  },
+
   async screen(_step, _ctx) {
     return fromVerification(await executeDesktopAction({ type: "screen.capture" }));
   },
@@ -462,11 +515,13 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
     if (op === "search") {
       const query = step.params.query ?? step.params.path ?? "";
       const base = step.params.base;
-      const res = searchFiles(query, base);
-      if (res.hits.length === 0) {
+      const wantContent = String(step.params.content ?? "") === "true";
+      const res = searchFiles(query, base, { content: wantContent });
+      const contentLines = res.contentHits?.length ?? 0;
+      if (res.hits.length === 0 && contentLines === 0) {
         return {
           success: false,
-          output: `I couldn't find any file matching "${query}".`,
+          output: `I couldn't find any file matching "${query}"${wantContent ? " (name or contents)" : ""}.`,
           note: "searched common folders, no hits",
           evidence: ["local search found nothing"],
         };
@@ -495,9 +550,11 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
       }
       return {
         success: true,
-        output: `Found ${res.hits.length} matching item${res.hits.length > 1 ? "s" : ""}:\n${res.hits.map((h) => `• ${h}`).join("\n")}`,
+        output:
+          `Found ${res.hits.length} matching item${res.hits.length > 1 ? "s" : ""}:\n${res.hits.map((h) => `• ${h}`).join("\n")}` +
+          (contentLines ? `\nContents also mention "${query}" in:\n${res.contentHits!.slice(0, 8).map((h) => `• ${h}`).join("\n")}` : ""),
         note: "file-search",
-        evidence: [`searched: ${query}`],
+        evidence: [`searched: ${query}`, wantContent ? `content grep: ${contentLines} hit(s)` : "name-only"],
       };
     }
 
@@ -865,15 +922,52 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
     };
   },
 
+  // CAP-007: bounded wait so multi-step flows don't race the page.
+  async web_ghost_wait(step, _ctx) {
+    const text = String(step.params.text ?? step.target ?? "").trim();
+    if (!text) return { success: false, output: "What text should I wait for on the page?", note: "missing text" };
+    const timeout = Math.min(30_000, Math.max(2_000, parseInt(String(step.params.timeout ?? "10"), 10) * 1000 || 10_000));
+    const r = await ghostWaitForText(text.slice(0, 120), timeout);
+    return r.found
+      ? { success: true, output: `The text "${text}" appeared on the page${r.title ? ` (title: ${r.title})` : ""}.`, note: "ghost wait verified", evidence: [`waited ≤ ${timeout}ms`] }
+      : { success: false, output: `The text "${text}" never appeared within ${timeout / 1000}s — the page may still be loading, blocked, or the text may not exist.`, note: "ghost wait timeout" };
+  },
+
+  // CAP-008: ghost page → PNG (vision on pages the user never opened).
+  async web_ghost_screenshot(step, _ctx) {
+    const url = String(step.params.url ?? "");
+    if (!url) return { success: false, output: "Which page should I capture? I need a URL.", note: "missing url" };
+    const r = await ghostScreenshot(url);
+    if (!r.ok) return { success: false, output: `The ghost screenshot failed — ${r.error}`, note: "ghost screenshot failed" };
+    return {
+      success: true,
+      output: `Captured ${url} → ${r.path} (${r.size} bytes).` + (r.title ? ` Page title: "${r.title}".` : ""),
+      note: "ghost screenshot saved",
+      evidence: [`path: ${r.path}`, `size: ${r.size} bytes`],
+    };
+  },
+
   async mailwing_draft(step, _ctx) {
     const rawTo = String(step.params.to ?? step.target ?? "").trim();
     const bodyRaw = String(step.params.body ?? "").trim();
-    if (!rawTo) {
+    // CAP-069: "usko mail kar" — pronoun recipients resolve to the last
+    // contact Quip extracted (session memory), then the Contacts Book.
+    const PRONOUN = /^(usko|unko|unhe|us|un|them|him|her|woh|wo|that person|the same guy|same person)$/i;
+    let to = rawTo;
+    let resolvedFrom = "";
+    if (PRONOUN.test(rawTo)) {
+      const remembered = lastRememberedContact();
+      if (remembered?.email) {
+        to = remembered.email;
+        resolvedFrom = ` (the person from your last extraction${remembered.name ? `: ${remembered.name}` : ""})`;
+      } else {
+        return { success: false, output: `"${rawTo}" — I don't have a recent contact in memory. Extract someone from a site first ("extract emails from <site>") or give me the address.`, note: "no remembered contact" };
+      }
+    }
+    if (!to) {
       return { success: false, output: "Whom should I write to? I need a real email address (or a saved contact's name I can resolve).", note: "missing/invalid recipient" };
     }
     // "send an email to john" → resolve john from the Contacts Book first.
-    let to = rawTo;
-    let resolvedFrom = "";
     if (!to.includes("@")) {
       const hit = resolveEmail(to);
       if (hit) {
@@ -889,13 +983,17 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
     const humanize = String(step.params.humanize ?? "true") !== "false";
     const account = resolveAccount(step.params.account);
     let subject = String(step.params.subject ?? "").trim();
+    // CAP-022: Re:/Fwd: subjects are thread continuity — the humanizer keeps
+    // the thread tone instead of writing a cold-open letter.
+    const chain = parseReplyChain(subject);
+    const replyContext = buildReplyContext(chain, subject);
     let body = bodyRaw;
     let humanized = false;
     if (humanize) {
       const res = await humanizeEmail({
         body: bodyRaw,
         tone,
-        context: step.params.context,
+        context: [step.params.context, replyContext].filter(Boolean).join(" ") || undefined,
         languageHint: step.params.language,
         signature: step.params.signature,
       });
@@ -1257,6 +1355,61 @@ ${hist.slice(0, 8).map((h, i) => `${i + 1}. [${h.origin}] ${h.text.slice(0, 80).
       note: `routines: ${routines.length}`,
     };
   },
+
+  // ── Problem Diary — "kya problems aayi?" / "problem report do" ──────────
+  // The user can ask Quip what failed, resolve entries and export the
+  // Markdown report to the Desktop for sharing with the developer.
+  async problem_diary(step, _ctx) {
+    const verb = String(step.params.verb ?? step.params.action ?? (step.params.query ? "search" : "list")).toLowerCase().trim();
+    if (verb === "resolve") {
+      const id = String(step.params.id ?? step.target ?? "").trim();
+      if (!id) return { success: false, output: "Which problem should I mark resolved? Give me its number from the list or its id.", note: "missing id" };
+      const byIndex = /^\d+$/.test(id);
+      let target = id;
+      if (byIndex) {
+        const entries = listProblems({ status: "open", limit: 200 });
+        const entry = entries[Number(id) - 1];
+        if (!entry) return { success: false, output: `There's no open problem #${id}. Say "problems dikhao" for the current list.`, note: "bad index" };
+        target = entry.id;
+      }
+      const res = resolveProblem(target);
+      return res.ok
+        ? { success: true, output: `Marked resolved. It stays in the diary — if the same problem comes back, it reopens automatically with a higher count.`, note: "problem resolved" }
+        : { success: false, output: `Couldn't resolve it — ${res.error}`, note: "resolve failed" };
+    }
+    if (verb === "export") {
+      const res = exportProblemsMarkdown();
+      return res.ok
+        ? { success: true, output: `Problem report written to ${res.path} (${res.count} entr${res.count === 1 ? "y" : "ies"}). Hand that file back and every line can be fixed against real data.`, note: "diary exported", evidence: [`path: ${res.path}`] }
+        : { success: false, output: `Export failed — ${res.error}`, note: "export failed" };
+    }
+    if (verb === "clear") {
+      const which = String(step.params.scope ?? "resolved").toLowerCase();
+      const res = which === "all" ? clearAllProblems() : diaryClearResolved();
+      return { success: true, output: res.ok ? `Cleared ${res.removed} ${which === "all" ? "entries" : "resolved entries"} from the diary.` : "Couldn't clear the diary.", note: "diary cleared" };
+    }
+    // list (default) — optionally filtered by source
+    const src = String(step.params.source ?? "all").toLowerCase() as ProblemSource | "all";
+    const stats = problemStats();
+    const entries = listProblems({ status: "open", source: src, limit: 20 });
+    if (entries.length === 0) {
+      return {
+        success: true,
+        output: `The problem diary is empty${src !== "all" ? ` for "${src}"` : ""} — no open problems. (${stats.total} total recorded, ${stats.resolved} resolved.)`,
+        note: "diary empty",
+      };
+    }
+    const lines = entries.map((e, i) => {
+      const when = new Date(e.lastSeen).toLocaleString();
+      return `${i + 1}. [${e.severity.toUpperCase()}] ${e.title} — ${e.occurrences}× (last ${when}) [${e.id}]`;
+    });
+    return {
+      success: true,
+      output: `Open problems (${entries.length} shown, ${stats.high} high-severity):\n${lines.join("\n")}\nSay "resolve problem <number>" to mark one handled, or "export problem report" to write the Markdown file to your Desktop.`,
+      note: `open: ${stats.open}, resolved: ${stats.resolved}`,
+      evidence: entries.slice(0, 5).map((e) => `${e.id}: ${e.key}`),
+    };
+  },
 };
 
 // ─── Autonomy wave state (MailWing draft + organize plan staging) ────────────
@@ -1316,12 +1469,32 @@ export async function executeTool(
   const executor = Executors[action];
   if (executor) {
     try {
-      return await executor(step, ctx);
+      const result = await executor(step, ctx);
+      // Problem Diary: every failed tool call is recorded with its real
+      // output as evidence — the user can later see exactly what broke.
+      if (!result.success) {
+        noteProblem({
+          source: problemSourceFor(action),
+          kind: "executor-failed",
+          title: `${action} failed: ${firstLine(result.note || result.output || "no detail")}`,
+          detail: result.output?.slice(0, 800),
+          evidence: result.evidence,
+        });
+      }
+      return result;
     } catch (e: any) {
+      const detail = String(e?.message ?? e).slice(0, 500);
+      noteProblem({
+        source: problemSourceFor(action),
+        kind: "executor-error",
+        severity: "high",
+        title: `${action} crashed: ${firstLine(detail)}`,
+        detail,
+      });
       return {
         success: false,
         output: `Something went wrong running that action.`,
-        note: `executor error: ${String(e?.message ?? e)}`,
+        note: `executor error: ${detail}`,
       };
     }
   }
@@ -1329,4 +1502,20 @@ export async function executeTool(
   // Legacy fallback for old-style (action, params) calls
   const params = (stepOrParams && typeof stepOrParams === "object" ? stepOrParams : {}) as Record<string, string>;
   return legacyExecute(action, params, ctx);
+}
+
+// ─── Problem Diary helpers ───────────────────────────────────────────────────
+
+function firstLine(text: string): string {
+  return String(text ?? "").split("\n")[0].slice(0, 120);
+}
+
+/** Map an action to its diary source bucket so the Settings list groups sensibly. */
+function problemSourceFor(action: string): ProblemSource {
+  if (action.startsWith("mailwing") || action === "compose_email") return "mail";
+  if (action.startsWith("web_ghost") || action === "web_read") return "ghost";
+  if (action.startsWith("file_") || action === "find_file") return "file";
+  if (action.startsWith("routine")) return "routine";
+  if (action.startsWith("quest")) return "quest";
+  return "tool";
 }

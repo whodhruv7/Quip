@@ -109,7 +109,15 @@ export function useChat(
             meta?.switched && meta.provider
               ? `${m.contextNote ? `${m.contextNote}\n` : ""}Auto-switched to ${meta.provider} — your primary provider didn't answer.`
               : m.contextNote;
-          return { ...m, streaming: false, ...(note ? { contextNote: note } : {}) };
+          // UX-026: quiet honesty — which brain answered, how fast.
+          const latencyMs = m.ts ? Date.now() - m.ts : undefined;
+          return {
+            ...m,
+            streaming: false,
+            ...(note ? { contextNote: note } : {}),
+            ...(meta?.provider ? { provider: meta.provider } : {}),
+            ...(latencyMs && latencyMs > 0 ? { latencyMs } : {}),
+          };
         })
       );
       activeRequestId.current = null;

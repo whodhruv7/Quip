@@ -70,6 +70,29 @@
 | Session history UI / procedure inspection UI | Planned | P3 |
 | Launcher run-quip.cmd (idempotent install, warm build stamp, MessageBox failures, launch log) | Live (code) / Unverified (Windows runtime) | launcher contract tests |
 
+## Autonomy systems (the "do everything" wave — 150/150 roadmap items)
+| Capability | Status | Notes |
+|---|---|---|
+| Ghost Browser (offscreen DOM: read/extract/click/fill) | Live (code) / Unverified (real sites) | SSRF gate, 6-page budget, idle auto-close |
+| Ghost wait-for + screenshot (PNG → Pictures/Quip) | Live (code) / Unverified (runtime) | bounded 2–30s wait; byte-size evidence |
+| MailWing (zero-dep SMTP + humanized compose + outbox) | Live (code) / Unverified (real SMTP send) | "sent" ONLY on server 250; Gmail fallback |
+| Contacts Book (ghost→book pipeline, CSV export) | Live | dedupe-by-email, scored search |
+| FileButler (organize/duplicates/storage/watch/undo) | Live | dry-run first, manifest undo, deny-listed dirs |
+| GhostHands (screenshot/wallpaper/brightness/notify/lock/battery/clipboard/snap) | Live (code) / Unverified (Windows runtime) | window_snap: move+resize both verified |
+| Quest Engine (email-from-website, organize-downloads, morning-brief) + routines | Live | per-step verify, skip-with-note, cancel |
+| Autonomy budget (repeat destructive approval ≤N per quest) | Live | engine + IPC + Settings card; auto-approvals disclosed in notes |
+| Ambiguity + context carry ("usko mail kar") | Live | top-2 within 5 pts → clarify; session contact memory |
+| Multi-verb chains ("X phir Y") | Live | both halves must parse as tasks, else single intent |
+| Specialized failure kinds + recovery (smtp-auth/5xx, ghost-blocked, vault-locked, watch) | Live | auth/5xx/blocked never retry; watch reobserves once |
+| **Problem Diary** (every failure remembered: Settings → Problems) | Live | auto-record from tools/quests/routines/chat; dedupe+reopen; Markdown export to Desktop; chat verbs; fail-soft store |
+| Global hotkey Ctrl+Shift+Space (summon/hide) | Live (code) / Unverified (Windows runtime) | registered at boot, unregistered on quit |
+| Tray quick actions (Show / New task / Organize downloads / Quit) | Live | organize runs the SAME approval-gated quest |
+| Taskbar progress mirror + flash-on-finish | Live (code) / Unverified (Windows runtime) | quest events drive setProgressBar/flashFrame |
+| Drag & drop onto chat (path chips → organize/open/duplicates) | Live | webUtils.getPathForFile |
+| Chat search, pin, export MD, quick replies, contact cards, move tables, email draft cards | Live | renderer wave; all keyboard-reachable |
+| Personalization (font size, density, accent override, companion tint, bubble style, custom chips, greetings) | Live | persisted prefs/localStorage, reduced-motion respected |
+| First-run tour, settings search, doctor card, outbox card | Live | one-time tour gate via prefs |
+
 ## Blocked
 | Capability | Reason |
 |---|---|

@@ -8,8 +8,8 @@
 > status. Nothing here is hidden: an unhandled error is marked `[OPEN]`, never
 > pretended away.
 
-Verification at the time of writing: `npm test` → **495/495 pass, 0 fail** ·
-`tsc` clean ×3 (electron, tests, frontend) · `vite build` ✓ 2.8s.
+Verification at the time of writing: `npm test` → **522/522 pass, 0 fail** ·
+`tsc` clean ×3 (electron, tests, frontend root) · `vite build` ✓ 2.9s.
 
 ---
 
@@ -41,6 +41,16 @@ Verification at the time of writing: `npm test` → **495/495 pass, 0 fail** ·
 | E-22 | `mailwing_outbox: failure states missing` (test) | `actions/contracts.ts` | Contract had an empty `failureStates` array — the §-field test demands honest failure states for every tool | Added `journal-unreadable` failure state | `[SOLVED]` |
 | E-23 | Frontend `tsc` errors (pre-existing debt surfaced by the new full typecheck): `companionId` undefined in a `SettingsPanel` bar; `getWeeklyDigest`/`recordReflectionFeedback` missing from the hand-written `QuipAPI` union; cycle-mode callback typed as string | `SettingsPanel.tsx`, `types/api.ts`, `App.tsx` | The renderer API type was hand-written and had drifted from the real preload surface | `ReflectionAPI` + `AutonomyAPI` added to `types/api.ts`; `DNABar` got a typed `companionId` prop; callbacks match the real payload shapes | `[SOLVED]` |
 | E-24 | Broken string in test cleanup ("part 1" fake-row assert) | `tests/autonomy-wave.test.mjs` | Over-clever one-liner assertion written at 2 AM of the run | Replaced with plain, honest assertions | `[SOLVED]` |
+| E-25 | Diary eviction test failed: oldest resolved was NOT evicted first | `problem-diary.ts` `evictOrder` | Sort comparator inverted (`ar - br` keeps OPEN first — exactly backwards) | Comparator fixed to `br - ar`; BOTH the module and the test now evict resolved-then-oldest | `[SOLVED]` |
+| E-26 | `noteProblem` eviction kept the WRONG half | `problem-diary.ts` `noteProblem` | `.slice(0, CAP-1)` on an eviction-ordered list keeps the candidates instead of dropping them | `.slice(-(CAP-1))` — drop from the front, keep the tail | `[SOLVED]` |
+| E-27 | `classifySeverity("ghost-blocked")` returned HIGH | `problem-diary.ts` HIGH_PAT | The substring `lock` matched inside "b**lock**ed" | `lock` removed from the HIGH pattern (blocked = medium, auth/vault = high) | `[SOLVED]` |
+| E-28 | "unconfigured diary" test wrote successfully | `tests/problem-diary.test.mjs` | Test pointed the store at a fresh DIR (writable), not a broken one | Store now pointed at a FILE — every write fails; `noteProblem` returns null, export fails honest | `[SOLVED]` |
+| E-29 | `TS2304: Cannot find name 'noteProblem'` | `main.ts` | Import block got the other diary symbols but skipped the recorder | `noteProblem` added to the problem-diary import | `[SOLVED]` |
+| E-30 | `TS2339: Property 'active' does not exist` in self_check | `device-selfcheck.ts` | `watchStatus()` returns `{dir, autoOrganize}[]`, not a counter object | Probe now counts `autoOrganize` watches itself | `[SOLVED]` |
+| E-31 | `SyntaxError: Unexpected token` in completion tests (×5) | `tests/completion-round.test.mjs` | TypeScript syntax (`as const`, type annotations) pasted into `.mjs` | All annotations stripped — tests stay plain ESM | `[SOLVED]` |
+| E-32 | `TS2339: problemDiaryGet missing on QuipAPI` (×6) | `src/types/api.ts` | Renderer API type is hand-written; the new preload surface drifted from it | Problem Diary + contactsSave + getPathForFile + budget APIs added to the type (same lesson as E-23) | `[SOLVED]` |
+| E-33 | Broken template literal in file_op search output | `tool-registry.ts` | Quote typo while adding the content-grep branch: `? "s" : "}:` | String repaired; content hits render as their own section | `[SOLVED]` |
+| E-34 | CAP-060 budget test asked 3× with budget 1 | `quest-engine.ts` (initial design) | Budget keyed per QUEST; the test asserted per REPEAT counting | Confirmed design: budget counts REPEAT approvals of the same title within one quest (ask, auto, ask); test aligned to the contract | `[SOLVED]` |
 
 Every error above is also covered by a regression test where a test can express it
 (protocol tests, parser tests, quest runner tests). The suite that proves it:
@@ -129,20 +139,42 @@ evidence. **[OPEN]** = known gap, documented, not yet handled.
 | routine save without a known pattern | steps not derivable | routes to agent tier (`needsModelAssist`) to build the JSON properly | **Handled** |
 | organize with unknown folder | no known-folder word | falls through honestly (no fake plan) | **Handled** |
 
-## 3. Known gaps (documented, `[OPEN]` — visible in ROADMAP as `[~]`/`[ ]`)
+## 3. Known gaps (documented, `[OPEN]` — visible in CAPABILITY_MAP.md)
 
-- `ghostWaitForText` exists and is tested but is not yet wired as a standalone
-  executor (it runs implicitly between quest steps). `[OPEN]`
-- Ghost page screenshot (CAP-008): ghost page capture not implemented; screen
-  vision (`screen_observe`) remains the way to see pages. `[OPEN]`
-- Autonomy budget counter (CAP-060): quests gate every destructive step through
-  approvals today; a per-quest budget knob is future work. `[OPEN]`
-- Recovery classifier (CAP-075/076): new failure kinds are named in contracts,
-  but `recovery.ts` still uses the generic transient/fatal classification for
-  them — behavior is safe (one bounded retry) though not yet specialized. `[OPEN]`
+- `ghostWaitForText` is now a first-class executor (`web_ghost_wait`, CAP-007). `[SOLVED]`
+- Ghost page screenshot is real (CAP-008: `web_ghost_screenshot` → PNG in
+  Pictures/Quip with byte-size evidence). `[SOLVED]`
+- Autonomy budget (CAP-060) shipped: engine + IPC + Settings card. `[SOLVED]`
+- Recovery classifier (CAP-075/076) now specializes smtp-auth, smtp-rejected,
+  ghost-blocked, vault-locked and watch-stopped. `[SOLVED]`
 - Live-device truth: SMTP delivery to a real inbox, wallpaper/brightness on the
   user's actual laptop, and real site extraction need the user's machine — the
   sandbox proves logic, not hardware (see CAPABILITY_MAP.md). `[OPEN]`
+
+---
+
+## 4. The Problem Diary (the failure-memory system itself)
+
+Every error class above now ALSO lands in a persistent, user-visible diary —
+`electron/engine/problem-diary.ts`, surfaced in **Settings → Problems**:
+
+| Property | Value |
+|---|---|
+| Recorded automatically from | every failed `executeTool` call (with its real output as evidence), every quest step failure/crash (NOT user declines — consent is not a bug), routine step failures, chat failures (no-key/network/provider), prompt-build crashes |
+| Dedupe | same source+normalized-title → `occurrences++`, `lastSeen` refreshed, first-seen preserved |
+| Reopen rule | a RESOLVED problem that returns reopens automatically with `reopenCount++` — "it came back" is visible truth |
+| Severity | auto-classified (auth/permission/vault → high, network/timeout/blocked → medium) |
+| Bounds | 500 entries; resolved evict first, then oldest; strings clamped (title 160, detail 1000, evidence 10×200) |
+| Fail-soft | `noteProblem` NEVER throws — a broken diary cannot break a task that is already failing (proven by test with a deliberately broken store) |
+| User surface | Settings → Problems: open/resolved/all filters, severity dots, HIGH badges, expandable evidence, "Mark resolved", live stats via `PROBLEM_DIARY_CHANGED` broadcast |
+| Download | "Export report ↓" writes `quip-problems-YYYY-MM-DD.md` to the Desktop — a readable Markdown report (status, severity, counts, evidence) to hand back for fixes |
+| Chat verbs | "problems dikhao" lists; "resolve problem 2" marks; "export problem report" writes the file — deterministic parser routing, never model-guessed |
+| Secrets | passwords, vault keys and full mail bodies are never recorded — evidence is digested (paths, stages, server codes) |
+| Privacy | 100% local JSON at userData/problems/diary.json; export is explicit, nothing phones home |
+
+Tests: `tests/problem-diary.test.mjs` (15) + `tests/completion-round.test.mjs` (12)
+cover the pure core, the store lifecycle, every hook, the executor verbs and the
+three-way contract/catalog/registry sync.
 
 > Rule this file enforces: **an error that is handled must be handled the same
 > way everywhere — honestly, with evidence, and with the user's language.** When

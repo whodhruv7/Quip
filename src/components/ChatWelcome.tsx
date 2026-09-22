@@ -3,12 +3,13 @@
 // Shows when there are no messages yet. Companion greeting + brain status +
 // quick suggestions. Premium, minimal, Apple × Arc × Linear style.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import type { CompanionId } from "@/types";
 import type { ModelRouterStatus } from "@/types/models";
 import { getCompanion } from "@/lib/companion-config";
 import { CHAT_SUGGESTIONS } from "@/lib/constants";
+import { loadQuickReplies, prefersReducedMotion } from "./chat-ux";
 
 interface ChatWelcomeProps {
   companionId: CompanionId;
@@ -16,6 +17,18 @@ interface ChatWelcomeProps {
   /** Opens Settings on the AI tab when the brain isn't connected. */
   onOpenKeySetup?: () => void;
 }
+
+// UX-014: REAL task ideas — every one routes to a real execution.
+const ROTATING_TASKS = [
+  { icon: "🗂️", label: "Organize downloads", text: "organize my downloads" },
+  { icon: "📧", label: "Extract emails", text: "extract emails from acme.com and draft a mail" },
+  { icon: "💾", label: "Storage report", text: "storage report" },
+  { icon: "🔋", label: "Battery check", text: "battery kitni hai?" },
+  { icon: "🌅", label: "Morning brief", text: "morning brief" },
+  { icon: "📸", label: "Screenshot lo", text: "screenshot lo" },
+];
+const VISIBLE_CHIPS = 4;
+const ROTATE_MS = 8000;
 
 export function ChatWelcome({ companionId, onSuggestionClick, onOpenKeySetup }: ChatWelcomeProps) {
   const theme = getCompanion(companionId);
@@ -25,6 +38,25 @@ export function ChatWelcome({ companionId, onSuggestionClick, onOpenKeySetup }: 
   const [wizardKey, setWizardKey] = useState("");
   const [wizardState, setWizardState] = useState<"idle" | "saving" | "ok" | "fail">("idle");
   const [wizardNote, setWizardNote] = useState<string | null>(null);
+
+  // UX-014: rotate the visible suggestion chips every 8s (static when the OS
+  // asks for reduced motion).
+  const [rotationSeed, setRotationSeed] = useState(0);
+  useEffect(() => {
+    if (prefersReducedMotion()) return;
+    const t = setInterval(() => setRotationSeed((s) => s + 1), ROTATE_MS);
+    return () => clearInterval(t);
+  }, []);
+  const visibleTasks = useMemo(() => {
+    const start = (rotationSeed * VISIBLE_CHIPS) % ROTATING_TASKS.length;
+    return Array.from(
+      { length: Math.min(VISIBLE_CHIPS, ROTATING_TASKS.length) },
+      (_, i) => ROTATING_TASKS[(start + i) % ROTATING_TASKS.length]
+    );
+  }, [rotationSeed]);
+
+  // UX-018 companion piece: the user's own quick replies from Settings.
+  const customReplies = useMemo(() => loadQuickReplies(), []);
 
   useEffect(() => {
     let alive = true;
@@ -71,7 +103,7 @@ export function ChatWelcome({ companionId, onSuggestionClick, onOpenKeySetup }: 
   };
 
   return (
-    <div className="flex flex-1 flex-col items-center justify-center px-6 py-8">
+    <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-6 py-8 quip-scroll">
       {/* Companion glow */}
       <motion.div
         initial={{ opacity: 0, scale: 0.9 }}
@@ -233,6 +265,56 @@ export function ChatWelcome({ companionId, onSuggestionClick, onOpenKeySetup }: 
         )}
       </motion.div>
 
+      {/* UX-014: rotating REAL-task chips */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.32 }}
+        className="mb-4 flex w-full max-w-[280px] flex-col gap-2"
+      >
+        <span
+          style={{
+            fontSize: 9.5,
+            fontWeight: 700,
+            color: "rgba(var(--quip-text-soft), 0.8)",
+            textTransform: "uppercase",
+            letterSpacing: 0.6,
+            textAlign: "center",
+          }}
+        >
+          Try something real
+        </span>
+        <div className="grid grid-cols-2 gap-2">
+          {visibleTasks.map((s) => (
+            <button
+              key={s.text}
+              onClick={() => onSuggestionClick(s.text)}
+              aria-label={`Ask Quip: ${s.text}`}
+              className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-left transition-all hover:scale-[1.02] active:scale-[0.98]"
+              style={{
+                fontSize: 12,
+                fontWeight: 500,
+                color: "rgb(var(--quip-text))",
+                background: "rgba(var(--quip-accent), 0.07)",
+                border: "1px solid rgba(var(--quip-accent), 0.22)",
+                boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+              }}
+            >
+              <span style={{ fontSize: 14 }}>{s.icon}</span>
+              <span
+                style={{
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {s.label}
+              </span>
+            </button>
+          ))}
+        </div>
+      </motion.div>
+
       {/* Quick suggestions */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
@@ -244,6 +326,7 @@ export function ChatWelcome({ companionId, onSuggestionClick, onOpenKeySetup }: 
           <button
             key={s.text}
             onClick={() => onSuggestionClick(s.text)}
+            aria-label={`Ask Quip: ${s.text}`}
             className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-left transition-all hover:scale-[1.02] active:scale-[0.98]"
             style={{
               fontSize: 12,
@@ -259,6 +342,39 @@ export function ChatWelcome({ companionId, onSuggestionClick, onOpenKeySetup }: 
           </button>
         ))}
       </motion.div>
+
+      {/* Custom quick replies (Settings → “quip.quickReplies”) — only when present */}
+      {customReplies.length > 0 && (
+        <div
+          className="mt-3 flex w-full max-w-[280px] flex-wrap items-center justify-center gap-1.5"
+          aria-label="Your quick replies"
+        >
+          {customReplies.map((qr) => (
+            <button
+              key={qr}
+              onClick={() => onSuggestionClick(qr)}
+              aria-label={`Ask Quip: ${qr}`}
+              className="quip-focusable"
+              style={{
+                fontSize: 10.5,
+                fontWeight: 600,
+                color: "rgb(var(--quip-accent-deep))",
+                background: "rgba(var(--quip-accent), 0.10)",
+                border: "1px solid rgba(var(--quip-accent), 0.35)",
+                borderRadius: 999,
+                padding: "3px 10px",
+                cursor: "pointer",
+                maxWidth: 230,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {qr}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
