@@ -39,6 +39,13 @@ const DANGEROUS_ACTIONS = new Set([
   "compose_email",
   "system_shutdown",
   "payment",
+  // Autonomy wave — destructive: mail leaves the machine, the PC locks,
+  // software installs, files move/get trashed, quests chain real actions.
+  "mailwing_send",
+  "lock_pc",
+  "install_app",
+  "quest_run",
+  "routine_run",
 ]);
 
 const MEDIUM_ACTIONS = new Set([
@@ -94,6 +101,12 @@ export function riskForStep(
   if (action === "screen_click_element") return "medium";
   if (action === "screen_type_into") return "medium";
   if (action === "youtube_read" || action === "reddit_read" || action === "rss_read") return "safe";
+  // Autonomy wave.
+  if (action === "mailwing_draft") return "medium";
+  if (action === "contacts_save" || action === "contacts_export") return "medium";
+  if (action === "screenshot_save" || action === "wallpaper_set") return "medium";
+  if (action === "notify_me" || action === "file_watch") return "medium";
+  if (action === "routine_save") return "medium";
   return getRiskLevel(action);
 }
 

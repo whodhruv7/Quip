@@ -19,6 +19,8 @@ export interface ExecutionContextState {
   lastSelectedEntity?: string;
   /** Text of the last page the agent read — lets "summarize that" work. */
   lastReadPage?: string;
+  /** Comma-separated emails from the last ghost extraction — lets "email him" work. */
+  lastExtractedEmails?: string;
   updatedAt: number;
 }
 
@@ -53,6 +55,7 @@ export const contextStore = {
     if (state.lastOpenedPath) parts.push(`lastPath=${state.lastOpenedPath}`);
     if (state.lastSelectedEntity) parts.push(`selected="${state.lastSelectedEntity}"`);
     if (state.lastReadPage) parts.push(`lastRead=${state.lastReadPage.length} chars`);
+    if (state.lastExtractedEmails) parts.push(`emails=${state.lastExtractedEmails.slice(0, 60)}`);
     return parts.length ? `Current context: ${parts.join(", ")}` : "";
   },
 

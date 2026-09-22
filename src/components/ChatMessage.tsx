@@ -6,15 +6,66 @@
 //
 // Polish:
 //   - Copy button on assistant messages (appears on hover)
+//   - Copy button on code blocks (roadmap UX-008)
 //   - Trust layer note fades in with 100ms delay (feels like an afterthought)
 //   - Stagger animation on entry (50ms delay per message in batch)
 
-import { memo, useState } from "react";
+import { memo, useCallback, useState } from "react";
 import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage as ChatMessageType } from "@/types";
 import { getCompanion } from "@/lib/companion-config";
+
+/** Code block with a hover copy button (UX-008). */
+function CodeBlock({ children }: { children?: React.ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  const text = extractText(children);
+  const onCopy = useCallback(() => {
+    try {
+      void navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      /* clipboard unavailable */
+    }
+  }, [text]);
+  return (
+    <div className="quip-codeblock" style={{ position: "relative" }}>
+      <pre>{children}</pre>
+      <button
+        onClick={onCopy}
+        aria-label={copied ? "Copied code" : "Copy code"}
+        className="quip-copy-btn quip-focusable"
+        style={{
+          position: "absolute",
+          top: 6,
+          right: 6,
+          height: 22,
+          minWidth: 22,
+          padding: "0 5px",
+          borderRadius: 6,
+          fontSize: 11,
+          opacity: 0,
+          color: "rgb(var(--quip-text-soft))",
+          background: "rgba(var(--quip-line), 0.12)",
+          border: "1px solid rgba(var(--quip-line), 0.16)",
+          cursor: "pointer",
+        }}
+      >
+        {copied ? "✓" : "⧉"}
+      </button>
+    </div>
+  );
+}
+
+function extractText(node: React.ReactNode): string {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(extractText).join("");
+  const el = node as { props?: { children?: React.ReactNode } };
+  return el.props?.children !== undefined ? extractText(el.props.children) : "";
+}
 
 function MessageBase({ message, index = 0, onRetry }: { message: ChatMessageType; index?: number; onRetry?: () => void }) {
   const isUser = message.role === "user";
@@ -95,7 +146,9 @@ function MessageBase({ message, index = 0, onRetry }: { message: ChatMessageType
             </span>
           ) : (
             <div className="quip-md break-words">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre: CodeBlock }}>
+                {message.content}
+              </ReactMarkdown>
               {message.streaming && (
                 <span
                   className="ml-0.5 inline-block h-3.5 w-[2px] translate-y-0.5 animate-pulse"

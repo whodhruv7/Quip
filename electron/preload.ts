@@ -343,6 +343,42 @@ const api = {
     ipcRenderer.on(IPC.AUTO_TASK, handler as any);
     return () => ipcRenderer.removeListener(IPC.AUTO_TASK, handler as any);
   },
+
+  // ─── Autonomy wave (MailWing / Contacts / clipboard / events) ─────────
+  mailwingAccountsList: () =>
+    ipcRenderer.invoke(IPC.MAILWING_ACCOUNTS_LIST) as Promise<
+      { id: string; label: string; user: string; smtpHost: string; smtpPort: number; secure: boolean; isDefault: boolean; passEncrypted: boolean; lastTestOk?: boolean }[]
+    >,
+  mailwingAccountsUpsert: (input: {
+    label: string; smtpHost: string; smtpPort: number; secure: boolean;
+    user: string; pass: string; fromEmail?: string; fromName?: string; isDefault?: boolean;
+  }) => ipcRenderer.invoke(IPC.MAILWING_ACCOUNTS_UPSERT, input) as Promise<{ ok: boolean; accountId?: string; error?: string }>,
+  mailwingAccountsRemove: (idOrLabel: string) =>
+    ipcRenderer.invoke(IPC.MAILWING_ACCOUNTS_REMOVE, idOrLabel) as Promise<{ ok: boolean; removed?: string; error?: string }>,
+  mailwingAccountsTest: (idOrLabel?: string) =>
+    ipcRenderer.invoke(IPC.MAILWING_ACCOUNTS_TEST, idOrLabel) as Promise<{ ok: boolean; detail: string; tls?: boolean; stage?: string }>,
+  mailwingOutboxGet: () =>
+    ipcRenderer.invoke(IPC.MAILWING_OUTBOX_GET) as Promise<
+      { id: string; ts: number; status: "sent" | "failed"; to: string[]; subject: string; detail: string }[]
+    >,
+  contactsSearch: (query: string) => ipcRenderer.invoke(IPC.CONTACTS_SEARCH, query),
+  contactsList: (limit?: number) => ipcRenderer.invoke(IPC.CONTACTS_LIST, limit),
+  contactsExport: (filePath?: string) => ipcRenderer.invoke(IPC.CONTACTS_EXPORT, filePath) as Promise<{ ok: boolean; path?: string; count?: number; error?: string }>,
+  clipboardHistoryGet: () => ipcRenderer.invoke(IPC.CLIPBOARD_HISTORY_GET) as Promise<{ ts: number; text: string; origin: string }[]>,
+  onQuestEvent: (cb: (event: {
+    questId: string; questTitle: string; stepIndex: number; stepTotal: number;
+    stepName: string; status: "running" | "done" | "failed" | "skipped" | "waiting_permission" | "cancelled";
+    detail?: string;
+  }) => void) => {
+    const handler = (_e: unknown, data: any) => cb(data);
+    ipcRenderer.on(IPC.QUEST_EVENT, handler as any);
+    return () => ipcRenderer.removeListener(IPC.QUEST_EVENT, handler as any);
+  },
+  onWatchEvent: (cb: (event: { dir: string; moved: { name: string; to: string }[] }) => void) => {
+    const handler = (_e: unknown, data: any) => cb(data);
+    ipcRenderer.on(IPC.WATCH_EVENT, handler as any);
+    return () => ipcRenderer.removeListener(IPC.WATCH_EVENT, handler as any);
+  },
 };
 
 

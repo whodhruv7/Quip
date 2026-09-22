@@ -158,7 +158,40 @@ export interface LifecycleAPI {
   showQuipDesktop: () => Promise<{ ok: boolean; visible: boolean }>;
 }
 
-export type QuipAPI = WindowAPI & ChatAPI & TaskAPI & PermissionAPI & DeviceAPI & SystemAPI & ModelSetupAPI & BrainHealthAPI & SpeechAPI & LifecycleAPI;
+/** Weekly reflection (was missing from the hand-written surface — honest gap). */
+export interface ReflectionAPI {
+  getWeeklyDigest: () => Promise<unknown>;
+  recordReflectionFeedback: (feedback: string) => Promise<unknown>;
+  triggerWeeklyReflection: () => Promise<unknown>;
+}
+
+/** Autonomy wave: MailWing, contacts, clipboard history, live quest events. */
+export interface AutonomyAPI {
+  mailwingAccountsList: () => Promise<
+    { id: string; label: string; user: string; smtpHost: string; smtpPort: number; secure: boolean; isDefault: boolean; passEncrypted: boolean; lastTestOk?: boolean }[]
+  >;
+  mailwingAccountsUpsert: (input: {
+    label: string; smtpHost: string; smtpPort: number; secure: boolean;
+    user: string; pass: string; fromEmail?: string; fromName?: string; isDefault?: boolean;
+  }) => Promise<{ ok: boolean; accountId?: string; error?: string }>;
+  mailwingAccountsRemove: (idOrLabel: string) => Promise<{ ok: boolean; removed?: string; error?: string }>;
+  mailwingAccountsTest: (idOrLabel?: string) => Promise<{ ok: boolean; detail: string; tls?: boolean; stage?: string }>;
+  mailwingOutboxGet: () => Promise<
+    { id: string; ts: number; status: "sent" | "failed"; to: string[]; subject: string; detail: string }[]
+  >;
+  contactsSearch: (query: string) => Promise<unknown>;
+  contactsList: (limit?: number) => Promise<unknown>;
+  contactsExport: (filePath?: string) => Promise<{ ok: boolean; path?: string; count?: number; error?: string }>;
+  clipboardHistoryGet: () => Promise<{ ts: number; text: string; origin: string }[]>;
+  onQuestEvent: (cb: (event: {
+    questId: string; questTitle: string; stepIndex: number; stepTotal: number;
+    stepName: string; status: "running" | "done" | "failed" | "skipped" | "waiting_permission" | "cancelled";
+    detail?: string;
+  }) => void) => () => void;
+  onWatchEvent: (cb: (event: { dir: string; moved: { name: string; to: string }[] }) => void) => () => void;
+}
+
+export type QuipAPI = WindowAPI & ChatAPI & TaskAPI & PermissionAPI & DeviceAPI & SystemAPI & ModelSetupAPI & BrainHealthAPI & SpeechAPI & LifecycleAPI & ReflectionAPI & AutonomyAPI;
 
 declare global {
   interface Window {

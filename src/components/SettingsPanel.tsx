@@ -2067,7 +2067,7 @@ function DataRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function DNABar({ label, value, max, unit, display }: { label: string; value: number; max: number; unit: string; display: string }) {
+function DNABar({ label, value, max, unit, display, companionId = "pix" }: { label: string; value: number; max: number; unit: string; display: string; companionId?: CompanionId }) {
   const pct = Math.min(100, (value / max) * 100);
   return (
     <div>

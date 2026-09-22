@@ -12,6 +12,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { getCompanion } from "@/lib/companion-config";
+import { playSound } from "@/lib/sounds";
 import type { CompanionId } from "@/types";
 
 interface ChatInputProps {
@@ -88,6 +89,7 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
   const submit = (overrideText?: string) => {
     const text = (overrideText ?? value).trim();
     if (!text || busy) return;
+    playSound("send", companionId);
     onSend(text);
     const newHistory = [...history, text];
     setHistory(newHistory);

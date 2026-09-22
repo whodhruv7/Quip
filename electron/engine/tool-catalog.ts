@@ -228,6 +228,108 @@ export const TOOL_CATALOG: CatalogEntry[] = [
   fn("tweet_read", "Read a single tweet by its link (x.com/…/status/…). Searching X needs a paid API — say so if asked.", {
     query_or_url: { type: "string", description: "The tweet URL" },
   }, ["query_or_url"], "Reading the tweet…"),
+
+  // ── Autonomy wave: ghost browser ──────────────────────────────────────────
+  fn("web_ghost_read", "Read a JavaScript-rendered page through Quip's hidden ghost browser — use when read_page returns thin content.", {
+    url: { type: "string", description: "Full https:// URL to read" },
+  }, ["url"], "Ghost-reading the page…"),
+  fn("web_ghost_extract", "Open a website in the ghost browser and extract every email/phone into the Contacts Book. This is how you find a contact for the user.", {
+    url: { type: "string", description: "Website to pull contacts from" },
+  }, ["url"], "Pulling contacts from the site…"),
+  fn("web_ghost_click", "Click a link/button by its visible text inside the ghost browser (e.g. open a contact page).", {
+    url: { type: "string", description: "Page URL" },
+    element: { type: "string", description: "Visible text of the thing to click" },
+  }, ["url", "element"], "Ghost-clicking…"),
+  fn("web_ghost_fill", "Fill form fields in the ghost browser. Fields = JSON [{hint:'email', value:'a@b.c'}, …].", {
+    url: { type: "string", description: "Page URL" },
+    fields: { type: "string", description: "JSON array of {hint, value, selector?}" },
+  }, ["url", "fields"], "Ghost-filling the form…"),
+
+  // ── Autonomy wave: MailWing (real email) ──────────────────────────────────
+  fn("mailwing_draft", "Write an email draft and humanize it. Stages the draft — say the user should approve with 'send it'.", {
+    to: { type: "string", description: "Recipient email address" },
+    body: { type: "string", description: "Rough points or full text for the email" },
+    subject: { type: "string", description: "Optional subject (auto-drafted when omitted)" },
+    tone: { type: "string", enum: ["professional", "friendly", "casual", "formal"], description: "Writing tone" },
+    humanize: { type: "string", enum: ["true", "false"], description: "false = send the text exactly as given" },
+  }, ["to", "body"], "Writing the email…"),
+  fn("mailwing_send", "Send the staged draft via the user's MailWing SMTP account, or open a prefilled Gmail draft when none exists. Always needs approval.", {
+    account: { type: "string", description: "Optional account label (default account when omitted)" },
+  }, [], "Sending the email…"),
+  fn("mailwing_accounts", "Manage MailWing accounts: list (default), test (verify SMTP login, sends nothing).", {
+    op: { type: "string", enum: ["list", "test"], description: "Operation" },
+    account: { type: "string", description: "Account label for test" },
+  }, [], "Checking MailWing accounts…"),
+  fn("mailwing_outbox", "Show the last emails sent through MailWing with status.", {}, [], "Reading the outbox…"),
+
+  // ── Autonomy wave: contacts ────────────────────────────────────────────────
+  fn("contacts_search", "Search the local contacts book by name, email or company.", {
+    query: { type: "string", description: "Who to find" },
+  }, ["query"], "Searching contacts…"),
+  fn("contacts_save", "Save or update a contact (email or phone required; merges duplicates).", {
+    email: { type: "string", description: "Email address" },
+    phone: { type: "string", description: "Phone number" },
+    name: { type: "string", description: "Person's name" },
+    company: { type: "string", description: "Company/role" },
+  }, [], "Saving the contact…"),
+  fn("contacts_export", "Export the whole contacts book to a CSV file on the Desktop.", {
+    path: { type: "string", description: "Optional CSV path (default: Desktop/quip-contacts-DATE.csv)" },
+  }, [], "Exporting contacts…"),
+
+  // ── Autonomy wave: FileButler ───────────────────────────────────────────
+  fn("file_organize", "Organize a folder by type or date: first shows the full plan, moves only after 'confirm organize', undoable.", {
+    dir: { type: "string", description: "Folder to organize (e.g. the Downloads path)" },
+    mode: { type: "string", enum: ["type", "date"], description: "Grouping mode" },
+    op: { type: "string", enum: ["plan", "apply", "undo"], description: "plan (default) / apply / undo last run" },
+  }, ["dir"], "Planning the organize…"),
+  fn("file_duplicates", "Find duplicate files (size + SHA-256). clean=true trashes the extra copies.", {
+    dir: { type: "string", description: "Folder to scan" },
+    clean: { type: "string", enum: ["true", "false"], description: "true = trash extra copies" },
+  }, ["dir"], "Scanning for duplicates…"),
+  fn("file_storage_report", "Report a folder's size: totals by type + biggest files.", {
+    dir: { type: "string", description: "Folder to report on" },
+  }, ["dir"], "Measuring storage…"),
+  fn("file_watch", "Watch a folder so new files auto-organize (every move is toasted + journaled).", {
+    op: { type: "string", enum: ["start", "stop", "status"], description: "Operation" },
+    dir: { type: "string", description: "Folder to watch" },
+  }, ["op"], "Setting the watch…"),
+
+  // ── Autonomy wave: GhostHands (deep system) ────────────────────────────
+  fn("screenshot_save", "Take a real screenshot, save it as a PNG in Pictures and reveal the folder.", {}, [], "Capturing the screen…"),
+  fn("wallpaper_set", "Set the desktop wallpaper from a local image path or an https image URL.", {
+    source: { type: "string", description: "Image path or URL" },
+  }, ["source"], "Changing the wallpaper…"),
+  fn("brightness", "Get or set the laptop screen brightness (1-100).", {
+    action: { type: "string", enum: ["get", "set"], description: "Operation" },
+    level: { type: "string", description: "set: 1-100" },
+  }, ["action"], "Adjusting brightness…"),
+  fn("notify_me", "Show a real Windows notification (reminders, task done, anything).", {
+    title: { type: "string", description: "Short title" },
+    body: { type: "string", description: "Notification text" },
+  }, ["body"], "Notifying…"),
+  fn("lock_pc", "Lock the PC (Win+L). Always needs approval.", {}, [], "Locking…"),
+  fn("battery", "Read the battery percentage and charging state.", {}, [], "Checking battery…"),
+  fn("clipboard_history", "Show what Quip has copied/pasted this session (ring of 25).", {}, [], "Reading clipboard history…"),
+  fn("install_app", "Install a desktop app via winget (e.g. 'notepad++', 'vlc'). Approval-gated, real installer.", {
+    query: { type: "string", description: "App to install" },
+  }, ["query"], "Installing…"),
+
+  // ── Autonomy wave: quests & routines ──────────────────────────────────
+  fn("quest_run", "Run a named multi-step quest: email-from-website (find a contact on a site, write a humanized email, send after approval), organize-downloads, morning-brief.", {
+    kind: { type: "string", enum: ["email-from-website", "organize-downloads", "morning-brief"], description: "Quest to run" },
+    url: { type: "string", description: "email-from-website: the website" },
+    hint: { type: "string", description: "email-from-website: who to prefer (e.g. 'founder')" },
+    body: { type: "string", description: "email-from-website: rough points for the email" },
+    tone: { type: "string", enum: ["professional", "friendly", "casual", "formal"], description: "Email tone" },
+  }, ["kind"], "Running the quest…"),
+  fn("routine_save", "Save a routine: a JSON chain of quests/tools/say steps the user can run later.", {
+    name: { type: "string", description: "Routine name" },
+    steps: { type: "string", description: "JSON steps: [{kind:'quest',questId:…},{kind:'tool',action:…,params:…},{kind:'say',text:…}]" },
+  }, ["name", "steps"], "Saving the routine…"),
+  fn("routine_run", "Run a saved routine end-to-end.", {
+    name: { type: "string", description: "Routine name" },
+  }, ["name"], "Running the routine…"),
+  fn("routine_list", "List saved routines.", {}, [], "Listing routines…"),
 ];
 
 /** Schemas for the model (OpenAI tools array). */

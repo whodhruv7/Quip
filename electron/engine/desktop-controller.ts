@@ -23,6 +23,7 @@ import {
   getForegroundWindowTitle,
   type ActionVerification,
 } from "./action-verifier";
+import { pushClipboard } from "./ghost-hands";
 
 export type DesktopAction =
   | { type: "focus"; target: string }
@@ -434,6 +435,7 @@ export async function executeDesktopAction(action: DesktopAction): Promise<Actio
 
     case "clipboard.read": {
       const text = clipboard.readText();
+      pushClipboard(text, "read"); // session history ring (clipboard_history)
       return ok(
         text ? "Read the clipboard." : "The clipboard is empty.",
         [`clipboard length: ${text.length}`]
@@ -443,6 +445,7 @@ export async function executeDesktopAction(action: DesktopAction): Promise<Actio
     case "clipboard.write": {
       clipboard.writeText(action.text);
       const roundtrip = clipboard.readText();
+      pushClipboard(action.text, "write"); // session history ring
       return roundtrip === action.text
         ? ok("Copied to the clipboard.", ["round-trip verified"])
         : fail("I couldn't copy that to the clipboard.", ["round-trip mismatch"], "clipboard-write-failed");

@@ -177,6 +177,18 @@ A separated pipeline — Head Brain → Action Planner → Permission Manager �
 ### 👀 Sees your screen (Screen Vision)
 Quip takes a screenshot of what's in front of you and understands it with a vision model — "what am I looking at?", "click the login button" — using your existing keys, no extra signup.
 
+### 🌐 Autonomy Wave — the agent that runs the laptop (new)
+The overnight upgrade that turns Quip from an assistant you instruct into an agent that **completes whole missions**. Every mission is permission-gated, step-verified and undoable. Full list in [ROADMAP.md](ROADMAP.md); failure handling in [docs/ERROR-LEDGER.md](docs/ERROR-LEDGER.md).
+
+- **🌐 Ghost Browser** — a hidden second browser Quip can *read and operate*: "extract emails from acme.com" pulls every contact (even deobfuscated `name [at] site [dot] com`) into your local Contacts Book, follows the site's contact page when the homepage hides people, clicks and fills forms inside pages, and never touches your real browser's cookies. SSRF-gated, budget-capped (6 pages/session), idle auto-closed.
+- **✉️ MailWing — real email** — a zero-dependency SMTP client (STARTTLS, AUTH PLAIN/LOGIN, MIME, attachments) with an encrypted account vault (Electron safeStorage). "send a formal email to rahul@acme.com about the invoice" → Quip humanizes the draft (professional/friendly/casual/formal), shows it to you, sends only after your approval, and claims "sent" **only** on the server's 250. No SMTP account? It opens a prefilled Gmail draft instead. Reachability tests quit before MAIL FROM — testing can never send anything.
+- **🗂️ FileButler** — "organize my downloads" plans every move (by type or by month), shows you the plan, moves only after you confirm, journals a manifest and undoes byte-exact on "undo organize". Duplicate finder (size → SHA-256), storage reports, and a Downloads watch mode that auto-organizes new files with a toast for every move.
+- **🤲 GhostHands** — screenshot-to-PNG, wallpaper, brightness, real OS notifications, PC lock (always confirmed), battery as a first-class intent, session clipboard history, winget app installs ("install notepad++").
+- **🧭 Quest Engine** — multi-step missions with live progress cards: **email-from-website** (read the site → pick the contact → humanize → approve → send), **organize-downloads**, **morning-brief** (battery + weather, spoken). Save your own chains as **routines** — "save a routine called morning that organizes downloads", then "run morning routine".
+- **⌨️ Command palette (Ctrl+K)** — every task, theme and setting in one fuzzy search. Press **?** for all shortcuts.
+
+> MailWing setup: Settings → **MailWing** → add your SMTP account (Gmail app password works great) → hit **Test** (verifies TLS + login, sends nothing) → done.
+
 ### 🗣️ Speaks out loud (Voice)
 Replies are spoken through a 3-engine chain: **Groq neural voice** → free **Edge neural voice** (`en-IN-NeerjaNeural` reads Hinglish naturally) → your laptop's **built-in Windows voice** offline. If one fails, the next takes over mid-conversation.
 
@@ -222,7 +234,18 @@ First-launch device scan indexes your OS, hardware, installed apps and default b
 
 ## 📜 Full changelog — everything built so far
 
-**Build 10 — Launcher never fails silently + true fullscreen** *(latest)*
+**Build 11 — Autonomy Wave: Ghost Browser, MailWing, FileButler, Quests** *(latest)*
+- **Ghost Browser** — offscreen DOM automation: contact extraction (emails, phones, obfuscated addresses), contact-page following, click-by-text, form-fill, SSRF gate + navigation budget + idle auto-close; scripts JSON-encode every value (injection-proof)
+- **MailWing** — zero-dependency SMTP client with byte-tested protocol machine (STARTTLS, AUTH PLAIN/LOGIN with mechanism negotiation, MIME/attachments, dot-stuffing), safeStorage-encrypted account vault, humanized compose with honest fallback, approval-gated sends verified by SMTP 250, Gmail-compose fallback, outbox journal, and a reachability test that physically cannot send
+- **FileButler** — dry-run organize plans → apply → manifest → undo, collision-safe renames, SHA-256 duplicate finder with .quip-trash, storage reports, Downloads watch with auto-organize toasts, system-directory deny list
+- **Quest Engine** — email-from-website / organize-downloads / morning-brief with live quest progress cards, permission-system approvals inside quests, cancellation, bounded recovery, plus user-defined **routines**
+- **GhostHands** — screenshot-save, wallpaper, brightness (WMI), OS notifications, PC lock, battery, clipboard history ring, winget installs
+- **27 new executors** wired end-to-end: registry ↔ contracts ↔ catalog ↔ permission modes ↔ intent parser (English + Hinglish), all proven by three-way sync tests
+- **UX wave** — toast system, WebAudio sound design (per-companion pitch, mute toggle), live quest card, command palette (Ctrl+K), shortcuts overlay (?), code-block copy buttons, watch-move toasts, focus-visible rings, reduced-motion + prefers-contrast support
+- **495/495 tests green** (was 425) · tsc clean ×3 · frontend API surface made type-honest (ReflectionAPI + AutonomyAPI)
+- **docs/ERROR-LEDGER.md** — every error hit while building + every runtime failure class, marked and explained
+
+**Build 10 — Launcher never fails silently + true fullscreen**
 - **The "app won't open" bug root-caused and fixed** — the launcher only installed dependencies when `node_modules` was missing, so updates that added a dependency broke boot with zero diagnostics. Now `npm install` always runs (idempotent), builds happen only when code changed (warm start = seconds), every step logs to `quip-launch.log`, and any failure pops a Windows message box with the real reason
 - **TRUE fullscreen (4th screen mode)** — the entire display edge to edge, alwaysOnTop off, Esc to return; screen modes are now Companion / Panel / Full / Fullscreen
 - **Opaque themed chatbox** — the desktop can never show through the chat surfaces anymore
@@ -350,12 +373,14 @@ Quip/
 | AI | Groq · Cerebras · NVIDIA · Gemini · OpenRouter · Ollama |
 | Voice | Groq TTS · Edge Neural · Windows SAPI |
 | Vision | Groq / OpenRouter vision models on your existing keys |
-| Tests | Node test runner — 412 tests |
+| Tests | Node test runner — 495 tests |
 
 ## 🗺️ Roadmap
 
-- **Next** — sentence-level voice streaming, expanded Agent Reach device control
-- **Later** — skill modules (Mail, Coding, Research, Study, Social, Travel), timeline brain, weekly reflection insights, companion evolution cosmetics
+The live 150-item program — **100 capability + 50 UX todos with real-time status** — is now [ROADMAP.md](ROADMAP.md) (100 ✅ verified, 25 🔶 partial, 25 ⬜ planned). Every ✅ is proven by the test suite in the same commit.
+
+- **Next** — chat search + drag-drop, taskbar progress mirroring, first-run tour, ghost wait-for executor, per-quest autonomy budget
+- **Later** — sentence-level voice streaming, expanded Agent Reach device control, ghost page screenshots, specialized recovery classes
 
 ## 🤝 Contributing
 

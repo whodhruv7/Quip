@@ -14,6 +14,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { ExecutionContextState } from "./context-store";
+import path from "node:path";
 
 export type ActionType =
   | "open_app"
@@ -48,7 +49,35 @@ export type ActionType =
   | "self_check"
   | "drag"
   | "mouse_move"
-  | "chat";
+  | "chat"
+  // Autonomy wave.
+  | "web_ghost_read"
+  | "web_ghost_extract"
+  | "web_ghost_click"
+  | "web_ghost_fill"
+  | "mailwing_draft"
+  | "mailwing_send"
+  | "mailwing_accounts"
+  | "mailwing_outbox"
+  | "contacts_search"
+  | "contacts_save"
+  | "contacts_export"
+  | "file_organize"
+  | "file_duplicates"
+  | "file_storage_report"
+  | "file_watch"
+  | "screenshot_save"
+  | "wallpaper_set"
+  | "brightness"
+  | "notify_me"
+  | "lock_pc"
+  | "battery"
+  | "clipboard_history"
+  | "install_app"
+  | "quest_run"
+  | "routine_save"
+  | "routine_run"
+  | "routine_list";
 
 export interface TaskStep {
   action: ActionType;
@@ -408,7 +437,46 @@ function routeOpenClause(clause: string): TaskStep | null {
   return null;
 }
 
-// ─── MAIN PARSER ─────────────────────────────────────────────────────────────
+// ─── Autonomy wave helpers ─────────────────────────────────────────────
+
+/** First plausible URL in free text (bare domains included, https added).
+ *  Email addresses are stripped FIRST — "rahul@acme.com" must never read as
+ *  a website to open (the user asked to email him, not browse). */
+function detectUrlIn(text: string): string {
+  const withoutEmails = text.replace(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,24}/gi, " ");
+  const m =
+    withoutEmails.match(/https?:\/\/[^\s"<>]+/i) ??
+    withoutEmails.match(/\bwww\.[a-z0-9-]+(?:\.[a-z0-9-]+)+[^\s"<>]*/i) ??
+    withoutEmails.match(/\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|org|net|io|in|co|dev|ai|app|me)\b/i);
+  if (!m) return "";
+  let url = m[0].replace(/[.,;]+$/, "");
+  if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+  return url;
+}
+
+const KNOWN_FOLDERS: Record<string, string> = {
+  downloads: "Downloads",
+  desktop: "Desktop",
+  documents: "Documents",
+  pictures: "Pictures",
+  videos: "Videos",
+  music: "Music",
+};
+
+/** "downloads/desktop/documents" → the real absolute folder on this machine. */
+function resolveKnownFolder(text: string): string | null {
+  for (const [word, folder] of Object.entries(KNOWN_FOLDERS)) {
+    if (new RegExp(`\\b${word}\\b`, "i").test(text)) {
+      const home = process.platform === "win32" ? process.env.USERPROFILE : process.env.HOME;
+      return home ? path.join(home, folder) : folder;
+    }
+  }
+  return null;
+}
+
+const EMAIL_ADDR_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,24}/i;
+
+// ─── MAIN PARSER ─────────────────────────────────────────────────────
 
 // ─── Hinglish trailing-verb rewrite ─────────────────────────────────────────
 // Natural Hinglish often places the verb AFTER the object ("vs code kholo",
@@ -825,7 +893,7 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
   }
 
   // ─── DESKTOP ACTIONS ─────────────────────────────────────────────────────
-  if (/\bclipboard\b/.test(text)) {
+  if (/\bclipboard\b/.test(text) && !/\b(history|recent|purani|previous)\b/.test(text)) {
     const write = /\b(copy|write|put|set)\b/.test(text) || /\bcopy\b/.test(text);
     const read = /\b(read|show|paste|what'?s|what is|get)\b/.test(text);
     if (write && !read) {
@@ -1152,6 +1220,7 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
 
   // ─── SCREENSHOT ─────────────────────────────────────────────────────────
   if (/\b(screenshot|screen ?shot|capture (?:the )?screen|grab (?:the )?screen)\b/.test(text)) {
+    const wantsSave = /\b(save|file|picture|photo|folder|disk|store)\b/.test(text);
     return {
       ...base,
       action: "screen",
@@ -1160,16 +1229,531 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
       isTask: true,
       isMultiStep: false,
       steps: [{
-        action: "screen",
+        action: wantsSave ? "screenshot_save" : "screen",
         target: "screen",
         params: {},
-        description: "Capture the screen",
+        description: wantsSave ? "Capture the screen and save it as a PNG in Pictures" : "Capture the screen",
       }],
-      summary: "Capturing the screen",
+      summary: wantsSave ? "Screenshot saved" : "Capturing the screen",
       confidence: 0.9,
     };
   }
 
+
+  // ─── AUTONOMY WAVE: quests, email send, ghost, files, device ─────────────
+  // These branches run BEFORE the generic compose/open branches — they are
+  // more specific and must win ("send an email about X" ≠ "open gmail").
+
+  const urlDetected = detectUrlIn(text);
+
+  // ── Quest: email-from-website ("site pe jo email hai usko mail bhejo") ──
+  if (
+    urlDetected &&
+    /\b(email|mail|contact|contacts)\b/.test(text) &&
+    /\b(send|bhej|bhejo|reach|write|likho|message)\b/.test(text)
+  ) {
+    const questHint = raw.match(/\b(founder|ceo|owner|manager|director|admin|support|hr|sales)\b/i)?.[1] ?? "";
+    const questBody = raw.match(/\b(?:about|saying|regarding)\s+(.+)$/i)?.[1]?.trim() ?? "";
+    return {
+      ...base,
+      action: "quest",
+      target: "email-from-website",
+      query: "",
+      isTask: true,
+      isMultiStep: true,
+      steps: [{
+        action: "quest_run",
+        target: "email-from-website",
+        params: {
+          kind: "email-from-website",
+          url: urlDetected,
+          ...(questHint ? { hint: questHint } : {}),
+          ...(questBody ? { body: questBody } : {}),
+        },
+        description: `Find a contact on ${urlDetected} and email them after your approval`,
+      }],
+      summary: "Website contact quest",
+      confidence: 0.9,
+    };
+  }
+
+  // ── Ghost: extract contacts from a site ──────────────────────────────────
+  if (
+    urlDetected &&
+    /\b(email|emails|mail|contact|contacts|phone)\b/.test(text) &&
+    /\b(extract|find|dhundo|dhoondo|nikalo|scrape|pull|get|save|dekh)\b/.test(text) &&
+    !/\b(send|bhej)\b/.test(text)
+  ) {
+    return {
+      ...base,
+      action: "extract_contacts",
+      target: urlDetected,
+      query: "",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "web_ghost_extract",
+        target: urlDetected,
+        params: { url: urlDetected },
+        description: `Pull every contact from ${urlDetected} into your Contacts Book`,
+      }],
+      summary: "Extracted the site's contacts",
+      confidence: 0.88,
+    };
+  }
+
+  // ── Ghost: read a page properly (JS-rendered) ─────────────────────────────
+  if (urlDetected && /\b(read|padho|padh)\b/.test(text) && /\b(fully|properly|rendered|javascript|js|sahi se|achhe se)\b/.test(text)) {
+    return {
+      ...base,
+      action: "read",
+      target: urlDetected,
+      query: "",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "web_ghost_read",
+        target: urlDetected,
+        params: { url: urlDetected },
+        description: `Read ${urlDetected} with the ghost browser (JS-rendered content included)`,
+      }],
+      summary: "Read the page",
+      confidence: 0.8,
+    };
+  }
+
+  // ── MailWing send flow ("rahul@acme.com ko mail bhejo about the invoice") ─
+  if (/\b(send|bhej|bhejo)\b/.test(text) && /\b(mail|email)\b/.test(text) && !urlDetected) {
+    const addr = text.match(EMAIL_ADDR_RE)?.[0] ?? "";
+    const toName = !addr
+      ? (raw.match(/\bto\s+([a-z0-9 ._'-]{2,40}?)(?:\s+(?:about|regarding|saying|subject|and)\b|$)/i)?.[1] ?? "").trim()
+      : "";
+    const about =
+      raw.match(/\b(?:about|regarding|saying|subject)\s+(.+)$/i)?.[1]?.trim() ?? "";
+    const tone = /\bformal\b/i.test(text)
+      ? "formal"
+      : /\bcasual\b/i.test(text)
+        ? "casual"
+        : /\bfriendly\b/i.test(text)
+          ? "friendly"
+          : "professional";
+    if (!addr && !toName) {
+      return {
+        ...base,
+        action: "clarify",
+        target: "email",
+        query: "",
+        isTask: false,
+        isMultiStep: false,
+        steps: [],
+        summary: "Needs a recipient",
+        confidence: 0.4,
+        needsModelAssist: true,
+      };
+    }
+    const recipient = addr || toName;
+    return {
+      ...base,
+      action: "send_email",
+      target: recipient,
+      query: about,
+      isTask: true,
+      isMultiStep: true,
+      steps: [
+        {
+          action: "mailwing_draft",
+          target: recipient,
+          params: {
+            to: recipient,
+            body: about || `Write a short, clear email to ${recipient}.`,
+            tone,
+            humanize: "true",
+          },
+          description: `Write a ${tone} email to ${recipient}${about ? ` about "${about.slice(0, 60)}"` : ""}`,
+        },
+        {
+          action: "mailwing_send",
+          target: recipient,
+          params: {},
+          description: "Send it after your approval (SMTP-verified)",
+        },
+      ],
+      summary: "Email drafted for approval",
+      confidence: 0.85,
+    };
+  }
+
+  // ── Contacts ──────────────────────────────────────────────────────────────
+  if (/\b(contact|contacts)\b/.test(text) && /\b(export|csv)\b/.test(text)) {
+    return {
+      ...base,
+      action: "export_contacts",
+      target: "contacts",
+      query: "",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{ action: "contacts_export", target: "contacts", params: {}, description: "Export your Contacts Book to CSV" }],
+      summary: "Contacts exported",
+      confidence: 0.9,
+    };
+  }
+  if (/\b(contact|contacts)\b/.test(text) && /\b(save|add|store|daal)\b/.test(text)) {
+    const email = text.match(EMAIL_ADDR_RE)?.[0] ?? "";
+    const name =
+      raw.match(/\b(?:as|called|named)\s+([a-z0-9 ._'-]{2,40})(?:\s+with\b|$)/i)?.[1]?.trim() ?? "";
+    if (!email && !/\d{6,}/.test(text.replace(/\D/g, ""))) {
+      // fall through to chat — saving without an address would be guessing
+    } else {
+      return {
+        ...base,
+        action: "save_contact",
+        target: "contacts",
+        query: name,
+        isTask: true,
+        isMultiStep: false,
+        steps: [{
+          action: "contacts_save",
+          target: "contacts",
+          params: { email, name, phone: text.replace(/\D/g, "").slice(0, 15) },
+          description: `Save ${name || email || "this contact"} to your Contacts Book`,
+        }],
+        summary: "Contact saved",
+        confidence: 0.85,
+      };
+    }
+  }
+  if (
+    /\b(email|mail)\b/.test(text) &&
+    /\b(find|search|dhundo|dhoondo|kahan|where|show|batao|check)\b/.test(text) &&
+    !urlDetected
+  ) {
+    const q =
+      raw
+        .replace(/\b(find|search|dhundo|dhoondo|kahan|where|show|batao|check|email|mail|ka|the|of|do|me|hai|id)\b/gi, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    if (q.length >= 2) {
+      return {
+        ...base,
+        action: "find_contact",
+        target: "contacts",
+        query: q,
+        isTask: true,
+        isMultiStep: false,
+        steps: [{
+          action: "contacts_search",
+          target: "contacts",
+          params: { query: q },
+          description: `Look up "${q}" in your Contacts Book`,
+        }],
+        summary: "Searched contacts",
+        confidence: 0.8,
+      };
+    }
+  }
+
+  // ── FileButler ────────────────────────────────────────────────────────────
+  if (/\b(confirm|apply)\b/.test(text) && /\b(organize|organise)\b/.test(text)) {
+    return {
+      ...base,
+      action: "organize",
+      target: "confirm",
+      query: "",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{ action: "file_organize", target: "confirm", params: { op: "apply" }, description: "Apply the staged organize plan" }],
+      summary: "Organized the folder",
+      confidence: 0.92,
+    };
+  }
+  if (/\b(undo|revert|wapas|rollback)\b/.test(text) && /\b(organize|organise|move)\b/.test(text)) {
+    return {
+      ...base,
+      action: "organize",
+      target: "undo",
+      query: "",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{ action: "file_organize", target: "undo", params: { op: "undo" }, description: "Undo the last organize run from its manifest" }],
+      summary: "Undid the organize",
+      confidence: 0.9,
+    };
+  }
+  if (/\b(organize|organise|clean|saaf|sort|tidy)\b/.test(text) && /\b(downloads|desktop|documents|folder|files)\b/.test(text) && !/\bduplicates?\b/.test(text)) {
+    const dir = resolveKnownFolder(text) ?? "";
+    const mode = /\b(date|month|time)\b/.test(text) ? "date" : "type";
+    if (dir) {
+      return {
+        ...base,
+        action: "organize",
+        target: dir,
+        query: "",
+        isTask: true,
+        isMultiStep: false,
+        steps: [
+          {
+            action: "file_organize",
+            target: dir,
+            params: { dir, mode, op: "plan" },
+            description: `Plan the organize of ${dir} by ${mode} (nothing moves until you confirm)`,
+          },
+          {
+            action: "file_organize",
+            target: dir,
+            params: { op: "apply" },
+            description: "Apply it after you approve the plan",
+          },
+        ],
+        summary: "Organized the folder",
+        confidence: 0.9,
+      };
+    }
+  }
+  if (/\bduplicates?\b/.test(text)) {
+    const dir = resolveKnownFolder(text) ?? "";
+    const clean = /\b(clean|trash|delete|remove|hatao|saaf)\b/.test(text);
+    if (dir) {
+      return {
+        ...base,
+        action: "duplicates",
+        target: dir,
+        query: "",
+        isTask: true,
+        isMultiStep: false,
+        steps: [{
+          action: "file_duplicates",
+          target: dir,
+          params: { dir, ...(clean ? { clean: "true" } : {}) },
+          description: clean
+            ? `Find duplicates in ${dir} and trash the extra copies`
+            : `Scan ${dir} for duplicate files`,
+        }],
+        summary: clean ? "Cleaned duplicates" : "Scanned for duplicates",
+        confidence: 0.88,
+      };
+    }
+  }
+  if (/\b(storage|disk space|space used|jagah|size of)\b/.test(text)) {
+    const dir = resolveKnownFolder(text);
+    if (dir) {
+      return {
+        ...base,
+        action: "storage_report",
+        target: dir,
+        query: "",
+        isTask: true,
+        isMultiStep: false,
+        steps: [{ action: "file_storage_report", target: dir, params: { dir }, description: `Measure what's inside ${dir}` }],
+        summary: "Storage report ready",
+        confidence: 0.85,
+      };
+    }
+  }
+  if (/\b(watch|watching|monitor|auto.?organize)\b/.test(text) && /\b(downloads|desktop|documents|folder)\b/.test(text)) {
+    const dir = resolveKnownFolder(text) ?? "";
+    const stop = /\b(stop|band|cancel)\b/.test(text);
+    if (dir) {
+      return {
+        ...base,
+        action: "watch",
+        target: dir,
+        query: "",
+        isTask: true,
+        isMultiStep: false,
+        steps: [{
+          action: "file_watch",
+          target: dir,
+          params: { op: stop ? "stop" : "start", dir },
+          description: stop ? `Stop watching ${dir}` : `Watch ${dir} — new files auto-organize with a toast each time`,
+        }],
+        summary: stop ? "Watch stopped" : "Watching the folder",
+        confidence: 0.88,
+      };
+    }
+  }
+
+  // ── Device superpowers ────────────────────────────────────────────────────
+  if (/\bwallpaper\b/.test(text) && /\b(set|change|badlo|badal|lagao|laga|apply)\b/.test(text)) {
+    const source = detectUrlIn(text) || "";
+    return {
+      ...base,
+      action: "wallpaper",
+      target: source || "wallpaper",
+      query: "",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "wallpaper_set",
+        target: source || "wallpaper",
+        params: source ? { source } : {},
+        description: source ? "Set the wallpaper from that image" : "Set the wallpaper (need an image path or URL)",
+      }],
+      summary: "Wallpaper set",
+      confidence: 0.85,
+    };
+  }
+  if (/\b(brightness|roshni)\b/.test(text)) {
+    const level = text.match(/\b(\d{1,3})\s*(?:%|percent)?\b/)?.[1];
+    const wantsSet = /\b(set|kam|zyada|increase|decrease|lower|raise|dim|full)\b/.test(text) || Boolean(level);
+    return {
+      ...base,
+      action: "brightness",
+      target: "screen",
+      query: level ?? "",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "brightness",
+        target: "screen",
+        params: wantsSet && level ? { action: "set", level } : { action: "get" },
+        description: wantsSet && level ? `Set brightness to ${level}%` : "Read the current brightness",
+      }],
+      summary: "Brightness adjusted",
+      confidence: 0.85,
+    };
+  }
+  if (/\block\b/.test(text) && /\b(pc|computer|laptop|screen|windows|system|desktop)\b/.test(text)) {
+    return {
+      ...base,
+      action: "lock",
+      target: "pc",
+      query: "",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{ action: "lock_pc", target: "pc", params: {}, description: "Lock the PC (needs your confirmation)" }],
+      summary: "Locked the PC",
+      confidence: 0.9,
+    };
+  }
+  if (/\bbattery\b/.test(text) && /\b(kitni|kitna|kaisi|kaisa|status|level|check|percentage|charge|charging|hai)\b/.test(text)) {
+    return {
+      ...base,
+      action: "battery",
+      target: "battery",
+      query: "",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{ action: "battery", target: "battery", params: {}, description: "Read the battery status" }],
+      summary: "Battery status",
+      confidence: 0.9,
+    };
+  }
+  if (/\bclipboard\b/.test(text) && /\b(history|recent|log|purani|previous)\b/.test(text)) {
+    return {
+      ...base,
+      action: "clipboard_history",
+      target: "clipboard",
+      query: "",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{ action: "clipboard_history", target: "clipboard", params: {}, description: "Show this session's clipboard history" }],
+      summary: "Clipboard history",
+      confidence: 0.9,
+    };
+  }
+  const installMatch = text.match(/^(?:install|setup|set up|install karo)\s+(?:the\s+|an?\s+)?([a-z0-9 .+#-]{2,40})$/i);
+  if (installMatch) {
+    const appQuery = installMatch[1].replace(/\s*(app|application|software)\s*$/i, "").trim();
+    return {
+      ...base,
+      action: "install",
+      target: appQuery,
+      query: appQuery,
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "install_app",
+        target: appQuery,
+        params: { query: appQuery },
+        description: `Install ${appQuery} via winget (approval-gated)`,
+      }],
+      summary: `Installed ${appQuery}`,
+      confidence: 0.85,
+    };
+  }
+
+  // ── Routines ──────────────────────────────────────────────────────────────
+  if (/\broutines?\b/.test(text) && /\b(list|show|dikhao|sab|all)\b/.test(text)) {
+    return {
+      ...base,
+      action: "routines",
+      target: "list",
+      query: "",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{ action: "routine_list", target: "routines", params: {}, description: "List your saved routines" }],
+      summary: "Routines listed",
+      confidence: 0.9,
+    };
+  }
+  const routineRun = text.match(/\b(?:run|chalao|chala do|execute)\s+(?:the\s+|my\s+)?([a-z0-9 _-]{2,30})\s*routine\b/i)
+    ?? text.match(/\b([a-z0-9 _-]{2,30})\s+routine\s+(?:run|chalao)\b/i);
+  if (routineRun) {
+    const name = routineRun[1].trim();
+    return {
+      ...base,
+      action: "routines",
+      target: name,
+      query: name,
+      isTask: true,
+      isMultiStep: false,
+      steps: [{ action: "routine_run", target: name, params: { name }, description: `Run the "${name}" routine` }],
+      summary: `Ran the ${name} routine`,
+      confidence: 0.9,
+    };
+  }
+  const routineSave = text.match(/\b(?:save|create|make|banao|bana)\s+(?:a\s+)?routine\s+(?:called|named)?\s*([a-z0-9 _-]{2,30}?)(?=\s+(?:that|which|with|for|to)\b|\s*$)/i);
+  if (routineSave) {
+    const name = routineSave[1].trim();
+    // Deterministic step inference for the documented patterns; anything else
+    // goes to the agent tier to build the JSON properly.
+    const steps: TaskStep[] = [];
+    if (/organize|clean|saaf/.test(text) && /downloads/i.test(text)) {
+      steps.push({
+        action: "routine_save",
+        target: name,
+        params: {
+          name,
+          steps: JSON.stringify([{ kind: "quest", questId: "organize-downloads" }]),
+        },
+        description: `Save the "${name}" routine (organize downloads)`,
+      });
+    } else if (/morning|brief/.test(text)) {
+      steps.push({
+        action: "routine_save",
+        target: name,
+        params: {
+          name,
+          steps: JSON.stringify([{ kind: "quest", questId: "morning-brief" }]),
+        },
+        description: `Save the "${name}" routine (morning brief)`,
+      });
+    } else {
+      return {
+        ...base,
+        action: "routines",
+        target: name,
+        query: "",
+        isTask: true,
+        isMultiStep: false,
+        steps: [],
+        summary: "Needs help building the routine",
+        confidence: 0.4,
+        needsModelAssist: true,
+      };
+    }
+    return {
+      ...base,
+      action: "routines",
+      target: name,
+      query: "",
+      isTask: true,
+      isMultiStep: false,
+      steps,
+      summary: `Saved the ${name} routine`,
+      confidence: 0.88,
+    };
+  }
 
   // ─── WINDOW CONTROLS (minimize / maximize / restore / move / resize) ────
   // MOUSE MOVE — BEFORE window controls: "move mouse to 500,300" must move

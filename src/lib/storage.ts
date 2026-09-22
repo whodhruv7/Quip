@@ -26,6 +26,8 @@ export interface QuipPrefs {
   companionId: CompanionId;
   theme?: "light" | "dark" | "aqua" | "pink" | "black";
   scanned?: boolean;
+  /** UX-002: sound feedback toggle (persisted). */
+  soundsMuted?: boolean;
 }
 
 const DEFAULT_PREFS: QuipPrefs = {

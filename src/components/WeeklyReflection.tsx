@@ -35,8 +35,8 @@ export function WeeklyReflection({ companionId, onClose }: WeeklyReflectionProps
     let cancelled = false;
     window.quip
       .getWeeklyDigest()
-      .then((d: WeeklyDigestData) => {
-        if (!cancelled) setDigest(d);
+      .then((d) => {
+        if (!cancelled) setDigest(d as WeeklyDigestData);
       })
       .catch(() => {
         if (!cancelled) setLoadFailed(true);

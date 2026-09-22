@@ -126,6 +126,22 @@ import { deviceLookup, initDeviceIndex } from "./brain/device-index";
 // Action Engine — the ONLY executor of direct plans (spec Phase 2).
 import { createActionEngine } from "./actions/engine";
 import { executionLog } from "./actions/execution-log";
+// ── Autonomy wave wiring (roadmap A–F) ──
+import { configureMailwing } from "./engine/mailwing";
+import { configureContactsBook } from "./engine/contacts-book";
+import { configureFileButler, stopAllWatches, type WatchEvent } from "./engine/file-butler";
+import { configureRoutines, configureQuestRuntime, setQuestEventSink } from "./engine/quest-engine";
+import { setWatchEventSink, executeTool } from "./engine/tool-registry";
+import { destroyGhostSession } from "./engine/web-ghost";
+import {
+  listAccounts as mailwingList,
+  upsertAccount as mailwingUpsert,
+  removeAccount as mailwingRemove,
+  testAccount as mailwingTest,
+  readOutbox as mailwingOutboxRead,
+} from "./engine/mailwing";
+import { searchContacts, listContacts, exportContactsCsv } from "./engine/contacts-book";
+import { clipboardHistory } from "./engine/ghost-hands";
 
 // The orchestrator uses the model ONLY for ambiguous intent (compact schema,
 // one small call) — deterministic tools handle the obvious actions.
@@ -1939,6 +1955,17 @@ ipcMain.handle(IPC.GET_CONNECTION_JOURNAL, () => connectionJournal.all());
 // Structured execution log — the per-action evidence trail (spec Phase 2).
 ipcMain.handle(IPC.GET_ACTION_LOG, () => executionLog.recent(60));
 
+// ── Autonomy wave IPC (Settings cards + renderer toasts) ───────────────────
+ipcMain.handle(IPC.MAILWING_ACCOUNTS_LIST, () => mailwingList());
+ipcMain.handle(IPC.MAILWING_ACCOUNTS_UPSERT, (_e, input) => mailwingUpsert(input ?? {}));
+ipcMain.handle(IPC.MAILWING_ACCOUNTS_REMOVE, (_e, idOrLabel: string) => mailwingRemove(String(idOrLabel ?? "")));
+ipcMain.handle(IPC.MAILWING_ACCOUNTS_TEST, (_e, idOrLabel?: string) => mailwingTest(idOrLabel));
+ipcMain.handle(IPC.MAILWING_OUTBOX_GET, () => mailwingOutboxRead());
+ipcMain.handle(IPC.CONTACTS_SEARCH, (_e, query: string) => searchContacts(String(query ?? "")));
+ipcMain.handle(IPC.CONTACTS_LIST, (_e, limit?: number) => listContacts(Number(limit) || 50));
+ipcMain.handle(IPC.CONTACTS_EXPORT, (_e, filePath?: string) => exportContactsCsv(filePath || undefined));
+ipcMain.handle(IPC.CLIPBOARD_HISTORY_GET, () => clipboardHistory());
+
 // Settings → Appearance → "Fetch Updates": fetch + fast-forward the running
 // repo, with an honest plain-language result (offline / dirty tree / not-a-repo
 // are reported, never faked as "updated").
@@ -2086,6 +2113,30 @@ if (!app.requestSingleInstanceLock()) {
 
     // Structured execution log persists (debounced) for post-mortems.
     executionLog.setPersistPath(path.join(app.getPath("userData"), "quip-actions.json"));
+
+    // ── Autonomy wave engines (all local stores under userData) ─────────
+    configureMailwing(app.getPath("userData"));
+    configureContactsBook(app.getPath("userData"));
+    configureFileButler(app.getPath("userData"));
+    configureRoutines(app.getPath("userData"));
+    // Quests reuse the SAME permission system as the Action Engine — the
+    // approval card the user already knows is what gates quest sends/moves.
+    configureQuestRuntime({
+      executeTool: (action, step) =>
+        executeTool(action, { action, target: step.target ?? "", params: step.params } as any, {
+          platform: process.platform,
+        }),
+      requestApproval: async (title, lines) => {
+        // The ENGINE permission system (same one the Action Engine uses) —
+        // dangerous-class approvals show the exact plan card in the renderer.
+        const verdict = await execPermissionSystem.requestApproval(title, lines, "dangerous");
+        return verdict.approved;
+      },
+    });
+    // Quest step events → renderer quest cards (live progress).
+    setQuestEventSink((event) => broadcastToRenderers(IPC.QUEST_EVENT, event));
+    // Downloads-watch auto-moves → renderer toasts.
+    setWatchEventSink((e: WatchEvent) => broadcastToRenderers(IPC.WATCH_EVENT, e));
 
     // ── WINDOW FIRST, bootstrap second ───────────────────────────────────
     // The single worst startup bug: the window used to be created only AFTER
@@ -2278,6 +2329,13 @@ if (!app.requestSingleInstanceLock()) {
   // Flush debounced saves on quit; allow window close handlers to pass.
   app.on("before-quit", () => {
     isQuitting = true;
+    // Autonomy wave cleanup — no lingering ghost windows or fs.watchers.
+    try {
+      destroyGhostSession("app quitting");
+      stopAllWatches();
+    } catch {
+      /* non-fatal */
+    }
     try {
       memoryBrain.flush();
     } catch {

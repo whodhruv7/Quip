@@ -54,10 +54,80 @@ import { sysInfo, networkInfo } from "./sys-info";
 import { speakText } from "../system/speech";
 import { modelRouter } from "../system/model-router";
 import { execFile } from "node:child_process";
+// ── Autonomy wave engines (roadmap A–F) ──
+import {
+  ghostReadPage,
+  ghostExtractContacts,
+  ghostClickText,
+  ghostFill,
+  type GhostField,
+} from "./web-ghost";
+import {
+  upsertAccount,
+  removeAccount,
+  listAccounts,
+  resolveAccount,
+  testAccount,
+  sendMail,
+  humanizeEmail,
+  gmailComposeUrl,
+  readOutbox,
+  digestOutboxForLog,
+  type MailTone,
+  type SendMailInput,
+} from "./mailwing";
+import {
+  upsertContact,
+  searchContacts,
+  listContacts,
+  exportContactsCsv,
+  resolveEmail,
+} from "./contacts-book";
+import {
+  planOrganize,
+  describePlan,
+  applyOrganizePlan,
+  undoOrganize,
+  findDuplicates,
+  trashDuplicateCopies,
+  storageReport,
+  formatBytes,
+  startWatch,
+  stopWatch,
+  watchStatus,
+  listManifests,
+  type OrganizePlan,
+} from "./file-butler";
+import {
+  screenshotToFile,
+  setWallpaper,
+  setBrightness,
+  getBrightness,
+  lockPc,
+  batteryStatus,
+  notify,
+  clipboardHistory,
+  proposeInstall,
+} from "./ghost-hands";
+import {
+  buildQuest,
+  runQuest,
+  runRoutine,
+  saveRoutine,
+  listRoutines,
+  type RoutineStep,
+} from "./quest-engine";
+import type { WatchEvent } from "./file-butler";
 
 const TAB_ACTIONS: TabAction[] = [
   "new", "close", "next", "previous", "reopen", "back", "forward", "reload",
 ];
+
+/** Sink for Downloads-watch auto-moves — main.ts injects a toast bridge. */
+let watchEventSink: ((e: WatchEvent) => void) | null = null;
+export function setWatchEventSink(sink: ((e: WatchEvent) => void) | null): void {
+  watchEventSink = sink;
+}
 
 // ─── Shell command execution (Skales computer-use parity, approval-gated) ────
 
@@ -711,9 +781,524 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
       evidence: ["cached installed-app index"],
     };
   },
+
+  // ── Autonomy wave (roadmap A–F) ────────────────────────────────────────────
+
+  async web_ghost_read(step, _ctx) {
+    const url = String(step.params.url ?? step.target ?? "");
+    if (!url) return { success: false, output: "Which page should I read with the ghost browser?", note: "missing url" };
+    const r = await ghostReadPage(url);
+    if (!r.ok) {
+      return { success: false, output: `The ghost browser couldn't read that page — ${r.error}`, note: `ghost-read failed: ${r.error?.slice(0, 120)}` };
+    }
+    contextStore.update({ activeUrl: url, lastReadPage: r.text?.slice(0, 20_000) });
+    return {
+      success: true,
+      output: `"${r.title}" —\n${(r.text ?? "").slice(0, 8000)}`,
+      note: `ghost-read ${url.slice(0, 80)}`,
+      evidence: [`ghost session page: ${r.title?.slice(0, 80)}`, `${r.text?.length ?? 0} chars of visible text`],
+    };
+  },
+
+  async web_ghost_extract(step, _ctx) {
+    const url = String(step.params.url ?? step.target ?? "");
+    if (!url) return { success: false, output: "Which website should I pull contacts from?", note: "missing url" };
+    const r = await ghostExtractContacts(url);
+    if (!r.ok) {
+      return { success: false, output: `I couldn't pull contacts from that site — ${r.error}`, note: `ghost-extract failed: ${r.error?.slice(0, 120)}` };
+    }
+    // Auto-save into the Contacts Book with the source (CAP-029).
+    let saved = 0;
+    for (const c of r.contacts.slice(0, 10)) {
+      if (!c.email) continue;
+      const res = upsertContact({ email: c.email, name: c.name, source: `ghost:${url.slice(0, 80)}` });
+      if (res.ok) saved += 1;
+    }
+    const list = r.contacts.map((c, i) => `${i + 1}. ${c.email ?? c.phone}${c.name ? ` — ${c.name}` : ""}${c.role ? ` (${c.role.slice(0, 40)})` : ""}`).join("\n");
+    if (r.contacts.length === 0) {
+      return {
+        success: false,
+        output: `I opened ${url} but found no email or phone${r.followedContactPage ? " — even their contact page came up empty" : ""}. The site may hide contacts behind a form.`,
+        note: "ghost-extract: no contacts",
+        evidence: [`page title: ${r.title?.slice(0, 80)}`, r.followedContactPage ? "followed contact page: nothing" : "no contact page detected"],
+      };
+    }
+    contextStore.update({ lastExtractedEmails: r.contacts.filter((c) => c.email).map((c) => c.email!).slice(0, 8).join(", ") });
+    return {
+      success: true,
+      output: `Found ${r.contacts.length} contact(s) on the site${r.followedContactPage ? " (followed their contact page)" : ""}:\n${list}${saved ? `\nSaved ${saved} to your Contacts Book.` : ""}`,
+      note: `ghost-extract: ${r.contacts.length} contact(s), ${saved} saved`,
+      evidence: [`url: ${url.slice(0, 100)}`, `title: ${r.title?.slice(0, 80)}`, saved ? `contacts book: +${saved}` : "nothing new saved"],
+    };
+  },
+
+  async web_ghost_click(step, _ctx) {
+    const url = String(step.params.url ?? "");
+    const text = String(step.params.element ?? step.params.text ?? step.target ?? "");
+    if (!url || !text) return { success: false, output: "I need a page URL and what to click (its visible text).", note: "missing url or text" };
+    const r = await ghostClickText(url, text);
+    if (!r.ok) return { success: false, output: `The ghost click failed — ${r.error}`, note: `ghost-click failed` };
+    if (!r.clicked) return { success: false, output: `I couldn't find "${text}" to click on that page — ${r.error ?? "no match"}.`, note: "ghost-click: no match" };
+    return { success: true, output: `Clicked "${r.label}" in the ghost page.`, note: "ghost-click", evidence: [`clicked: ${r.label?.slice(0, 60)}`] };
+  },
+
+  async web_ghost_fill(step, _ctx) {
+    const url = String(step.params.url ?? "");
+    const raw = String(step.params.fields ?? "");
+    if (!url || !raw) return { success: false, output: "I need a page URL and the fields to fill.", note: "missing url or fields" };
+    let fields: GhostField[] = [];
+    try {
+      const parsed = JSON.parse(raw) as { selector?: string; hint: string; value: string }[];
+      fields = parsed.map((f) => ({ selector: f.selector, hint: String(f.hint ?? ""), value: String(f.value ?? "") }));
+    } catch {
+      return { success: false, output: "The fields weren't valid JSON — send [{\"hint\":\"email\",\"value\":\"a@b.c\"}].", note: "bad fields json" };
+    }
+    const r = await ghostFill(url, fields);
+    if (!r.ok || !r.report) return { success: false, output: `The ghost fill failed — ${r.error}`, note: "ghost-fill failed" };
+    const okCount = r.report.filter((x) => x.filled).length;
+    const lines = r.report.map((x) => `• ${x.field}: ${x.filled ? "filled" : x.reason ?? "not found"}`).join("\n");
+    return {
+      success: okCount > 0,
+      output: okCount === r.report.length ? `Filled ${okCount} field(s):\n${lines}` : `Filled ${okCount}/${r.report.length}:\n${lines}`,
+      note: `ghost-fill ${okCount}/${r.report.length}`,
+      evidence: r.report.map((x) => `${x.field}: ${x.filled ? "ok" : x.reason}`),
+    };
+  },
+
+  async mailwing_draft(step, _ctx) {
+    const rawTo = String(step.params.to ?? step.target ?? "").trim();
+    const bodyRaw = String(step.params.body ?? "").trim();
+    if (!rawTo) {
+      return { success: false, output: "Whom should I write to? I need a real email address (or a saved contact's name I can resolve).", note: "missing/invalid recipient" };
+    }
+    // "send an email to john" → resolve john from the Contacts Book first.
+    let to = rawTo;
+    let resolvedFrom = "";
+    if (!to.includes("@")) {
+      const hit = resolveEmail(to);
+      if (hit) {
+        to = hit.email;
+        resolvedFrom = ` (resolved "${rawTo}" from your Contacts Book)`;
+      }
+    }
+    if (!to.includes("@")) {
+      return { success: false, output: `"${rawTo}" isn't an email address and I don't have them in your Contacts Book — give me the full address or save the contact first.`, note: "unresolvable recipient" };
+    }
+    if (!bodyRaw) return { success: false, output: "What should the email say? Give me the rough points and I'll write it properly.", note: "missing body" };
+    const tone = (String(step.params.tone ?? "professional") as MailTone);
+    const humanize = String(step.params.humanize ?? "true") !== "false";
+    const account = resolveAccount(step.params.account);
+    let subject = String(step.params.subject ?? "").trim();
+    let body = bodyRaw;
+    let humanized = false;
+    if (humanize) {
+      const res = await humanizeEmail({
+        body: bodyRaw,
+        tone,
+        context: step.params.context,
+        languageHint: step.params.language,
+        signature: step.params.signature,
+      });
+      body = res.body;
+      subject = subject || res.subject;
+      humanized = res.humanized;
+    }
+    subject = subject || "Message from Quip";
+    stagedDraft = { to: to.split(/[,;]\s*/), subject, body, humanized, accountId: account?.label, stagedAt: Date.now() };
+    return {
+      success: true,
+      output:
+        `Draft ready${humanized ? " (humanized" + tone + ")" : " (your words as-is)"}:\n` +
+        `To: ${to}${resolvedFrom}\nSubject: ${subject}\n---\n${body.slice(0, 700)}${body.length > 700 ? "…" : ""}\n---\n` +
+        (account ? `Will send from ${account.fromEmail} — say "send it" to approve.` : `No MailWing account yet — say "send it" and I'll open a prefilled Gmail draft.`),
+      note: `mailwing draft staged (${humanized ? "humanized" : "raw"})`,
+      evidence: [`tone: ${tone}`, humanized ? "LLM humanize: ok" : "LLM humanize: unavailable — raw text", account ? `account: ${account.label}` : "account: none (Gmail fallback)"],
+    };
+  },
+
+  async mailwing_send(step, _ctx) {
+    const draft = freshDraft();
+    if (!draft) {
+      return { success: false, output: "There's no staged draft — write one first (whom + what), then I'll send.", note: "no staged draft" };
+    }
+    const account = resolveAccount(step.params.account ?? draft.accountId);
+    if (!account) {
+      // Gmail fallback — prefilled compose in the real browser.
+      const url = gmailComposeUrl({ to: draft.to.join(","), subject: draft.subject, body: draft.body });
+      const opened = await openBrowserSurface(url);
+      stagedDraft = null;
+      return {
+        success: opened.ok,
+        output: opened.ok
+          ? `Opened a Gmail draft to ${draft.to.join(", ")} with the subject and body prefilled — press send when it looks right.`
+          : opened.summary,
+        note: opened.ok ? "gmail fallback draft opened" : "gmail fallback failed",
+        evidence: opened.evidence,
+      };
+    }
+    const input: SendMailInput = {
+      accountId: account.label,
+      to: draft.to,
+      cc: draft.cc,
+      subject: draft.subject,
+      body: draft.body,
+    };
+    const res = await sendMail(input);
+    stagedDraft = null;
+    return {
+      success: res.ok,
+      output: res.output,
+      note: res.ok ? "mailwing send verified (SMTP 250)" : `mailwing send failed: ${res.smtp?.stage ?? "?"}`,
+      evidence: res.evidence,
+    };
+  },
+
+  async mailwing_accounts(step, _ctx) {
+    const op = String(step.params.op ?? "list");
+    if (op === "add") {
+      const res = upsertAccount({
+        label: String(step.params.label ?? ""),
+        smtpHost: String(step.params.host ?? ""),
+        smtpPort: parseInt(String(step.params.port ?? "587"), 10),
+        secure: String(step.params.secure ?? "false") === "true",
+        user: String(step.params.user ?? ""),
+        pass: String(step.params.pass ?? ""),
+        fromEmail: String(step.params.from ?? step.params.user ?? ""),
+        fromName: step.params.fromName,
+        isDefault: String(step.params.default ?? "false") === "true",
+      });
+      return { success: res.ok, output: res.ok ? `Account "${step.params.label}" saved (password encrypted at rest).` : `Couldn't save the account — ${res.error}`, note: "mailwing account add", evidence: res.ok ? [`id: ${res.accountId}`] : [] };
+    }
+    if (op === "remove") {
+      const res = removeAccount(String(step.params.account ?? ""));
+      return { success: res.ok, output: res.ok ? `Removed account "${res.removed}".` : res.error!, note: "mailwing account remove" };
+    }
+    if (op === "test") {
+      const res = await testAccount(step.params.account);
+      return { success: res.ok, output: res.detail, note: res.ok ? "mailwing account verified (nothing sent)" : "mailwing test failed", evidence: [`stage: ${res.stage ?? "-"}`, `tls: ${res.tls ? "yes" : "no"}`] };
+    }
+    const accounts = listAccounts();
+    if (accounts.length === 0) {
+      return { success: false, output: "No MailWing accounts yet — add one in Settings → MailWing (host, port, user, password).", note: "no accounts" };
+    }
+    return {
+      success: true,
+      output: accounts.map((a) => `• ${a.label}${a.isDefault ? " (default)" : ""} — ${a.user} via ${a.smtpHost}:${a.smtpPort}${a.passEncrypted ? " [encrypted]" : ""}`).join("\n"),
+      note: `mailwing accounts: ${accounts.length}`,
+      evidence: ["passwords never shown"],
+    };
+  },
+
+  async mailwing_outbox(_step, _ctx) {
+    const entries = readOutbox();
+    if (entries.length === 0) return { success: true, output: "The outbox is empty — no mail sent yet through MailWing.", note: "outbox empty" };
+    const lines = entries.slice(0, 15).map((e) => `• ${e.status === "sent" ? "✓" : "✗"} ${new Date(e.ts).toLocaleString()} → ${e.to.join(", ")} "${e.subject.slice(0, 50)}"`);
+    return {
+      success: true,
+      output: `Outbox (last ${lines.length} of ${entries.length}):\n${lines.join("\n")}`,
+      note: "mailwing outbox",
+      evidence: digestOutboxForLog(entries.slice(0, 5)),
+    };
+  },
+
+  async contacts_search(step, _ctx) {
+    const q = String(step.params.query ?? step.target ?? "").trim();
+    if (!q) return { success: false, output: "Whose contact should I look for?", note: "missing query" };
+    const hits = searchContacts(q);
+    if (hits.length === 0) {
+      return { success: false, output: `No contact matched "${q}" — I can save one if you give me the details.`, note: "contacts: no hit" };
+    }
+    contextStore.update({ lastExtractedEmails: hits[0].email ?? "" });
+    return {
+      success: true,
+      output: hits.map((c) => `• ${c.name ?? "(no name)"} — ${c.email ?? c.phone}${c.company ? ` @ ${c.company}` : ""} [from: ${c.sources.join(", ")}]`).join("\n"),
+      note: `contacts search: ${hits.length} hit(s)`,
+      evidence: [`query: ${q}`],
+    };
+  },
+
+  async contacts_save(step, _ctx) {
+    const res = upsertContact({
+      email: step.params.email,
+      phone: step.params.phone,
+      name: step.params.name,
+      company: step.params.company,
+      note: step.params.note,
+      source: `manual:${String(step.params.source ?? "chat")}`,
+    });
+    if (!res.ok) return { success: false, output: `Couldn't save the contact — ${res.error}`, note: "contacts save failed" };
+    const c = res.contact!;
+    return { success: true, output: `Saved ${c.name ?? ""} — ${c.email ?? c.phone}${c.company ? ` @ ${c.company}` : ""} to your Contacts Book.`, note: "contact saved", evidence: [`id: ${c.id}`] };
+  },
+
+  async contacts_export(step, _ctx) {
+    const res = exportContactsCsv(step.params.path || undefined);
+    if (!res.ok) return { success: false, output: `Couldn't export — ${res.error}`, note: "contacts export failed" };
+    return { success: true, output: `Exported ${res.count} contact(s) to ${res.path}.`, note: "contacts exported", evidence: [`file: ${res.path}`] };
+  },
+
+  async file_organize(step, _ctx) {
+    const op = String(step.params.op ?? "plan");
+    if (op === "undo") {
+      const manifestId = String(step.params.manifest ?? "").trim();
+      const target = manifestId || listManifests(1)[0]?.id;
+      if (!target) return { success: false, output: "There's no organize run to undo yet.", note: "no manifest" };
+      const res = undoOrganize(target);
+      return {
+        success: res.ok,
+        output: res.ok ? `Undone — moved ${res.moved} file(s) back to their original places.` : `Undo partially failed: ${res.failed.slice(0, 3).map((f) => `${f.from}: ${f.error}`).join("; ")}`,
+        note: res.ok ? "organize undone from manifest" : "undo incomplete",
+        evidence: [`manifest: ${res.manifestId}`],
+      };
+    }
+    if (op === "apply") {
+      const plan = freshPlan();
+      if (!plan) return { success: false, output: "There's no staged organize plan — ask me to organize a folder first.", note: "no staged plan" };
+      const res = applyOrganizePlan(plan);
+      stagedPlan = null;
+      return {
+        success: res.ok,
+        output: res.ok ? `Organized — moved ${res.moved} file(s). Undo any time: "undo organize" (manifest ${res.manifestId}).` : `Moved ${res.moved}/${plan.entries.length} — some failed: ${res.failed.slice(0, 3).map((f) => f.error).join("; ")}`,
+        note: `organize applied: ${res.moved}/${plan.entries.length}`,
+        evidence: [`manifest: ${res.manifestId}`, res.failed.length ? `failures: ${res.failed.length}` : "no failures"],
+      };
+    }
+    const dir = String(step.params.dir ?? step.params.location ?? step.target ?? "").trim();
+    if (!dir) return { success: false, output: "Which folder should I organize?", note: "missing dir" };
+    const mode = String(step.params.mode ?? "type") === "date" ? "date" : "type";
+    const r = planOrganize(dir, mode);
+    if (!r.ok || !r.plan) return { success: false, output: `I couldn't plan that — ${r.error}`, note: "organize plan failed" };
+    if (r.plan.entries.length === 0) {
+      return { success: true, output: `${dir} is already organized — nothing to move.`, note: "nothing to organize", evidence: [`dir: ${dir}`] };
+    }
+    stagedPlan = { plan: r.plan, stagedAt: Date.now() };
+    return {
+      success: true,
+      output: `${describePlan(r.plan)}\nSay "confirm organize" and I'll move them.`,
+      note: `organize plan staged: ${r.plan.entries.length} move(s)`,
+      evidence: [`dir: ${dir}`, `mode: ${mode}`, r.truncated ? "scan truncated at 2000 files" : "full scan"],
+    };
+  },
+
+  async file_duplicates(step, _ctx) {
+    const dir = String(step.params.dir ?? step.params.location ?? step.target ?? "").trim();
+    if (!dir) return { success: false, output: "Which folder should I scan for duplicates?", note: "missing dir" };
+    const r = findDuplicates(dir);
+    if (!r.ok || !r.groups) return { success: false, output: `The duplicate scan failed — ${r.error}`, note: "duplicates scan failed" };
+    if (r.groups.length === 0) {
+      return { success: true, output: `Scanned ${r.scanned} files — no duplicates found.`, note: "no duplicates", evidence: [`dir: ${dir}`, `scanned: ${r.scanned}`] };
+    }
+    const lines = r.groups.slice(0, 10).map((g) => `• ${(formatBytes(g.size))} × ${g.files.length}: ${g.files.map((f) => path.basename(f)).join(" = ")}`);
+    const wasted = r.groups.reduce((sum, g) => sum + g.size * (g.files.length - 1), 0);
+    if (String(step.params.clean ?? "") === "true") {
+      const trashed = trashDuplicateCopies(r.groups);
+      return {
+        success: trashed.failed.length === 0,
+        output: `Found ${r.groups.length} duplicate group(s). Moved ${trashed.trashed.length} extra copy(ies) to .quip-trash folders (reversible).${trashed.failed.length ? ` Failures: ${trashed.failed.map((f) => path.basename(f.path)).join(", ")}` : ""}`,
+        note: `duplicates cleaned: ${trashed.trashed.length}`,
+        evidence: [`groups: ${r.groups.length}`, `reclaimed: ~${formatBytes(wasted)}`],
+      };
+    }
+    return {
+      success: true,
+      output: `Found ${r.groups.length} duplicate group(s) (~${formatBytes(wasted)} wasted):\n${lines.join("\n")}${r.groups.length > 10 ? `\n… and ${r.groups.length - 10} more` : ""}\nSay "clean the duplicates" to trash the extra copies.`,
+      note: `duplicates: ${r.groups.length} group(s)`,
+      evidence: [`dir: ${dir}`, `scanned: ${r.scanned}`],
+    };
+  },
+
+  async file_storage_report(step, _ctx) {
+    const dir = String(step.params.dir ?? step.params.location ?? step.target ?? "").trim();
+    if (!dir) return { success: false, output: "Which folder should I report on?", note: "missing dir" };
+    const r = storageReport(dir);
+    if (!r.ok || !r.report) return { success: false, output: `The storage report failed — ${r.error}`, note: "storage report failed" };
+    const rep = r.report;
+    const cats = rep.byCategory.slice(0, 6).map((c) => `${c.category}: ${c.files} file(s), ${formatBytes(c.bytes)}`).join("\n");
+    const top = rep.top.slice(0, 8).map((t) => `• ${formatBytes(t.bytes)} — ${path.basename(t.path)}`).join("\n");
+    return {
+      success: true,
+      output: `${dir}: ${rep.files} file(s), ${rep.folders} folder(s), ${formatBytes(rep.bytes)} total.${rep.truncated ? " (scan truncated — deep folders skipped)" : ""}\nBy type:\n${cats}\nBiggest files:\n${top}`,
+      note: `storage report: ${formatBytes(rep.bytes)} in ${rep.files} files`,
+      evidence: [`dir: ${dir}`, rep.truncated ? "truncated scan" : "full scan"],
+    };
+  },
+
+  async file_watch(step, _ctx) {
+    const op = String(step.params.op ?? "status");
+    if (op === "stop") {
+      const dir = String(step.params.dir ?? step.target ?? "").trim();
+      if (!dir) return { success: false, output: "Which folder's watch should I stop?", note: "missing dir" };
+      const r = stopWatch(dir);
+      return { success: true, output: r.wasWatching ? `Stopped watching ${dir}.` : `${dir} wasn't being watched.`, note: "watch stopped" };
+    }
+    if (op === "start") {
+      const dir = String(step.params.dir ?? step.target ?? "").trim();
+      if (!dir) return { success: false, output: "Which folder should I watch?", note: "missing dir" };
+      const r = startWatch(dir, (e) => {
+        // Auto-move toast is delivered by the boot wiring (main.ts) — here we
+        // only register the watch; the sink is injected via setWatchEventSink.
+        watchEventSink?.(e);
+      });
+      return { success: r.ok, output: r.ok ? `Watching ${dir} — new files get organized automatically and I'll toast every move.` : `Couldn't watch ${dir} — ${r.error}`, note: r.ok ? "watch started" : "watch failed", evidence: r.ok ? [`dir: ${dir}`] : [] };
+    }
+    const st = watchStatus();
+    if (st.length === 0) return { success: true, output: "No folders are being watched right now.", note: "no watches" };
+    return { success: true, output: `Watching:\n${st.map((w) => `• ${w.dir} (auto-organize ${w.autoOrganize ? "on" : "off"})`).join("\n")}`, note: `watches: ${st.length}` };
+  },
+
+  async screenshot_save(step, _ctx) {
+    const r = await screenshotToFile(step.params.dir || undefined);
+    if (!r.ok) return { success: false, output: `Screenshot failed — ${r.error}`, note: "screenshot failed" };
+    return { success: true, output: `Screenshot saved: ${r.path} (${formatBytes(r.bytes ?? 0)}). Opened its folder for you.`, note: "screenshot saved", evidence: [`file: ${r.path}`, `bytes: ${r.bytes}`] };
+  },
+
+  async wallpaper_set(step, _ctx) {
+    const src = String(step.params.source ?? step.target ?? "").trim();
+    if (!src) return { success: false, output: "Which image should I set as wallpaper (a local path or https URL)?", note: "missing source" };
+    return fromVerification(await setWallpaper(src));
+  },
+
+  async brightness(step, _ctx) {
+    const action = String(step.params.action ?? "get");
+    if (action === "get") return fromVerification(await getBrightness());
+    const level = parseFloat(String(step.params.level ?? ""));
+    if (!Number.isFinite(level) || level < 1 || level > 100) {
+      return { success: false, output: "Give me a brightness level between 1 and 100.", note: "invalid level" };
+    }
+    return fromVerification(await setBrightness(level));
+  },
+
+  async notify_me(step, _ctx) {
+    const title = String(step.params.title ?? "Quip reminder");
+    const body = String(step.params.body ?? step.params.text ?? step.target ?? "").trim();
+    if (!body) return { success: false, output: "What should the notification say?", note: "missing body" };
+    return fromVerification(notify(title, body));
+  },
+
+  async lock_pc(_step, _ctx) {
+    // DESTRUCTIVE-class: the Action Engine's permission gate confirms before
+    // this executor ever runs — locking without asking would be hostile.
+    return fromVerification(await lockPc());
+  },
+
+  async battery(_step, _ctx) {
+    return fromVerification(await batteryStatus());
+  },
+
+  async clipboard_history(_step, _ctx) {
+    const hist = clipboardHistory();
+    if (hist.length === 0) {
+      return { success: false, output: "The clipboard history is empty — I only see what Quip copies/pastes in this session.", note: "empty clipboard ring" };
+    }
+    return {
+      success: true,
+      output: `Clipboard history (${hist.length}):
+${hist.slice(0, 8).map((h, i) => `${i + 1}. [${h.origin}] ${h.text.slice(0, 80).replace(/\n/g, " ")}`).join("\n")}`,
+      note: `clipboard ring: ${hist.length}`,
+      evidence: ["session-scoped: only Quip's own clipboard actions"],
+    };
+  },
+
+  async install_app(step, _ctx) {
+    const appQuery = String(step.params.query ?? step.target ?? "").trim();
+    if (!appQuery) return { success: false, output: "Which app should I install?", note: "missing app" };
+    const proposal = proposeInstall(appQuery);
+    if (!proposal.ok || !proposal.command) return { success: false, output: `I couldn't propose an install for "${appQuery}" — ${proposal.note}.`, note: "no install proposal" };
+    return runShellCommand(proposal.command);
+  },
+
+  async quest_run(step, _ctx) {
+    const kind = String(step.params.kind ?? step.target ?? "").trim();
+    const built = buildQuest(kind, step.params);
+    if (!built.ok || !built.quest) {
+      return { success: false, output: `I can't run that quest — ${built.error}`, note: "quest build failed" };
+    }
+    const res = await runQuest(built.quest, step.params);
+    return {
+      success: res.ok,
+      output: `${res.summary}\n${res.notes.map((n) => `• ${n}`).join("\n")}`.slice(0, 3000),
+      note: res.cancelled ? "quest cancelled" : res.ok ? "quest verified end-to-end" : `quest failed at ${res.failedStep}`,
+      evidence: [`quest: ${built.quest.id}`, `steps: ${res.stepsCompleted}/${res.stepsTotal}`],
+    };
+  },
+
+  async routine_save(step, _ctx) {
+    const name = String(step.params.name ?? "").trim();
+    const raw = String(step.params.steps ?? "").trim();
+    if (!name || !raw) return { success: false, output: "I need a routine name and its steps.", note: "missing name or steps" };
+    let steps: RoutineStep[] = [];
+    try {
+      steps = JSON.parse(raw) as RoutineStep[];
+    } catch {
+      return { success: false, output: 'The steps weren\'t valid JSON — e.g. [{"kind":"quest","questId":"organize-downloads"},{"kind":"say","text":"done"}].', note: "bad steps json" };
+    }
+    const res = saveRoutine(name, steps);
+    return { success: res.ok, output: res.ok ? `Routine "${res.routine!.name}" saved with ${steps.length} step(s). Run it: "run routine ${res.routine!.name}".` : `Couldn't save — ${res.error}`, note: "routine save", evidence: res.ok ? [`id: ${res.routine!.id}`] : [] };
+  },
+
+  async routine_run(step, _ctx) {
+    const name = String(step.params.name ?? step.target ?? "").trim();
+    if (!name) return { success: false, output: "Which routine should I run?", note: "missing name" };
+    const res = await runRoutine(name);
+    return {
+      success: res.ok,
+      output: `${res.summary}\n${res.results.map((r) => `• ${r}`).join("\n")}`.slice(0, 2500),
+      note: res.ok ? "routine verified" : "routine had failures",
+      evidence: [`routine: ${name}`],
+    };
+  },
+
+  async routine_list(_step, _ctx) {
+    const routines = listRoutines();
+    if (routines.length === 0) return { success: false, output: 'No routines saved yet — make one: "save a routine called morning that organizes downloads".', note: "no routines" };
+    return {
+      success: true,
+      output: routines.map((r) => `• ${r.name} — ${r.steps.length} step(s)${r.lastRunOk === true ? " (last run ok)" : r.lastRunOk === false ? " (last run had failures)" : ""}`).join("\n"),
+      note: `routines: ${routines.length}`,
+    };
+  },
 };
 
-// ─── Router ──────────────────────────────────────────────────────────────────
+// ─── Autonomy wave state (MailWing draft + organize plan staging) ────────────
+
+interface StagedDraft {
+  to: string[];
+  cc?: string[];
+  subject: string;
+  body: string;
+  humanized: boolean;
+  accountId?: string;
+  stagedAt: number;
+}
+
+const DRAFT_TTL_MS = 10 * 60 * 1000; // 10 minutes to approve a draft
+let stagedDraft: StagedDraft | null = null;
+let stagedPlan: { plan: OrganizePlan; stagedAt: number } | null = null;
+
+function freshDraft(): StagedDraft | null {
+  if (stagedDraft && Date.now() - stagedDraft.stagedAt <= DRAFT_TTL_MS) return stagedDraft;
+  stagedDraft = null;
+  return null;
+}
+
+function freshPlan(): OrganizePlan | null {
+  if (stagedPlan && Date.now() - stagedPlan.stagedAt <= 10 * 60 * 1000) return stagedPlan.plan;
+  stagedPlan = null;
+  return null;
+}
+
+function firstUrlIn(text: string): string {
+  const m =
+    text.match(/https?:\/\/[^\s"<>]+/i) ??
+    text.match(/\b(?:www\.)[a-z0-9-]+(?:\.[a-z]{2,24})+[^\s"<>]*/i) ??
+    text.match(/\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|org|net|io|in|co|dev|ai|app|me)\b/i);
+  if (!m) return "";
+  let url = m[0].replace(/[.,;]+$/, "");
+  if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+  return url;
+}
+
+// ─── Router ───────────────────────────────────────────────────────────
 
 /** Names of every real executor — used by tests to prove the model-facing
  *  catalog never advertises a capability that doesn't exist. */

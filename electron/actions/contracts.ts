@@ -55,6 +55,10 @@ export function safetyClass(action: string, params: Record<string, string> = {})
     case "bilibili_read":
     case "tweet_read":
     case "youtube_read":
+    case "web_ghost_read":
+    case "web_ghost_extract":
+    case "web_ghost_click":
+    case "web_ghost_fill":
       return "EXTERNAL";
 
     // ── DESTRUCTIVE: deletes / overrides / sends / raw shell ────────────
@@ -62,6 +66,11 @@ export function safetyClass(action: string, params: Record<string, string> = {})
     case "run_command":
     case "compose_message":
     case "compose_email":
+    case "mailwing_send":
+    case "lock_pc":
+    case "install_app":
+    case "quest_run":
+    case "routine_run":
       return "DESTRUCTIVE";
 
     // ── READ: pure observation ──────────────────────────────────────────
@@ -76,6 +85,12 @@ export function safetyClass(action: string, params: Record<string, string> = {})
     case "summarize":
     case "pdf_read":
     case "docx_read":
+    case "mailwing_outbox":
+    case "contacts_search":
+    case "file_storage_report":
+    case "battery":
+    case "clipboard_history":
+    case "routine_list":
       return "READ";
 
     // file_op is compound — the op decides
@@ -91,6 +106,22 @@ export function safetyClass(action: string, params: Record<string, string> = {})
         default:
           return "READ";
       }
+    }
+
+    // file_organize is compound — planning is a dry run, applying moves files.
+    case "file_organize": {
+      return params.op === "apply" || params.op === "undo" ? "DESTRUCTIVE" : "READ";
+    }
+
+    // file_duplicates only destroys when clean=true was requested.
+    case "file_duplicates": {
+      return params.clean === "true" ? "DESTRUCTIVE" : "READ";
+    }
+
+    // mailwing_accounts: the test op opens a real SMTP session (EXTERNAL),
+    // everything else only reads the local vault.
+    case "mailwing_accounts": {
+      return params.op === "test" ? "EXTERNAL" : "READ";
     }
 
     // Everything else changes local state: launching, focusing, typing,
@@ -363,6 +394,120 @@ export const TOOL_CONTRACTS: Record<string, ToolContract> = {
     [["target", false, "recipient"], ["text", true, "email body"]], "DESTRUCTIVE", 15_000,
     "the draft is visible on screen for the user to review and send",
     ["mail-not-found", "draft-refused"], "draft visible on screen"),
+
+  // ── Autonomy wave (roadmap A–F) — every new executor has an honest contract ──
+
+  // Ghost browser: reads/acts on pages Quip itself loaded (EXTERNAL boundary).
+  web_ghost_read: C("web_ghost_read", "Read a JS-rendered page through Quip's offscreen ghost browser",
+    [["url", true, "page URL"]], "EXTERNAL", 25_000,
+    "the page title and visible text were captured",
+    ["unsafe-url", "load-failed", "script-timeout", "nav-budget-spent"], "page title + text length reported"),
+  web_ghost_extract: C("web_ghost_extract", "Extract emails/phones from a website into the Contacts Book",
+    [["url", true, "page URL"]], "EXTERNAL", 45_000,
+    "contacts (or an honest zero) were found and reported",
+    ["unsafe-url", "load-failed", "no-contacts", "script-timeout"], "per-contact list with source page"),
+  web_ghost_click: C("web_ghost_click", "Click an element by visible text inside the ghost browser",
+    [["url", true, "page URL"], ["element", true, "visible text to click"]], "EXTERNAL", 30_000,
+    "the element was found and clicked, or an honest no-match",
+    ["unsafe-url", "no-match", "load-failed"], "clicked label reported"),
+  web_ghost_fill: C("web_ghost_fill", "Fill form fields inside the ghost browser",
+    [["url", true, "page URL"], ["fields", true, "JSON [{hint,value,selector?}]"]], "EXTERNAL", 30_000,
+    "each field is reported filled or not-found",
+    ["unsafe-url", "bad-fields-json", "load-failed"], "per-field fill report"),
+
+  // MailWing: real email. Draft is WRITE (stages, sends nothing); send is
+  // DESTRUCTIVE (always confirmed; verified only by SMTP 250).
+  mailwing_draft: C("mailwing_draft", "Write and humanize an email draft, staged for approval",
+    [["to", true, "recipient email"], ["body", true, "rough content / points"]],
+    "WRITE", 30_000,
+    "a staged draft with To/Subject/Body the user can approve",
+    ["missing-recipient", "missing-body"], "draft preview shown in chat"),
+  mailwing_send: C("mailwing_send", "Send the staged draft via SMTP (or open prefilled Gmail when no account)",
+    [["account", false, "account label/id"]], "DESTRUCTIVE", 45_000,
+    "SMTP 250 for the final message dot, or a prefilled Gmail draft opened",
+    ["no-staged-draft", "smtp-auth", "smtp-5xx", "smtp-timeout", "vault-locked"], "server reply + stage in evidence"),
+  mailwing_accounts: C("mailwing_accounts", "List/add/remove/test MailWing SMTP accounts",
+    [["op", false, "list|add|remove|test"]], "READ", 25_000,
+    "accounts listed without secrets, or the op's honest result",
+    ["missing-fields", "test-failed"], "host:port + TLS + auth capability"),
+  mailwing_outbox: C("mailwing_outbox", "Show the last MailWing sends with status",
+    [], "READ", 5_000, "outbox entries with sent/failed status",
+    ["journal-unreadable"], "persisted journal read"),
+
+  // Contacts Book.
+  contacts_search: C("contacts_search", "Search the local contacts book by name/email/company",
+    [["query", true, "who to find"]], "READ", 5_000, "scored matches with sources",
+    ["no-hit"], "match list with source tracking"),
+  contacts_save: C("contacts_save", "Save/merge a contact (email or phone required)",
+    [["email", false, "email address"], ["phone", false, "phone number"]], "WRITE", 5_000,
+    "the contact exists in the book, merged if it already did",
+    ["invalid-email", "invalid-phone"], "contact id returned"),
+  contacts_export: C("contacts_export", "Export the contacts book to CSV",
+    [["path", false, "target CSV path"]], "WRITE", 10_000, "a CSV file on disk with all contacts",
+    ["empty-book", "write-failed"], "file path + count"),
+
+  // FileButler: plan/apply are separate steps — approval sees the real plan.
+  file_organize: C("file_organize", "Organize a folder by type/date (plan → approve → apply → undo)",
+    [["dir", true, "folder to organize"], ["op", false, "plan|apply|undo"]],
+    "DESTRUCTIVE", 60_000,
+    "a staged plan (dry-run) or the applied move count with a manifest id",
+    ["denied-dir", "no-staged-plan", "move-failed", "no-manifest"], "manifest journal + per-move evidence"),
+  file_duplicates: C("file_duplicates", "Find duplicate files (size → SHA-256), optionally trash extra copies",
+    [["dir", true, "folder to scan"], ["clean", false, "true = trash extra copies"]], "DESTRUCTIVE", 90_000,
+    "duplicate groups reported, extras only trashed when clean=true",
+    ["denied-dir", "scan-failed"], "group count + reclaimed size"),
+  file_storage_report: C("file_storage_report", "Report sizes, counts and biggest files in a folder",
+    [["dir", true, "folder to report"]], "READ", 30_000, "totals by category + top files",
+    ["denied-dir", "scan-failed"], "byte counts per category"),
+  file_watch: C("file_watch", "Watch a folder and auto-organize new files (toasted + journaled)",
+    [["op", false, "start|stop|status"], ["dir", false, "folder to watch"]], "WRITE", 10_000,
+    "watch state reported; every auto-move is toasted and journaled",
+    ["denied-dir", "watch-failed"], "watch status list"),
+
+  // GhostHands: deep system control.
+  screenshot_save: C("screenshot_save", "Capture the screen to a PNG in Pictures and reveal it",
+    [["dir", false, "target folder"]], "WRITE", 15_000, "a real PNG file with its byte size",
+    ["capture-empty", "write-failed"], "file path + byte size"),
+  wallpaper_set: C("wallpaper_set", "Set the desktop wallpaper from a local image or https URL",
+    [["source", true, "image path or URL"]], "WRITE", 25_000, "SystemParametersInfo accepted the image",
+    ["unsafe-url", "download-failed", "file-missing", "unsupported-platform"], "PowerShell SPI result"),
+  brightness: C("brightness", "Get or set laptop screen brightness (WMI)",
+    [["action", false, "get|set"], ["level", false, "1-100"]], "WRITE", 10_000,
+    "WmiSetBrightness accepted, or the current level read",
+    ["invalid-level", "unsupported-platform"], "WMI reply"),
+  notify_me: C("notify_me", "Show a real OS notification",
+    [["body", true, "notification text"]], "WRITE", 5_000, "the toast was shown",
+    ["notify-unsupported", "notify-failed"], "Electron Notification shown"),
+  lock_pc: C("lock_pc", "Lock the workstation (Win+L equivalent) — always confirmed",
+    [], "DESTRUCTIVE", 8_000, "the session locked",
+    ["unsupported-platform", "lock-failed"], "LockWorkStation accepted"),
+  battery: C("battery", "Read battery percentage and charging state",
+    [], "READ", 10_000, "battery % + charging state, or an honest none",
+    ["battery-unsupported", "battery-unknown"], "Win32_Battery values"),
+  clipboard_history: C("clipboard_history", "Show Quip's session clipboard history ring",
+    [], "READ", 3_000, "the ring contents with origins",
+    ["empty-ring"], "entry count + origins"),
+  install_app: C("install_app", "Install an app via winget (proposed command, approval-gated)",
+    [["query", true, "app to install"]], "DESTRUCTIVE", 120_000,
+    "winget ran and reported its real result",
+    ["deny-listed", "command-failed", "timeout"], "winget output in evidence"),
+
+  // Quests & routines.
+  quest_run: C("quest_run", "Run a named multi-step quest (email-from-website, organize-downloads, morning-brief)",
+    [["kind", true, "quest id"], ["url", false, "email-from-website source URL"]], "DESTRUCTIVE", 120_000,
+    "every quest step verified, or the quest stopped honestly at the failing step",
+    ["unknown-quest", "no-contacts", "send-declined", "smtp-failed", "plan-declined"], "per-step notes in output"),
+  routine_save: C("routine_save", "Save a named routine (JSON step chain)",
+    [["name", true, "routine name"], ["steps", true, "JSON steps"]], "WRITE", 5_000,
+    "the routine persisted with its step count",
+    ["missing-name", "bad-steps-json"], "routine id"),
+  routine_run: C("routine_run", "Run a saved routine step-by-step",
+    [["name", true, "routine name"]], "DESTRUCTIVE", 180_000,
+    "every step ran with its result, failures reported honestly",
+    ["unknown-routine", "step-failed"], "per-step result lines"),
+  routine_list: C("routine_list", "List saved routines",
+    [], "READ", 3_000, "routine names with step counts",
+    ["no-routines"], "routine count"),
 };
 
 export function contractFor(action: string): ToolContract | null {

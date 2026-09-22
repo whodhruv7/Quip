@@ -129,8 +129,15 @@ test("open whatsapp is a task targeting the app (fallback handled at execution)"
   assert.equal(r.action, "open");
 });
 
-test("compose email extracts recipient", () => {
+test("send an email routes through MailWing draft → send (autonomy wave upgrade)", () => {
   const r = parseIntentV2("send an email to john about the invoice");
+  assert.equal(r.steps[0].action, "mailwing_draft");
+  assert.match(r.steps[0].params.to, /john/i);
+  assert.equal(r.steps[1].action, "mailwing_send");
+});
+
+test("compose (no send verb) still opens a Gmail draft", () => {
+  const r = parseIntentV2("write an email to john about the invoice");
   assert.equal(r.steps[0].action, "compose_email");
   assert.match(r.steps[0].params.to, /john/i);
 });

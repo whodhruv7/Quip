@@ -101,6 +101,16 @@ const OBSERVING_ACTIONS = new Set([
   "self_check",
   "pdf_read",
   "docx_read",
+  // Autonomy wave readers.
+  "web_ghost_read",
+  "web_ghost_extract",
+  "contacts_search",
+  "mailwing_outbox",
+  "file_storage_report",
+  "file_duplicates",
+  "clipboard_history",
+  "battery",
+  "routine_list",
 ]);
 
 const MAX_ATTEMPTS = 2;

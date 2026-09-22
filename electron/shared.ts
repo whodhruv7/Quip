@@ -132,6 +132,21 @@ export const IPC = {
   GET_PERMISSION_MODE: "quip:get-permission-mode",
   SET_PERMISSION_MODE: "quip:set-permission-mode",
   CYCLE_PERMISSION_MODE: "quip:cycle-permission-mode",
+
+  // ── Autonomy wave (MailWing / Contacts / FileButler / GhostHands) ──
+  MAILWING_ACCOUNTS_LIST: "quip:mailwing-accounts-list",
+  MAILWING_ACCOUNTS_UPSERT: "quip:mailwing-accounts-upsert",
+  MAILWING_ACCOUNTS_REMOVE: "quip:mailwing-accounts-remove",
+  MAILWING_ACCOUNTS_TEST: "quip:mailwing-accounts-test",
+  MAILWING_OUTBOX_GET: "quip:mailwing-outbox-get",
+  CONTACTS_SEARCH: "quip:contacts-search",
+  CONTACTS_LIST: "quip:contacts-list",
+  CONTACTS_EXPORT: "quip:contacts-export",
+  CLIPBOARD_HISTORY_GET: "quip:clipboard-history-get",
+  /** main → renderer: quest step progress (drives the live quest card). */
+  QUEST_EVENT: "quip:quest-event",
+  /** main → renderer: a Downloads-watch auto-move happened (toast). */
+  WATCH_EVENT: "quip:watch-event",
 } as const;
 
 // ─── Window mode ───────────────────────────────────────────────────────────
@@ -277,6 +292,25 @@ export interface SpawnCompanionPayload {
   companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales";
   headless?: boolean;
   autoTask?: string;
+}
+
+// ─── Autonomy wave payloads ────────────────────────────────────────────────
+
+/** Live quest progress — one event per step state change. */
+export interface QuestEventPayload {
+  questId: string;
+  questTitle: string;
+  stepIndex: number;
+  stepTotal: number;
+  stepName: string;
+  status: "running" | "done" | "failed" | "skipped" | "waiting_permission" | "cancelled";
+  detail?: string;
+}
+
+/** A Downloads-watch auto-move — the renderer toasts it. */
+export interface WatchEventPayload {
+  dir: string;
+  moved: { name: string; to: string }[];
 }
 
 export interface SwarmInstance {

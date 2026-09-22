@@ -520,3 +520,67 @@ body {
   transition: color 0.15s ease;
 }
 .quip-tab[data-active="true"] { color: rgb(var(--quip-text)); font-weight: 600; }
+
+/* ═══ Autonomy UX wave (roadmap UX-034..041, UX-044) ════════════════════ */
+
+/* UX-036: focus-visible rings themed per accent — never removed. */
+.quip-focusable:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid rgba(var(--quip-accent), 0.65);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+/* UX-034: prefers-reduced-motion — kill non-essential animation globally. */
+@media (prefers-reduced-motion: reduce) {
+  .quip-quest-pulse,
+  .animate-pulse,
+  .animate-bounce {
+    animation: none !important;
+  }
+  .quip-toast,
+  .quip-toaster .motion-div {
+    transition: none !important;
+  }
+}
+
+/* UX-041: chat stream reads as live-region content for screen readers. */
+.quip-md pre {
+  border-radius: 10px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  background: rgba(var(--quip-line), 0.07);
+  border: 1px solid rgba(var(--quip-line), 0.10);
+}
+
+/* Quest card pulse — the "live" heartbeat (disabled under reduced-motion). */
+.quip-quest-pulse {
+  animation: quipQuestPulse 1.6s ease-in-out infinite;
+}
+@keyframes quipQuestPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.82); }
+}
+
+/* Palette row selected ring (keyboard users see exactly where they are). */
+.quip-palette-row[data-selected="true"] {
+  box-shadow: inset 0 0 0 1px rgba(var(--quip-accent), 0.35);
+}
+
+/* Code block copy button shows on row hover, keyboard-focusable always. */
+.quip-codeblock:hover .quip-copy-btn,
+.quip-copy-btn:focus-visible {
+  opacity: 1 !important;
+}
+
+/* UX-039/040: contrast support — raise borders when the OS asks. */
+@media (prefers-contrast: more) {
+  .quip-toast,
+  .quip-codeblock,
+  .quip-palette-row[data-selected="true"] {
+    border-color: rgba(var(--quip-text), 0.45) !important;
+  }
+}

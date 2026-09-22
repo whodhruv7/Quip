@@ -23,6 +23,11 @@ import { SettingsPanel } from "@/components/SettingsPanel";
 import { WeeklyReflection } from "@/components/WeeklyReflection";
 import { ActionApprovalPanel } from "@/components/ActionApprovalPanel";
 import { QuipSay } from "@/components/QuipSay";
+import { Toaster, pushToast } from "@/components/Toaster";
+import { QuestCard } from "@/components/QuestCard";
+import { CommandPalette, ShortcutsOverlay, buildPaletteActions } from "@/components/CommandPalette";
+import { playSound, setSoundsMuted } from "@/lib/sounds";
+import { applyTheme } from "@/lib/theme";
 import { useChat } from "@/hooks/useChat";
 import { useWindowDrag } from "@/hooks/useWindowDrag";
 import {
@@ -70,6 +75,76 @@ export default function App() {
     setSettingsTab(tab);
     setSettingsOpen(true);
   }, []);
+
+  // ─── Autonomy UX: palette, shortcuts, sounds, watch toasts ─────────
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  useEffect(() => {
+    try {
+      setSoundsMuted(loadPrefs().soundsMuted ?? false);
+    } catch {
+      /* default unmuted */
+    }
+  }, []);
+  // Downloads-watch auto-moves → honest toast for every auto-move (UX-030).
+  useEffect(() => {
+    const off = (window as any).quip?.onWatchEvent?.((e: { dir: string; moved: { name: string; to: string }[] }) => {
+      if (!e?.moved?.length) return;
+      pushToast({
+        title: `Auto-organized ${e.moved.length} new file(s)`,
+        body: e.moved.slice(0, 3).map((m) => `${m.name} → ${m.to.split(/[\\/]/).slice(-2).join("/")}`).join("\n"),
+        kind: "success",
+      });
+      playSound("notify", companionId);
+    });
+    return () => off?.();
+  }, [companionId]);
+  // Palette quick-task → the SAME pipeline as typing (send through useChat).
+  useEffect(() => {
+    const onQuickTask = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail;
+      if (typeof detail === "string" && detail.trim()) send(detail.trim());
+    };
+    window.addEventListener("quip:quick-task", onQuickTask);
+    return () => window.removeEventListener("quip:quick-task", onQuickTask);
+  }, [send]);
+  // Global keys: Ctrl+K palette, "?" shortcuts (never while typing).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      const typing = tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement | null)?.isContentEditable;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      } else if (e.key === "?" && !typing) {
+        e.preventDefault();
+        setShortcutsOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  const paletteActions = useMemo(
+    () =>
+      buildPaletteActions({
+        setTheme: (t) => {
+          applyTheme(t as any);
+          savePrefs({ theme: t as any });
+        },
+        cyclePermissionMode: () => {
+          try {
+            window.quip.cyclePermissionMode().then((res: { mode: string; label: string }) => {
+              pushToast({ title: "Permission mode", body: res.label || String(res.mode).replace(/_/g, " "), kind: "info" });
+            });
+          } catch {
+            /* non-fatal */
+          }
+        },
+        openSettings: () => openSettings("general"),
+        clearChat: () => newChat(),
+      }),
+    [openSettings, newChat]
+  );
 
   // ─── Window mode sync (renderer state ↔ Electron window) ────────────────
   useEffect(() => {
@@ -238,6 +313,15 @@ export default function App() {
   const isResponding =
     chatBusy &&
     messages.some((m) => m.role === "assistant" && m.streaming && m.content.length > 0);
+  // Sound feedback: respond-end → success/error blip (companion-pitched).
+  const wasResponding = useRef(false);
+  useEffect(() => {
+    if (wasResponding.current && !isResponding) {
+      const last = messages[messages.length - 1];
+      playSound(last?.error ? "error" : "success", companionId);
+    }
+    wasResponding.current = isResponding;
+  }, [isResponding, messages, companionId]);
   // Fresh task outcome (≤2s old) wins: success jump, concerned shake, or a
   // gentle cancelled droop. A re-render timer clears the pose at exactly 2s
   // so the sprite never sticks in a celebratory/guilty expression until some
@@ -951,6 +1035,18 @@ export default function App() {
       )}
 
       {/* Cosmetic unlock toast */}
+      <Toaster />
+      <QuestCard />
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        actions={paletteActions}
+        onTask={(msg) => {
+          send(msg);
+          if (viewMode === "companion") enterMode("panel");
+        }}
+      />
+      <ShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <AnimatePresence>
         {unlockToast && (
           <motion.div
