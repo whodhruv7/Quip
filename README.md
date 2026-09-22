@@ -2,7 +2,7 @@
 
 > *"Quip is not a chatbot. Quip is not an assistant. Quip is a Context Engine wrapped inside a companion."*
 
-**Made with love by [Dhruv Sharma](https://heydhruv.vercel.app) & Carren Mathew**
+**Made with love by [Dhruv Sharma](https://heydhruv.vercel.app) **
 
 Quip is a Windows desktop AI companion that **lives on your screen**. It understands what you say, remembers who you are, speaks its replies out loud, sees your screen, opens your apps and websites, and executes real tasks on your laptop — with a permission system and honest failure reporting. Nothing is faked: if Quip can't do something, it tells you exactly why.
 
@@ -388,7 +388,7 @@ Personal project by **Dhruv Sharma**, but feedback and issues are welcome: https
 
 ## 👨‍💻 Author
 
-**Made with love by Dhruv Sharma & Carren Mathew**
+**Made with love by Dhruv Sharma**
 
 - 🌐 Website: [heydhruv.vercel.app](https://heydhruv.vercel.app)
 - 📸 Instagram: [@who_dhruv7](https://instagram.com/who_dhruv7)
