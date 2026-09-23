@@ -413,6 +413,34 @@ const api = {
     ipcRenderer.invoke(IPC.QUEST_BUDGET_GET) as Promise<{ budget: number }>,
   setQuestBudget: (budget: number) =>
     ipcRenderer.invoke(IPC.QUEST_BUDGET_SET, budget) as Promise<{ ok: boolean; budget: number; message: string }>,
+
+  // ─── Ghost Cursor — keep the magical hand in the current theme ─────────
+  setGhostCursorStyle: (style: import("./shared").GhostCursorStyle) =>
+    ipcRenderer.send(IPC.GHOST_CURSOR_STYLE, style),
+
+  // ─── Care routines (hydrate / eyes / posture / screen time) ────────────
+  getCareEnabled: () =>
+    ipcRenderer.invoke(IPC.CARE_GET) as Promise<{ enabled: boolean }>,
+  setCareEnabled: (enabled: boolean) =>
+    ipcRenderer.invoke(IPC.CARE_SET, enabled) as Promise<{ ok: boolean; enabled: boolean }>,
+  onCareEvent: (cb: (event: import("./shared").CareEventPayload) => void) => {
+    const handler = (_e: unknown, data: any) => cb(data);
+    ipcRenderer.on(IPC.CARE_EVENT, handler as any);
+    return () => ipcRenderer.removeListener(IPC.CARE_EVENT, handler as any);
+  },
+
+  // ─── App watcher — "need any help?" when a new app comes to front ──────
+  getAppNoticeEnabled: () =>
+    ipcRenderer.invoke(IPC.APP_NOTICE_GET) as Promise<{ enabled: boolean }>,
+  setAppNoticeEnabled: (enabled: boolean) =>
+    ipcRenderer.invoke(IPC.APP_NOTICE_SET, enabled) as Promise<{ ok: boolean; enabled: boolean }>,
+  focusApp: (target: string) =>
+    ipcRenderer.invoke(IPC.FOCUS_APP, target) as Promise<{ ok: boolean; message: string }>,
+  onAppNotice: (cb: (notice: import("./shared").AppNoticePayload) => void) => {
+    const handler = (_e: unknown, data: any) => cb(data);
+    ipcRenderer.on(IPC.APP_NOTICE_EVENT, handler as any);
+    return () => ipcRenderer.removeListener(IPC.APP_NOTICE_EVENT, handler as any);
+  },
 };
 
 

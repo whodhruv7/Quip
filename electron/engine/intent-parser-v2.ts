@@ -403,6 +403,27 @@ function routeOpenClause(clause: string): TaskStep | null {
     };
   }
 
+  // Bare domain / URL token ("open github.com", "open openai.com/pricing") —
+  // a domain-shaped token is a WEBSITE, never a folder named "github.com".
+  // (F-29: this used to fall into the folder branch and open an Explorer
+  // error instead of the site.) Runs after the site-hint table so known
+  // sites keep their rich labels, and never when a folder was meant.
+  if (!mentionsFolder) {
+    const DOMAIN_RE = /^(?:https?:\/\/|www\.)\S+|(?:[a-z0-9-]+\.)+(?:com|net|org|io|in|co|dev|ai|app|gg|me|tv|xyz|info|edu|gov|uk|us)(?:\/\S*)?$/i;
+    const domainToken = rest.split(/\s+/).find((w) => DOMAIN_RE.test(w));
+    if (domainToken) {
+      const url = /^https?:\/\//i.test(domainToken)
+        ? domainToken
+        : `https://${domainToken.replace(/^www\./i, "")}`;
+      return {
+        action: "open_url",
+        target: url,
+        params: { url, label: domainToken },
+        description: `Go to ${domainToken}`,
+      };
+    }
+  }
+
   // Project / folder / file by name ("open my quip project", "open resume.docx")
   const projectMatch = rest.match(/(.+?)\s+(?:project|folder|file|document|doc|pdf)$/);
   const targetName = (projectMatch ? projectMatch[1] : rest).replace(/\b(project|folder|file)\b/g, "").trim();

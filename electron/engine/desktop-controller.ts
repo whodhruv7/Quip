@@ -24,6 +24,16 @@ import {
   type ActionVerification,
 } from "./action-verifier";
 import { pushClipboard } from "./ghost-hands";
+import {
+  captionFor,
+  ghostGlide,
+  ghostPress,
+  ghostReleaseBurst,
+  ghostType,
+  ghostScroll,
+  ghostHideSoon,
+  type CursorActionLabel,
+} from "./ghost-cursor";
 
 export type DesktopAction =
   | { type: "focus"; target: string }
@@ -355,6 +365,30 @@ async function windowsList(): Promise<ActionVerification> {
   );
 }
 
+// ─── Ghost Cursor choreography (visual rides the real action — F-CURSOR) ────
+
+/**
+ * Perform the visual glide for a click-family action, resolving right before
+ * the real input fires so cause and effect land together on screen.
+ */
+async function cursorForClick(labelAction: CursorActionLabel, x: number, y: number): Promise<void> {
+  try {
+    await ghostGlide(x, y, { label: captionFor(labelAction) });
+    ghostPress();
+  } catch {
+    /* decoration only */
+  }
+}
+
+function cursorBurst(): void {
+  try {
+    ghostReleaseBurst();
+    ghostHideSoon(2000);
+  } catch {
+    /* decoration only */
+  }
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export async function executeDesktopAction(action: DesktopAction): Promise<ActionVerification> {
@@ -367,12 +401,18 @@ export async function executeDesktopAction(action: DesktopAction): Promise<Actio
 
     case "type": {
       if (!action.text) return fail("Nothing to type.", [], "empty-text");
+      try {
+        ghostType(captionFor({ kind: "type", text: action.text }));
+      } catch {
+        /* decoration only */
+      }
       const seq = escapeSendKeys(action.text);
       const res = await runCapture(
         `powershell -NoProfile -Command "$ws = New-Object -ComObject WScript.Shell; $ws.SendKeys(${psQuote(seq)}); 'typed'"`,
         10000
       );
       if (res && res.stdout.includes("typed")) {
+        ghostHideSoon(1500);
         return ok("Typed the text into the focused window.", ["SendKeys executed"]);
       }
       return fail("I couldn't type — make sure the target window is focused.", ["SendKeys failed"], "type-failed");
@@ -398,7 +438,10 @@ export async function executeDesktopAction(action: DesktopAction): Promise<Actio
       if (!point) {
         return fail("I couldn't get the current cursor position for the click.", ["cursor probe failed"], "cursor-failed");
       }
-      return mouseClick(Math.round(point.x), Math.round(point.y));
+      await cursorForClick({ kind: "click", x: point.x, y: point.y }, Math.round(point.x), Math.round(point.y));
+      const verdict = await mouseClick(Math.round(point.x), Math.round(point.y));
+      cursorBurst();
+      return verdict;
     }
 
     case "click.variant": {
@@ -406,17 +449,54 @@ export async function executeDesktopAction(action: DesktopAction): Promise<Actio
       if (!vPoint) {
         return fail("I couldn't get the current cursor position for the click.", ["cursor probe failed"], "cursor-failed");
       }
-      return mouseClickVariant(action.variant, Math.round(vPoint.x), Math.round(vPoint.y));
+      await cursorForClick(
+        { kind: action.variant, x: vPoint.x, y: vPoint.y },
+        Math.round(vPoint.x),
+        Math.round(vPoint.y)
+      );
+      const vVerdict = await mouseClickVariant(action.variant, Math.round(vPoint.x), Math.round(vPoint.y));
+      cursorBurst();
+      return vVerdict;
     }
 
-    case "mouse.move":
+    case "mouse.move": {
+      try {
+        await ghostGlide(Math.round(action.x), Math.round(action.y), { label: captionFor({ kind: "move", x: action.x, y: action.y }) });
+        ghostHideSoon(1800);
+      } catch {
+        /* decoration only */
+      }
       return mouseMove(Math.round(action.x), Math.round(action.y));
+    }
 
-    case "scroll":
-      return mouseScroll(action.deltaY);
+    case "scroll": {
+      try {
+        ghostScroll(captionFor({ kind: "scroll" }));
+      } catch {
+        /* decoration only */
+      }
+      const verdict = await mouseScroll(action.deltaY);
+      ghostHideSoon(1600);
+      return verdict;
+    }
 
-    case "drag":
-      return mouseDrag(action.from, action.to);
+    case "drag": {
+      try {
+        await ghostGlide(action.from.x, action.from.y, { label: captionFor({ kind: "drag" }), mode: "grab" });
+        ghostPress();
+      } catch {
+        /* decoration only */
+      }
+      const verdict = await mouseDrag(action.from, action.to);
+      try {
+        await ghostGlide(action.to.x, action.to.y, { mode: "grab" });
+        ghostReleaseBurst();
+        ghostHideSoon(2000);
+      } catch {
+        /* decoration only */
+      }
+      return verdict;
+    }
 
     case "window.control":
       return windowControl(action.op, action.target);

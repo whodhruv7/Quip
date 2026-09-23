@@ -25,6 +25,8 @@ import { ActionApprovalPanel } from "@/components/ActionApprovalPanel";
 import { QuipSay } from "@/components/QuipSay";
 import { Toaster, pushToast } from "@/components/Toaster";
 import { QuestCard } from "@/components/QuestCard";
+import { ErrorBar } from "@/components/ErrorBar";
+import { HistoryDrawer } from "@/components/HistoryDrawer";
 import { CommandPalette, ShortcutsOverlay, buildPaletteActions } from "@/components/CommandPalette";
 import { FirstRunTour } from "@/components/FirstRunTour";
 import { playSound, setSoundsMuted } from "@/lib/sounds";
@@ -107,8 +109,11 @@ export default function App() {
   );
   const [quipSay, setQuipSay] = useState<string | null>(null);
 
-  const { messages, busy: chatBusy, error, errorKind, taskOutcome, send, newChat, clearError, approvalRequest, resolveApproval, taskProgress, cancelTask, streamingProvider, retryLast } =
+  const { messages, busy: chatBusy, error, errorKind, taskOutcome, send, newChat, clearError, approvalRequest, resolveApproval, taskProgress, cancelTask, streamingProvider, retryLast, sessions, openSession } =
     useChat(companionId, restoredMessages);
+
+  // ── History drawer (archived chats) ──
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   // Settings can open straight to a tab (e.g. "ai" from the no-key banner).
   const [settingsTab, setSettingsTab] = useState<"ai" | "general" | "problems" | "appearance">("general");
@@ -116,6 +121,53 @@ export default function App() {
     setSettingsTab(tab);
     setSettingsOpen(true);
   }, []);
+
+  // ── Care routines: themed reminders, each with its own signature sound ──
+  useEffect(() => {
+    const off = window.quip.onCareEvent((ev) => {
+      playSound(ev.sound, companionId);
+      pushToast({ title: ev.title, body: ev.body, kind: "info", ttl: 9000 });
+    });
+    return off;
+  }, [companionId]);
+
+  // ── App watcher: the user opened a new app → Quip offers help ──
+  useEffect(() => {
+    const off = window.quip.onAppNotice((n) => {
+      playSound("askhelp", companionId);
+      setQuipSay(`${n.appName}? Need any help?`);
+      pushToast({
+        title: `${n.appName} opened`,
+        body: "Need any help with this one?",
+        kind: "quest",
+        ttl: 10000,
+        actions: [
+          { label: "Open it", onClick: () => { void window.quip.focusApp(n.appName); } },
+          { label: "I'm good", onClick: () => {} },
+        ],
+      });
+    });
+    return off;
+  }, [companionId]);
+
+  // ── Ghost Cursor theme sync — the magical hand wears the active theme ──
+  useEffect(() => {
+    const push = () => {
+      try {
+        const cs = getComputedStyle(document.documentElement);
+        const accent = cs.getPropertyValue("--quip-accent").trim();
+        const accent2 = cs.getPropertyValue("--quip-accent-2").trim();
+        if (accent && accent2) {
+          window.quip.setGhostCursorStyle({ accent, accent2, companion: companionId });
+        }
+      } catch {
+        /* cosmetic only */
+      }
+    };
+    push();
+    window.addEventListener("quip:theme-changed", push);
+    return () => window.removeEventListener("quip:theme-changed", push);
+  }, [companionId]);
 
   // ─── Autonomy UX: palette, shortcuts, sounds, watch toasts ─────────
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -874,11 +926,20 @@ export default function App() {
       onToggleFullscreen={() => enterMode(viewMode === "fullscreen" ? "full" : "fullscreen")}
       onBrainClick={() => openSettings("ai")}
       onExport={messages.length > 0 ? handleExportChat : undefined}
+      onHistory={() => setHistoryOpen(true)}
     />
   );
 
   const overlays = (
     <>
+      <HistoryDrawer
+        open={historyOpen}
+        sessions={sessions}
+        companionId={companionId}
+        onClose={() => setHistoryOpen(false)}
+        onOpenSession={openSession}
+        onNewChat={handleNewChat}
+      />
       <SettingsPanel
         open={settingsOpen}
         companionId={companionId}
@@ -1313,6 +1374,7 @@ export default function App() {
       )}
 
       {/* Cosmetic unlock toast */}
+      <ErrorBar mode={viewMode} onOpenProblems={() => openSettings("problems")} />
       <Toaster />
       <QuestCard />
       <CommandPalette

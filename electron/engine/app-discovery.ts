@@ -39,7 +39,11 @@ export function normalizeAppName(name: string): string {
     .replace(/\.lnk$/i, "")
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ")
-    .trim();
+    .trim()
+    // Trailing/leading punctuation noise ("Chrome!", "(edge)") must not
+    // break the match — but keep + and # ("notepad++", "c#").
+    .replace(/^[^a-z0-9]+/, "")
+    .replace(/[^a-z0-9+#]+$/, "");
 }
 
 function procNameFromExe(exePath: string): string {

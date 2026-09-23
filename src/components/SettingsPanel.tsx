@@ -190,6 +190,9 @@ export function SettingsPanel({
   // Desktop tab state
   const [companionVisible, setCompanionVisible] = useState(true);
   const [checkInsEnabled, setCheckInsEnabled] = useState(true);
+  // Interaction wave: care reminders + app-watcher asks (each persisted in main).
+  const [careOn, setCareOn] = useState(true);
+  const [appNoticeOn, setAppNoticeOn] = useState(true);
   // Permission mode — full backend (engine + IPC) existed with zero UI until
   // this card landed; now the user can actually govern what auto-runs.
   const [permMode, setPermMode] = useState<{ mode: string; label: string } | null>(null);
@@ -280,6 +283,14 @@ export function SettingsPanel({
     window.quip
       .getCheckInsEnabled()
       .then(setCheckInsEnabled)
+      .catch(() => {});
+    window.quip
+      .getCareEnabled()
+      .then((r) => setCareOn(r.enabled))
+      .catch(() => {});
+    window.quip
+      .getAppNoticeEnabled()
+      .then((r) => setAppNoticeOn(r.enabled))
       .catch(() => {});
     window.quip
       .getPermissionMode()
@@ -2288,6 +2299,104 @@ export function SettingsPanel({
             <div style={{ fontSize: 10.5, color: "rgba(var(--quip-text-soft), 0.85)" }}>
               The cross button (X) only clears the app screen — your companion stays on the desktop.
               Quip leaves the screen only when you quit it right here.
+            </div>
+
+            {/* Care routines — hydration / eye rest / posture, each with its own sound */}
+            <div
+              className="flex items-center justify-between gap-3 rounded-xl px-3 py-3"
+              style={{ border: "1px solid rgba(var(--quip-line), 0.08)", background: "rgba(var(--quip-line), 0.02)" }}
+            >
+              <div className="flex flex-col" style={{ minWidth: 0 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "rgb(var(--quip-text))" }}>
+                  Care reminders 💧👀🧘
+                </span>
+                <span style={{ fontSize: 10.5, color: "rgba(var(--quip-text-soft), 0.95)", marginTop: 2 }}>
+                  Water, eye rest and stretch nudges with their own little sounds. Never at night, one at a time.
+                </span>
+              </div>
+              <button
+                role="switch"
+                aria-checked={careOn}
+                aria-label="Care reminders"
+                onClick={async () => {
+                  try {
+                    const r = await window.quip.setCareEnabled(!careOn);
+                    setCareOn(r.enabled);
+                  } catch {
+                    /* non-fatal */
+                  }
+                }}
+                className="relative shrink-0 rounded-full transition-colors"
+                style={{
+                  width: 44,
+                  height: 25,
+                  background: careOn ? "linear-gradient(135deg, rgb(var(--quip-accent)), rgb(var(--quip-accent-3)))" : "rgba(var(--quip-line), 0.18)",
+                }}
+              >
+                <motion.span
+                  layout
+                  transition={{ type: "spring", stiffness: 500, damping: 32 }}
+                  style={{
+                    position: "absolute",
+                    top: 3,
+                    left: careOn ? 22 : 3,
+                    width: 19,
+                    height: 19,
+                    borderRadius: "50%",
+                    background: "#fff",
+                    boxShadow: "0 1px 4px rgba(0,0,0,0.2)",
+                  }}
+                />
+              </button>
+            </div>
+
+            {/* App watcher — "need any help?" when a new app opens */}
+            <div
+              className="flex items-center justify-between gap-3 rounded-xl px-3 py-3"
+              style={{ border: "1px solid rgba(var(--quip-line), 0.08)", background: "rgba(var(--quip-line), 0.02)" }}
+            >
+              <div className="flex flex-col" style={{ minWidth: 0 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "rgb(var(--quip-text))" }}>
+                  Ask when I open an app
+                </span>
+                <span style={{ fontSize: 10.5, color: "rgba(var(--quip-text-soft), 0.95)", marginTop: 2 }}>
+                  When you open something new, Quip offers help — tap the notice to jump straight back into that app.
+                </span>
+              </div>
+              <button
+                role="switch"
+                aria-checked={appNoticeOn}
+                aria-label="Ask when I open an app"
+                onClick={async () => {
+                  try {
+                    const r = await window.quip.setAppNoticeEnabled(!appNoticeOn);
+                    setAppNoticeOn(r.enabled);
+                  } catch {
+                    /* non-fatal */
+                  }
+                }}
+                className="relative shrink-0 rounded-full transition-colors"
+                style={{
+                  width: 44,
+                  height: 25,
+                  background: appNoticeOn ? "linear-gradient(135deg, rgb(var(--quip-accent)), rgb(var(--quip-accent-3)))" : "rgba(var(--quip-line), 0.18)",
+                }}
+              >
+                <motion.span
+                  layout
+                  transition={{ type: "spring", stiffness: 500, damping: 32 }}
+                  style={{
+                    position: "absolute",
+                    top: 3,
+                    left: appNoticeOn ? 22 : 3,
+                    width: 19,
+                    height: 19,
+                    borderRadius: "50%",
+                    background: "#fff",
+                    boxShadow: "0 1px 4px rgba(0,0,0,0.2)",
+                  }}
+                />
+              </button>
             </div>
 
             {/* Proactive check-ins — main-process reminder engine, user-controlled */}

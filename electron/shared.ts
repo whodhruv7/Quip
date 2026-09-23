@@ -160,6 +160,22 @@ export const IPC = {
   // ── CAP-060 autonomy budget (Settings → Desktop) ──
   QUEST_BUDGET_GET: "quip:quest-budget-get",
   QUEST_BUDGET_SET: "quip:quest-budget-set",
+
+  // ── Ghost Cursor — Quip's visible magical hand (rides real input events) ──
+  /** renderer → main: resolved accent colors so the cursor matches the theme. */
+  GHOST_CURSOR_STYLE: "quip:ghost-cursor-style",
+
+  // ── Care routines (hydrate / eye rest / posture / screen time) ──
+  CARE_EVENT: "quip:care-event",
+  CARE_GET: "quip:care-get",
+  CARE_SET: "quip:care-set",
+
+  // ── App watcher — user opened a new app → "Need any help?" ──
+  APP_NOTICE_EVENT: "quip:app-notice-event",
+  APP_NOTICE_GET: "quip:app-notice-get",
+  APP_NOTICE_SET: "quip:app-notice-set",
+  /** Direct focus for the notice button — never routes through chat parsing. */
+  FOCUS_APP: "quip:focus-app",
 } as const;
 
 // ─── Window mode ───────────────────────────────────────────────────────────
@@ -370,5 +386,30 @@ export interface InterCompanionMsgPayload {
   from: "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales";
   to: "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales";
   message: string;
+}
+
+// ─── Ghost Cursor / Care / App-watcher payloads ────────────────────────────
+
+/** Renderer → main: resolved theme accent (rgb triplets) for the cursor. */
+export interface GhostCursorStyle {
+  accent: string;      // "r, g, b" triplet
+  accent2: string;     // "r, g, b" triplet
+  companion?: "pix" | "kai" | "ren" | "bubbles" | "capy" | "skales";
+}
+
+/** main → renderer: a care reminder fired (hydration / eyes / posture). */
+export interface CareEventPayload {
+  kind: "hydrate" | "eye_rest" | "posture" | "screen_time";
+  title: string;
+  body: string;
+  /** Which sound to play (renderer sound-design names). */
+  sound: "hydrate" | "eye" | "posture" | "screen";
+}
+
+/** main → renderer: the user opened a new app — Quip offers help. */
+export interface AppNoticePayload {
+  appName: string;
+  title: string;
+  timestamp: number;
 }
 

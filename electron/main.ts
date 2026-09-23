@@ -141,6 +141,11 @@ import { configureFileButler, stopAllWatches, type WatchEvent } from "./engine/f
 import { configureRoutines, configureQuestRuntime, setQuestEventSink } from "./engine/quest-engine";
 import { setWatchEventSink, executeTool } from "./engine/tool-registry";
 import { destroyGhostSession } from "./engine/web-ghost";
+import { executeDesktopAction } from "./engine/desktop-controller";
+// Interaction wave — the visible magical hand + gentle care + app watcher.
+import { ghostSetStyle, destroyGhostCursor } from "./engine/ghost-cursor";
+import { configureCareRoutines, startCareRoutines, stopCareRoutines } from "./engine/care-routines";
+import { configureAppWatcher, startAppWatcher, stopAppWatcher, setAppNoticeEnabled } from "./engine/app-watcher";
 import {
   listAccounts as mailwingList,
   upsertAccount as mailwingUpsert,
@@ -220,6 +225,10 @@ let tray: Tray | null = null;
 // True only while app.quit() is running — window close events are intercepted
 // until then so Alt+F4 hides the companion instead of killing Quip.
 let isQuitting = false;
+
+/** True while a task executes — the app-watcher stays silent so Quip never
+ *  interrupts its own work. */
+let taskBusy = false;
 
 // The desktop companion stays on screen until the user turns it off in
 // Settings. Persisted so restarts honor the choice (spec: the setting must
@@ -1265,6 +1274,7 @@ ipcMain.handle(
   IPC.TASK_EXECUTE,
   async (_e, payload: TaskExecutePayload): Promise<TaskResultPayload> => {
     const win = BrowserWindow.fromWebContents(_e.sender);
+    taskBusy = true;
     try {
       return await runTaskExecute(_e, payload, win);
     } catch (err: any) {
@@ -1291,6 +1301,8 @@ ipcMain.handle(
           createdAt: Date.now(),
         } as any,
       };
+    } finally {
+      taskBusy = false;
     }
   }
 );
@@ -2113,6 +2125,72 @@ ipcMain.handle(IPC.PROBLEM_DIARY_CLEAR, (_e, scope?: "resolved" | "all") => {
   return res;
 });
 
+// ── Care routines + App watcher toggles (persisted small JSON files) ────────
+
+function readToggle(file: string, fallback: boolean): boolean {
+  try {
+    const p = path.join(app.getPath("userData"), file);
+    const raw = JSON.parse(fs.readFileSync(p, "utf8"));
+    return typeof raw?.enabled === "boolean" ? raw.enabled : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeToggle(file: string, enabled: boolean): void {
+  try {
+    const p = path.join(app.getPath("userData"), file);
+    fs.writeFileSync(p, JSON.stringify({ enabled }, null, 2), "utf8");
+  } catch {
+    /* best effort */
+  }
+}
+
+let careEnabled = true;
+let appNoticeEnabled = true;
+
+ipcMain.handle(IPC.CARE_GET, () => ({ enabled: careEnabled }));
+ipcMain.handle(IPC.CARE_SET, (_e, v: boolean) => {
+  careEnabled = v === true;
+  writeToggle("quip-care.json", careEnabled);
+  if (careEnabled) startCareRoutines();
+  else stopCareRoutines();
+  return { ok: true, enabled: careEnabled };
+});
+ipcMain.handle(IPC.APP_NOTICE_GET, () => ({ enabled: appNoticeEnabled }));
+ipcMain.handle(IPC.APP_NOTICE_SET, (_e, v: boolean) => {
+  appNoticeEnabled = v === true;
+  writeToggle("quip-app-notice.json", appNoticeEnabled);
+  setAppNoticeEnabled(appNoticeEnabled);
+  return { ok: true, enabled: appNoticeEnabled };
+});
+
+// The "Open it" button on an app notice — direct, never through chat parsing.
+ipcMain.handle(IPC.FOCUS_APP, async (_e, target: string) => {
+  const t = String(target ?? "").trim().slice(0, 80);
+  if (!t) return { ok: false, message: "no app named" };
+  const verdict = await executeDesktopAction({ type: "focus", target: t });
+  if (!verdict.ok) {
+    noteProblem({
+      source: "tool",
+      kind: "focus-failed",
+      title: `couldn't focus "${t}" from the app notice`,
+      detail: verdict.summary.slice(0, 300),
+    });
+  }
+  return { ok: verdict.ok, message: verdict.summary };
+});
+
+// Renderer keeps the Ghost Cursor in the active theme.
+ipcMain.on(IPC.GHOST_CURSOR_STYLE, (_e, style: { accent?: string; accent2?: string; companion?: string }) => {
+  const safe = (v: unknown): string | undefined =>
+    typeof v === "string" && /^\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}$/.test(v.trim()) ? v.trim() : undefined;
+  const accent = safe(style?.accent);
+  const accent2 = safe(style?.accent2);
+  if (!accent && !accent2) return;
+  ghostSetStyle({ ...(accent ? { accent } : {}), ...(accent2 ? { accent2 } : {}) });
+});
+
 // ── CAP-060 autonomy budget (persisted in the userData .env) ───────────────
 ipcMain.handle(IPC.QUEST_BUDGET_GET, () => {
   const n = parseInt(process.env.QUIP_QUEST_BUDGET ?? "0", 10);
@@ -2325,6 +2403,15 @@ if (!app.requestSingleInstanceLock()) {
     // Downloads-watch auto-moves → renderer toasts.
     setWatchEventSink((e: WatchEvent) => broadcastToRenderers(IPC.WATCH_EVENT, e));
 
+    // ── Interaction wave: care routines + app watcher + cursor style ─────
+    careEnabled = readToggle("quip-care.json", true);
+    configureCareRoutines((ev) => broadcastToRenderers(IPC.CARE_EVENT, ev));
+    if (careEnabled) startCareRoutines(60_000);
+    appNoticeEnabled = readToggle("quip-app-notice.json", true);
+    setAppNoticeEnabled(appNoticeEnabled);
+    configureAppWatcher((n) => broadcastToRenderers(IPC.APP_NOTICE_EVENT, n));
+    startAppWatcher(6000, () => taskBusy);
+
     // ── WINDOW FIRST, bootstrap second ───────────────────────────────────
     // The single worst startup bug: the window used to be created only AFTER
     // `await bootstrap(...)`, so a first-run device scan meant tens of seconds
@@ -2522,6 +2609,9 @@ if (!app.requestSingleInstanceLock()) {
       destroyGhostSession("app quitting");
       stopAllWatches();
       unregisterGlobalHotkey();
+      stopCareRoutines();
+      stopAppWatcher();
+      destroyGhostCursor();
     } catch {
       /* non-fatal */
     }

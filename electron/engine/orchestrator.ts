@@ -22,6 +22,7 @@ import { permissionSystem, riskForStep, type ApprovalRequest, type RiskLevel } f
 import { executeTool, type ToolResult, type ToolContext } from "./tool-registry";
 import { contextStore } from "./context-store";
 import { runAgentLoop, agentBrain } from "./agent-loop";
+import { noteProblem } from "./problem-diary";
 import type { ModelRouter } from "../system/model-router";
 
 /** Reject with an honest timeout result if the promise outlives the deadline. */
@@ -220,6 +221,16 @@ class Orchestrator {
           }
           return agentResult;
         }
+        // Looked like a task but NOTHING could act on it — remember it in the
+        // Problem Diary so the user can report exactly what failed. Plain
+        // conversation never reaches this branch (no task shape, no assist).
+        noteProblem({
+          source: "chat",
+          kind: "not-understood",
+          title: `couldn't turn the request into an action: "${command.trim().slice(0, 80)}"`,
+          detail: "The deterministic parser, the model assist and the agent loop all passed on this one — it may be phrased unusually, or the capability is missing. The request fell back to plain chat.",
+          evidence: [`intent.isTask=${intent.isTask} confidence=${intent.confidence.toFixed(2)} steps=${intent.steps.length}`],
+        });
       }
       return {
         success: true,

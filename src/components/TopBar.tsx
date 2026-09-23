@@ -32,9 +32,11 @@ interface TopBarProps {
   /** UX-011: export the conversation as Markdown. Provided only while
    *  messages exist, so the button simply hides on an empty chat. */
   onExport?: () => void;
+  /** Opens the chat-history drawer (archived conversations). */
+  onHistory?: () => void;
 }
 
-export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onReflectionToggle, onNewChat, onClose, onHideChat, mode = "panel", onToggleExpand, onToggleFullscreen, onBrainClick, onExport }: TopBarProps) {
+export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onReflectionToggle, onNewChat, onClose, onHideChat, mode = "panel", onToggleExpand, onToggleFullscreen, onBrainClick, onExport, onHistory }: TopBarProps) {
   const handleClose = onClose ?? onHideChat;
   const accent = getCompanion(companionId);
 
@@ -243,6 +245,17 @@ export function TopBar({ companionId, onCompanionChange, onSettingsToggle, onRef
         onNewChat,
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
           <path d="M12 5v14M5 12h14" />
+        </svg>
+      )}
+
+      {/* History — archived chats, one tap away */}
+      {onHistory && iconBtn(
+        "Chat history",
+        "Chat history",
+        onHistory,
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7v5l3.5 2" />
         </svg>
       )}
 

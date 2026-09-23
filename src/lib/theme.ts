@@ -72,6 +72,8 @@ export function applyTheme(id: string): void {
   // Accent/tint overrides live as inline vars — re-derive them against the
   // new palette (e.g. --quip-accent-deep flips for dark vs light themes).
   reapplyCompanionTint();
+  // Theme consumers outside this document (the Ghost Cursor overlay) resync.
+  try { window.dispatchEvent(new CustomEvent("quip:theme-changed")); } catch { /* cosmetic */ }
 }
 
 /** Boot-time: read the saved choice and apply it. Returns the active id. */
@@ -267,6 +269,7 @@ export function applyCompanionTint(hexOrNull: string | null): void {
     /* ignore */
   }
   reapplyCompanionTint();
+  try { window.dispatchEvent(new CustomEvent("quip:theme-changed")); } catch { /* cosmetic */ }
 }
 
 export function savedCompanionTint(): string | null {
