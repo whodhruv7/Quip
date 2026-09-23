@@ -12,6 +12,15 @@ import fs from "node:fs";
 // managed userData/.env always WINS; placeholders never occupy a slot.
 import { applyEnvText } from "./system/env-load";
 
+// CRITICAL (F-28): this import MUST stay ABOVE the §29 restore block below.
+// tsc's CJS emit does NOT hoist imports above preceding top-level statements —
+// when this line sat ~75 statements lower, the compiled main.js executed the
+// §29 setMode call while the require defining the permission-modes binding was
+// still ~50 lines away → "Cannot access binding before initialization" →
+// crash at boot. Guarded by tests/tdz-regression.test.mjs — never move this
+// import below any top-level executable statement.
+import { permissionSystem as execPermissionSystem, type ApprovalRequest } from "./engine/permission-modes";
+
 const ENV_FILES = [
   path.join(process.cwd(), ".env"),
   path.join(app.getAppPath(), ".env"),
@@ -114,7 +123,6 @@ const memoryExtractor = new MemoryExtractorBrain({
 import { orchestrator } from "./engine/orchestrator";
 import { bindAgentBrain } from "./engine/agent-loop";
 import { bindVisionBrain } from "./engine/screen-vision";
-import { permissionSystem as execPermissionSystem, type ApprovalRequest } from "./engine/permission-modes";
 import { invalidateAppIndex } from "./engine/tool-registry";
 import { parseIntentV2 } from "./engine/intent-parser-v2";
 import { contextStore } from "./engine/context-store";

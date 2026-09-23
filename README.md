@@ -151,6 +151,18 @@ npm run build
 npm start
 ```
 
+### 9. `ReferenceError: Cannot access 'permission_modes_1' before initialization` (or any "Uncaught Exception" at start)
+
+Your `dist-electron` build output is stale or half-built — this exact crash was fixed in the source, so a fresh rebuild clears it:
+
+```bat
+rmdir /s /q dist-electron
+npm run build
+npm start
+```
+
+If it still happens after a clean rebuild, `git pull` first (older copies predate the fix), then repeat the three lines above.
+
 Still broken? Open an issue at https://github.com/whodhruv7/Quip/issues and paste the terminal output — it always says exactly what failed.
 
 ### Run tests (for developers)
