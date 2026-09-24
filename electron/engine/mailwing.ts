@@ -190,6 +190,38 @@ export function removeAccount(idOrLabel: string): { ok: boolean; removed?: strin
   }
 }
 
+/** Flip which account sends by default ("switch my gmail account"). */
+export function setDefaultAccount(idOrLabel: string): { ok: boolean; label?: string; error?: string } {
+  const vault = loadVault();
+  const found = vault.accounts.find(
+    (a) => a.id === idOrLabel || a.label.toLowerCase() === idOrLabel.trim().toLowerCase()
+  );
+  if (!found) {
+    return {
+      ok: false,
+      error: vault.accounts.length
+        ? `no account "${idOrLabel}" — have: ${vault.accounts.map((a) => a.label).join(", ")}`
+        : `no MailWing accounts yet — add one in Settings → MailWing`,
+    };
+  }
+  for (const a of vault.accounts) a.isDefault = a.id === found.id;
+  try {
+    saveVault(vault);
+    return { ok: true, label: found.label };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message ?? e).slice(0, 200) };
+  }
+}
+
+/** The account NOT currently default ("switch my gmail" → the other one). */
+export function otherAccountIdOrLabel(): string | null {
+  const vault = loadVault();
+  if (vault.accounts.length < 2) return null;
+  const current = vault.accounts.find((a) => a.isDefault) ?? vault.accounts[0];
+  const other = vault.accounts.find((a) => a.id !== current.id);
+  return other ? other.label : null;
+}
+
 /** List accounts WITHOUT secrets — only whether the stored password is encrypted. */
 export function listAccounts(): (Omit<MailAccount, "pass"> & { passEncrypted: boolean })[] {
   return loadVault().accounts.map(({ pass, ...rest }) => ({
@@ -441,6 +473,11 @@ export function gmailComposeUrl(input: { to?: string; subject?: string; body?: s
   if (input.subject) params.set("su", input.subject);
   if (input.body) params.set("body", input.body);
   return `https://mail.google.com/mail/?view=cm&fs=1&tf=1&${params.toString()}`;
+}
+
+/** True when the text contains a real email address (pure, tested). */
+export function looksLikeEmail(text: string): boolean {
+  return /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/.test(text ?? "");
 }
 
 /**

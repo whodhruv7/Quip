@@ -143,7 +143,7 @@ import { setWatchEventSink, executeTool } from "./engine/tool-registry";
 import { destroyGhostSession } from "./engine/web-ghost";
 import { executeDesktopAction } from "./engine/desktop-controller";
 // Interaction wave — the visible magical hand + gentle care + app watcher.
-import { ghostSetStyle, destroyGhostCursor } from "./engine/ghost-cursor";
+import { ghostSetStyle, destroyGhostCursor, setGhostAnchor } from "./engine/ghost-cursor";
 import { configureCareRoutines, startCareRoutines, stopCareRoutines } from "./engine/care-routines";
 import { configureAppWatcher, startAppWatcher, stopAppWatcher, setAppNoticeEnabled } from "./engine/app-watcher";
 import {
@@ -743,6 +743,9 @@ function createWindow(companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | 
   windowCompanionMap.set(win.id, companionId);
   windowModes.set(win.id, "companion");
 
+  // The ghost cursor appears FROM this companion.
+  setGhostAnchor(win.getBounds());
+
   win.setAlwaysOnTop(true, "screen-saver");
   win.setVisibleOnAllWorkspaces(true, {
     visibleOnFullScreen: true,
@@ -778,6 +781,12 @@ function createWindow(companionId: "pix" | "kai" | "ren" | "bubbles" | "capy" | 
     if (windows.size === 1 && !isFullLayout(windowModes.get(win.id) ?? "companion")) {
       const [px, py] = win.getPosition();
       writePosition(px, py);
+    }
+    // Keep the ghost cursor's origin on the companion.
+    try {
+      if (!win.isDestroyed()) setGhostAnchor(win.getBounds());
+    } catch {
+      /* best effort */
     }
   });
 

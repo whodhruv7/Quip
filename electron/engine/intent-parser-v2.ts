@@ -362,6 +362,49 @@ function routeOpenClause(clause: string): TaskStep | null {
   // Trim BEFORE stripping articles — the slice leaves a leading space.
   const rest = clause.slice(verb.length).trim().replace(/^(the|my|a|an)\s+/, "").trim();
 
+  // ── Surface routing: "open X on the web / in chrome / online" ──────────────
+  // When the user names the SURFACE, the web wins over the app index —
+  // "open whatsapp on web" must open web.whatsapp.com, not the desktop app.
+  const surfaceWeb = /\b(?:on\s+(?:the\s+)?web|on\s+internet|in\s+(?:the\s+)?browser|online)\b/i.test(rest);
+  const browserM = rest.match(/\b(?:in|with|on)\s+(chrome|edge|firefox|brave|opera)\b/i);
+  const surfaceBrowser = browserM ? browserM[1].toLowerCase() : null;
+  if (surfaceWeb || surfaceBrowser) {
+    const cleaned = rest
+      .replace(/\b(?:on\s+(?:the\s+)?web|on\s+internet|in\s+(?:the\s+)?browser|online)\b/ig, " ")
+      .replace(/\b(?:in|with|on)\s+(?:chrome|edge|firefox|brave|opera)\b/ig, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const site = cleaned ? bestSiteHint(cleaned) : null;
+    if (site) {
+      const account = extractAccountEmail(clause);
+      const url = accountAwareUrl(site.value.url, account);
+      return {
+        action: "open_website",
+        target: site.key,
+        params: {
+          url,
+          label: site.value.label,
+          ...(account ? { account } : {}),
+          ...(surfaceBrowser ? { browser: surfaceBrowser } : {}),
+        },
+        description: `Open ${site.value.label}${surfaceBrowser ? ` in ${surfaceBrowser}` : " on the web"}${account ? ` (account ${account})` : ""}`,
+      };
+    }
+    if (cleaned && cleaned.length > 1) {
+      // Unknown name on the web → look it up on Google (honest, still useful).
+      return {
+        action: "open_website",
+        target: cleaned,
+        params: {
+          url: `https://www.google.com/search?q=${encodeURIComponent(cleaned)}`,
+          label: cleaned,
+          ...(surfaceBrowser ? { browser: surfaceBrowser } : {}),
+        },
+        description: `Look up "${cleaned}" on the web${surfaceBrowser ? ` in ${surfaceBrowser}` : ""}`,
+      };
+    }
+  }
+
   // Folder hints ("open downloads")
   for (const word of rest.split(/\s+/)) {
     const folder = FOLDER_HINTS[word];
@@ -425,15 +468,38 @@ function routeOpenClause(clause: string): TaskStep | null {
   }
 
   // Project / folder / file by name ("open my quip project", "open resume.docx")
-  const projectMatch = rest.match(/(.+?)\s+(?:project|folder|file|document|doc|pdf)$/);
-  const targetName = (projectMatch ? projectMatch[1] : rest).replace(/\b(project|folder|file)\b/g, "").trim();
+  // "open resume.pdf with word" / "open report using vlc" → open-with hint.
+  let openWith: string | null = null;
+  let restClean = rest;
+  const withM = restClean.match(/\s+(?:with|using|via)\s+([\w .+-]+)$/i);
+  if (withM && withM[1].trim()) {
+    openWith = withM[1].trim();
+    restClean = restClean.slice(0, withM.index).trim();
+  } else {
+    const inM = restClean.match(/\s+in\s+([\w .+-]+)$/i);
+    if (inM) {
+      const cand = inM[1].trim().toLowerCase();
+      // "in <app>" only means open-with when the target is a known app —
+      // "open resume in downloads" must stay a location, not an app.
+      if (APP_HINTS[cand] || /^(word|excel|powerpoint|vlc|notepad|paint|photoshop|vs ?code|code)$/.test(cand)) {
+        openWith = inM[1].trim();
+        restClean = restClean.slice(0, inM.index).trim();
+      }
+    }
+  }
+  const projectMatch = restClean.match(/(.+?)\s+(?:project|folder|file|document|doc|pdf)$/);
+  const targetName = (projectMatch ? projectMatch[1] : restClean).replace(/\b(project|folder|file)\b/g, "").trim();
   if (targetName && targetName.length > 1) {
-    const isLikelyFile = /\.(docx?|pdf|txt|xlsx?|pptx?|png|jpe?g|mp3|mp4|md)$/i.test(targetName) || /\bfile\b/.test(rest);
+    const isLikelyFile = Boolean(openWith) || /\.(docx?|pdf|txt|xlsx?|pptx?|png|jpe?g|mp3|mp4|md)$/i.test(targetName) || /\bfile\b/.test(restClean);
     return {
       action: isLikelyFile ? "open_file" : "open_folder",
       target: targetName,
-      params: { query: targetName, kind: isLikelyFile ? "file" : "folder" },
-      description: `Open ${isLikelyFile ? "the file" : "the folder / project"} "${targetName}"`,
+      params: {
+        query: targetName,
+        kind: isLikelyFile ? "file" : "folder",
+        ...(openWith ? { openWith } : {}),
+      },
+      description: `Open ${isLikelyFile ? "the file" : "the folder / project"} "${targetName}"${openWith ? ` with ${openWith}` : ""}`,
     };
   }
 
@@ -456,6 +522,87 @@ function routeOpenClause(clause: string): TaskStep | null {
       description: `Open ${rest}`,
     };
   }
+  return null;
+}
+
+// ─── Pending-choice follow-ups (the search → confirm → open flow) ────────────
+// "I found 3 resumes — open the first one?" → "the second one" / "no" /
+// "open it with word" / "search again". Pure + exported for tests.
+
+export interface PendingFollowup {
+  kind: "choice" | "cancel" | "again";
+  /** 1-based index into the pending list; -1 = last. */
+  choice?: number;
+  openWith?: string;
+}
+
+const ORDINALS: Record<string, number> = {
+  first: 1, "1st": 1, second: 2, "2nd": 2, third: 3, "3rd": 3,
+  fourth: 4, "4th": 4, fifth: 5, "5th": 5, sixth: 6, "6th": 6,
+};
+
+/** Pure: parse "the second one" / "number 3" / "2" / "last" → 1-based index. */
+export function parsePendingChoice(text: string): number | null {
+  const t = text.trim().toLowerCase();
+  if (!t) return null;
+  const ordinal = t.match(/\b(first|1st|second|2nd|third|3rd|fourth|4th|fifth|5th|sixth|6th)\b/);
+  if (ordinal) return ORDINALS[ordinal[1]];
+  if (/\blast\b/.test(t)) return -1;
+  const num = t.match(/\b(\d{1,2})\b/);
+  if (num) {
+    const n = parseInt(num[1], 10);
+    if (n >= 1 && n <= 12) return n;
+  }
+  return null;
+}
+
+/**
+ * Pure: with a pending-choice list on screen, map a short reply onto an
+ * action — "open it" / "the second one" / "no" / "search again" /
+ * "open it with vlc" / "vlc me kholo".
+ */
+export function matchPendingFollowup(text: string): PendingFollowup | null {
+  const t = text.trim().toLowerCase().replace(/[.!?]+$/, "").replace(/\s+/g, " ");
+  if (!t) return null;
+
+  // cancel — clear the pending list
+  if (/^(no|nahi|nahin|cancel|forget it|chhodo|chod do|leave it|nahi chahiye|ruk ja|ruko|stop)\b/.test(t)) {
+    return { kind: "cancel" };
+  }
+
+  // search again — re-run the search that produced the list
+  if (/^(search again|aur dhundo|aur dhoondo|dhundo aur|find more|more|naya search|dobara dhundo|rescan)\b/.test(t)) {
+    return { kind: "again" };
+  }
+
+  // "open (it|the second one) with vlc" / "in word"
+  const withM = t.match(/\s+(?:with|using|via)\s+(?:the\s+)?(.+)$/);
+  if (withM && withM[1].trim()) {
+    const inner = t.slice(0, withM.index).trim();
+    return { kind: "choice", choice: parsePendingChoice(inner) ?? 1, openWith: withM[1].trim() };
+  }
+
+  // Hinglish open-with: "vlc me kholo" / "word se kholo"
+  const hinM = t.match(/^(.+?)\s+(?:me|mai|mein|se)\s+kho?lo$/);
+  if (hinM && hinM[1].trim() && !/^(open|kholo|launch|it|that|wahi|wohi)$/.test(hinM[1].trim())) {
+    const inner = hinM[1].trim();
+    return { kind: "choice", choice: parsePendingChoice(inner) ?? 1, openWith: inner };
+  }
+
+  // plain choice: "open it" / "the second one" / "2" / "haan"
+  if (
+    /^(?:open|kholo|launch|run|haan|haanji|hanji|yes|yeah|yep|ok|okay|karo|kar do|khol do|sahi hai|thik hai|theek hai)\b/.test(t) ||
+    /^(?:it|that|wahi|wohi|the\s+\w+\s+one|number\s*\d+|option\s*\d+|\d{1,2}(?:\s+one)?|first|second|third|fourth|fifth|last)(?:\s+one)?$/.test(t)
+  ) {
+    const stripped = t
+      .replace(/^(?:open|kholo|launch|run|haan|haanji|hanji|yes|yeah|yep|ok|okay|karo|kar do|khol do|sahi hai|thik hai|theek hai)\b/, "")
+      .replace(/\b(?:it|that|wahi|wohi|one)\b/g, "")
+      .replace(/\b(?:the|number|option)\b/g, "")
+      .trim();
+    const choice = parsePendingChoice(stripped || "1");
+    if (choice !== null) return { kind: "choice", choice };
+  }
+
   return null;
 }
 
@@ -535,6 +682,79 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
   const text = normalized;
   const context: ExecutionContextState = opts.context ?? { updatedAt: 0 };
   const base = { original: raw, normalized: text };
+
+  // ─── Pending-choice follow-ups (search results are on screen) ─────────────
+  // "I found 3 resumes — open one?" → "the second one" / "no" / "open it with
+  // word" / "search again". Checked FIRST — short replies must never leak
+  // into app/site routing.
+  const pending = context.pendingChoices;
+  if (pending && pending.length > 0) {
+    const followup = matchPendingFollowup(text);
+    if (followup?.kind === "cancel") {
+      return {
+        ...base,
+        action: "open",
+        target: "cancel",
+        query: "",
+        isTask: true,
+        isMultiStep: false,
+        steps: [{
+          action: "open_file",
+          target: "cancel",
+          params: { fromPending: "cancel", query: "cancel" },
+          description: "Drop the pending options",
+        }],
+        summary: "Okay — dropped",
+        confidence: 0.75,
+      };
+    }
+    if (followup?.kind === "again" && context.pendingQuery) {
+      return {
+        ...base,
+        action: "file_op",
+        target: context.pendingQuery,
+        query: "search",
+        isTask: true,
+        isMultiStep: false,
+        steps: [{
+          action: "file_op",
+          target: context.pendingQuery,
+          params: { op: "search", query: context.pendingQuery },
+          description: `Search again for "${context.pendingQuery}"`,
+        }],
+        summary: "Searching again",
+        confidence: 0.75,
+      };
+    }
+    if (followup?.kind === "choice") {
+      const wanted = followup.choice === -1 ? pending.length : (followup.choice ?? 1);
+      const idx = Math.max(0, Math.min(wanted - 1, pending.length - 1));
+      const pick = pending[idx];
+      const stepAction: ActionType = pick.kind === "file" ? "open_file" : "open_folder";
+      return {
+        ...base,
+        action: "open",
+        target: pick.label,
+        query: "",
+        isTask: true,
+        isMultiStep: false,
+        steps: [{
+          action: stepAction,
+          target: pick.path,
+          params: {
+            fromPending: "true",
+            choice: String(idx + 1),
+            query: pick.path,
+            kind: pick.kind,
+            ...(followup.openWith ? { openWith: followup.openWith } : {}),
+          },
+          description: `Open ${pick.label}`,
+        }],
+        summary: `Opened ${pick.label}`,
+        confidence: 0.8,
+      };
+    }
+  }
 
   // ─── CAP-070: multi-verb chains ("organize downloads phir report bhejo") ──
   // Split on Hinglish/English sequencing words; when BOTH halves parse into
@@ -1371,11 +1591,14 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
     };
   }
 
-  // ── MailWing send flow ("rahul@acme.com ko mail bhejo about the invoice") ─
-  if (/\b(send|bhej|bhejo)\b/.test(text) && /\b(mail|email)\b/.test(text) && !urlDetected) {
+  // ── MailWing send flow ("rahul@acme.com ko mail bhejo about the invoice",
+  //    "gmail likh dhruv@gmail.com ko and send kr de") ────────────────────
+  // "gmail" is INCLUDED — the user says gmail when they mean real mail.
+  if (/\b(send|bhej|bhejo)\b/.test(text) && /\b(mail|email|gmail)\b/.test(text) && !urlDetected) {
     const addr = text.match(EMAIL_ADDR_RE)?.[0] ?? "";
     const toName = !addr
       ? (raw.match(/\bto\s+([a-z0-9 ._'-]{2,40}?)(?:\s+(?:about|regarding|saying|subject|and)\b|$)/i)?.[1] ?? "").trim()
+        || (raw.match(/\b([a-z0-9 ._'-]{2,40}?)\s+ko\s+(?:mail|email|bhej|likh|send)/i)?.[1] ?? "").trim()
       : "";
     const about =
       raw.match(/\b(?:about|regarding|saying|subject)\s+(.+)$/i)?.[1]?.trim() ?? "";
@@ -2292,10 +2515,53 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
     }
   }
 
+  // ─── SWITCH GMAIL / MAIL ACCOUNT ──────────────────────────────────────────
+  // "switch my gmail" → flip the MailWing default (or open the other signed-in
+  // Gmail account on the web when no vault accounts exist); "switch gmail to
+  // a@gmail.com" → THAT account. Precise adjacency — "email my second client"
+  // must NOT hit this.
+  const SWITCH_MAIL =
+    /\b(?:switch|change|toggle)\b[^.]{0,24}\b(?:gmail|mail|account)\b/i.test(raw) ||
+    /\b(?:gmail|mail)\b[^.]{0,16}\b(?:switch|change)\b/i.test(raw) ||
+    /\b(?:doosre|dusre|doosra|dusra|other|another|second|agle|agla|next)\s+(?:gmail|mail|account)\b/i.test(raw);
+  if (SWITCH_MAIL && !/\b(write|compose|draft|likh|bhej|reply)\b/i.test(text)) {
+    const account = extractAccountEmail(raw) ?? (((raw.match(/\bto\s+([\w.-]+)/i)?.[1] ?? "").trim()) || null);
+    return {
+      ...base,
+      action: "switch_mail_account",
+      target: account ?? "other",
+      query: "",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: "mailwing_accounts",
+        target: account ?? "other",
+        params: {
+          op: "switch",
+          ...(account ? { account } : {}),
+        },
+        description: account ? `Switch the default mail account to ${account}` : "Switch to the other mail account",
+      }],
+      summary: account ? `Switched mail account to ${account}` : "Switched mail account",
+      confidence: 0.85,
+    };
+  }
+
   // ─── COMPOSE EMAIL / MESSAGE ─────────────────────────────────────────────
-  if (/\b(gmail|mail|email)\b/.test(text) && /\b(write|compose|draft|send|reply)\b/.test(text)) {
+  // Verbs include Hinglish: likh / likho / likhna. "email" itself counts as a
+  // verb ONLY in verb position ("email to …") — "open my email" stays an OPEN.
+  // The executor bakes to/subject/body INTO the Gmail compose URL — a blank
+  // compose window is a bug, not a feature.
+  const COMPOSE_VERB = /\b(write|compose|draft|reply|likh|likho|likhna|bhej|bhejo)\b/i;
+  const EMAIL_VERB = /^\s*email\b/i.test(text);
+  if (/\b(gmail|mail|email)\b/.test(text) && (COMPOSE_VERB.test(text) || EMAIL_VERB) && !/\b(send|bhej|bhejo)\b/.test(text)) {
     const toMatch = raw.match(/\bto\s+([^,.;]+?)(?:\s+(?:about|subject|with|regarding|saying)\b|$)/i);
     const subjectMatch = raw.match(/\b(?:subject|about|regarding)\s+([^,.;]+?)(?:\s+(?:body|message|content|saying)\b|$)/i);
+    // Body: "saying X" / "body X" / "... likh ki X"
+    const bodyMatch = raw.match(/\b(?:saying|body|message|likh\s*ki|keh\s*do\s*ki|kehna\s*ki)\s+(.+)$/i);
+    const body = bodyMatch?.[1]?.trim() ?? "";
+    const emailInRaw = raw.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/);
+    const to = (toMatch?.[1]?.trim() || emailInRaw?.[0] || "").trim();
     return {
       ...base,
       action: "compose",
@@ -2307,11 +2573,14 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
         action: "compose_email",
         target: "gmail",
         params: {
-          url: "https://mail.google.com/mail/?view=cm&fs=1",
-          to: toMatch?.[1]?.trim() ?? "",
+          to,
           subject: subjectMatch?.[1]?.trim() ?? "",
+          body,
+          // The ActionEngine contract requires a truthy text slot — this is
+          // the on-screen draft summary, always non-empty.
+          text: body || subjectMatch?.[1]?.trim() || (to ? `Email to ${to}` : "New email"),
         },
-        description: `Draft an email${toMatch?.[1] ? ` to ${toMatch[1].trim()}` : ""}`,
+        description: `Draft an email${to ? ` to ${to}` : ""}${subjectMatch?.[1] ? ` about ${subjectMatch[1].trim()}` : ""}`,
       }],
       summary: "Drafted an email",
       confidence: 0.85,

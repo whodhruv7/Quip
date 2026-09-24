@@ -83,3 +83,23 @@ export function captionFor(action: CursorActionLabel): string {
     }
   }
 }
+
+/** Caption for shell-launched opens (apps / sites / files) — pure, tested. */
+export function openCaption(label: string): string {
+  const l = String(label ?? "").trim().replace(/\s+/g, " ").slice(0, 30);
+  return l ? `opening ${l}…` : "opening…";
+}
+
+/** Caption for key presses ("pressing Ctrl + Enter…") — pure, tested. */
+export function keyCaption(keys: string[]): string {
+  const k = (keys ?? []).filter(Boolean).join(" + ").slice(0, 30);
+  return k ? `pressing ${k}…` : "pressing keys…";
+}
+
+/** DIP → physical pixels for a display's scale factor (pure, tested). */
+export function physicalFromDip(dipX: number, dipY: number, scaleFactor: number): { x: number; y: number } {
+  if (!Number.isFinite(dipX) || !Number.isFinite(dipY) || !Number.isFinite(scaleFactor) || scaleFactor <= 0) {
+    return { x: Math.round(dipX) || 0, y: Math.round(dipY) || 0 };
+  }
+  return { x: Math.round(dipX * scaleFactor), y: Math.round(dipY * scaleFactor) };
+}

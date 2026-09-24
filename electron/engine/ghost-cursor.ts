@@ -28,6 +28,9 @@ import {
   dipFromPhysical,
   easeInOutCubic,
   glideDuration,
+  keyCaption,
+  openCaption,
+  physicalFromDip,
   type CursorActionLabel,
 } from "./ghost-cursor-core";
 
@@ -39,6 +42,9 @@ export {
   dipFromPhysical,
   easeInOutCubic,
   glideDuration,
+  keyCaption,
+  openCaption,
+  physicalFromDip,
   type CursorActionLabel,
 } from "./ghost-cursor-core";
 
@@ -255,6 +261,67 @@ export function ghostScroll(label?: string): void {
   showOverlay();
   send("mode", { mode: "scrolling", label: label ?? captionFor({ kind: "scroll" }) });
   markActive(2200);
+}
+
+// ─── The OPEN performance (apps / websites / files) ─────────────────────────
+
+let anchorRect: { x: number; y: number; width: number; height: number } | null = null;
+
+/** Main binds the companion's bounds so the cursor appears FROM the mascot. */
+export function setGhostAnchor(rect: { x: number; y: number; width: number; height: number } | null): void {
+  anchorRect = rect;
+}
+
+/** Physical cast point: just above-left of the companion (or a fallback). */
+function castPointPhysical(): { x: number; y: number } {
+  try {
+    const display = screen.getPrimaryDisplay();
+    const sf = display.scaleFactor || 1;
+    let dip: { x: number; y: number };
+    if (anchorRect) {
+      dip = {
+        x: anchorRect.x + anchorRect.width / 2 - 70,
+        y: Math.max(display.workArea.y + 40, anchorRect.y - 70),
+      };
+    } else {
+      const wa = display.workArea;
+      dip = { x: wa.x + wa.width - 160, y: wa.y + wa.height - 240 };
+    }
+    const b = display.bounds;
+    dip.x = Math.max(b.x + 30, Math.min(b.x + b.width - 30, dip.x));
+    dip.y = Math.max(b.y + 30, Math.min(b.y + b.height - 30, dip.y));
+    return physicalFromDip(dip.x, dip.y, sf);
+  } catch {
+    return { x: 900, y: 500 };
+  }
+}
+
+const sleepMs = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * The OPEN performance — for shell-launched things (apps, websites, files)
+ * there is no real click coordinate to visit. The cursor appears near the
+ * companion, glides to the cast point with a caption ("opening YouTube…"),
+ * presses and bursts exactly while `act` fires the REAL launch, then hides.
+ * Fails soft: disabled or broken overlay → `act` runs immediately — the
+ * performance is a layer on top of execution, never a dependency of it.
+ */
+export async function ghostPerformOpen(opts: { label: string; act?: () => void }): Promise<void> {
+  if (!enabled) {
+    opts.act?.();
+    return;
+  }
+  try {
+    const cast = castPointPhysical();
+    await ghostGlide(cast.x, cast.y, { label: openCaption(opts.label) });
+    ghostPress();
+    await sleepMs(130);
+    opts.act?.(); // the REAL launch fires at the burst moment
+    ghostReleaseBurst();
+    ghostHideSoon(1700);
+  } catch {
+    opts.act?.(); // decoration never blocks reality
+  }
 }
 
 /** Schedule the auto-hide after a quiet period (no more actions). */

@@ -72,6 +72,197 @@ const SKIP_DIRS = new Set([
   "out", "target", "vendor", "__pycache__", ".venv", "venv",
 ]);
 
+// ─── Ranked candidates (the follow-up flow's data source) ────────────────────
+
+export interface LocalCandidate {
+  path: string;
+  name: string;
+  kind: "file" | "folder";
+  score: number;
+  source: "exact-path" | "known-folder" | "project-scan" | "common-scan" | "recent" | "context";
+}
+
+/** Common user folders searched before any deeper scan. */
+function commonUserFolders(): string[] {
+  return [
+    path.join(HOME, "Desktop"),
+    path.join(HOME, "Documents"),
+    path.join(HOME, "Downloads"),
+    path.join(HOME, "Pictures"),
+    path.join(HOME, "Music"),
+    path.join(HOME, "Videos"),
+  ];
+}
+
+/** Depth-bounded name matching — collects every plausible hit, not just one. */
+function walkCollect(
+  root: string,
+  queryLower: string,
+  depth: number,
+  maxDepth: number,
+  out: LocalCandidate[],
+  source: LocalCandidate["source"],
+  deadline: number
+): void {
+  if (out.length >= 24 || depth > maxDepth || Date.now() > deadline) return;
+  let entries: fs.Dirent[] = [];
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (out.length >= 24 || Date.now() > deadline) return;
+    if (entry.name.startsWith(".") && entry.name !== ".env") continue;
+    if (SKIP_DIRS.has(entry.name)) continue;
+    const full = path.join(root, entry.name);
+    const nameLower = entry.name.toLowerCase();
+    const baseNoExt = nameLower.replace(/\.[^.]+$/, "");
+    let score = 0;
+    if (nameLower === queryLower) score = 92;
+    else if (baseNoExt === queryLower) score = 90;
+    else if (nameLower.startsWith(queryLower) && queryLower.length >= 3) score = 80;
+    else if (nameLower.includes(queryLower) && queryLower.length >= 3) score = 68;
+    if (score > 0) {
+      score -= depth * 2; // shallower matches rank higher
+      out.push({
+        path: full,
+        name: entry.name,
+        kind: entry.isDirectory() ? "folder" : "file",
+        score,
+        source,
+      });
+    }
+    if (entry.isDirectory()) {
+      walkCollect(full, queryLower, depth + 1, maxDepth, out, source, deadline);
+    }
+  }
+}
+
+/** Windows Recent-shortcuts: the fastest hit for "the file I had yesterday". */
+function recentCandidates(queryLower: string): LocalCandidate[] {
+  if (process.platform !== "win32") return [];
+  const recent = path.join(process.env.APPDATA ?? "", "Microsoft", "Windows", "Recent");
+  if (!recent) return [];
+  const out: LocalCandidate[] = [];
+  try {
+    for (const entry of fs.readdirSync(recent)) {
+      if (!entry.toLowerCase().endsWith(".lnk")) continue;
+      const nameLower = entry.toLowerCase().replace(/\.lnk$/, "").replace(/- shortcut$/, "");
+      if (nameLower === queryLower) {
+        out.push({ path: path.join(recent, entry), name: entry.replace(/\.lnk$/i, ""), kind: "file", score: 86, source: "recent" });
+      } else if (queryLower.length >= 3 && nameLower.includes(queryLower)) {
+        out.push({ path: path.join(recent, entry), name: entry.replace(/\.lnk$/i, ""), kind: "file", score: 64, source: "recent" });
+      }
+    }
+  } catch {
+    /* no Recent access — skip */
+  }
+  return out;
+}
+
+/**
+ * Rank ALL plausible local matches for a query (bounded, never a full-drive
+ * scan): exact path → known folders → context → common user folders
+ * (depth 2) → project roots (depth 3) → Recent. Deduped, best first.
+ * This is the data behind the follow-up flow ("I found 3 — open which?").
+ */
+export async function resolveLocalCandidates(
+  query: string,
+  context?: ExecutionContextState,
+  opts?: { kind?: "file" | "folder" | "any"; limit?: number }
+): Promise<LocalCandidate[]> {
+  const raw = query.trim().replace(/[?.!]+$/, "");
+  if (!raw) return [];
+  const q = raw.toLowerCase();
+  const kind = opts?.kind ?? "any";
+  const limit = opts?.limit ?? 6;
+  const deadline = Date.now() + 6000;
+  const all: LocalCandidate[] = [];
+
+  // 1. Absolute / explicit path (Windows drive, ~ home, POSIX home)
+  const pathMatch = raw.match(/([A-Za-z]:\\[^"<>|*?]+|[A-Za-z]:\/[^"<>|*?]+|~\/[\w\-./ ]+)/)
+    ?? raw.match(/((?:\/home|\/Users|\/root)\/[\w\-./ ]+)/);
+  if (pathMatch) {
+    const candidate = pathMatch[1].trim();
+    const expanded = candidate.startsWith("~") ? path.join(HOME, candidate.slice(1)) : candidate;
+    try {
+      const stat = fs.statSync(expanded);
+      all.push({
+        path: expanded,
+        name: path.basename(expanded),
+        kind: stat.isDirectory() ? "folder" : "file",
+        score: 100,
+        source: "exact-path",
+      });
+    } catch {
+      /* not a real path — continue */
+    }
+  }
+
+  // 2. Known folders ("open downloads")
+  for (const word of q.split(/\s+/)) {
+    const folder = resolveKnownFolder(word);
+    if (folder) {
+      try {
+        if (fs.existsSync(folder)) {
+          all.push({ path: folder, name: path.basename(folder), kind: "folder", score: 95, source: "known-folder" });
+        }
+      } catch {
+        /* skip */
+      }
+    }
+  }
+
+  // 3. Context reuse ("open that folder again")
+  if (context?.lastOpenedPath && /that|it|again|project|folder/.test(q)) {
+    try {
+      if (fs.existsSync(context.lastOpenedPath)) {
+        all.push({
+          path: context.lastOpenedPath,
+          name: path.basename(context.lastOpenedPath),
+          kind: "folder",
+          score: 75,
+          source: "context",
+        });
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+
+  // 4. Common user folders, depth 2 (fast, covers most personal files)
+  for (const root of commonUserFolders()) {
+    try {
+      if (!fs.statSync(root).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    walkCollect(root, q, 0, 2, all, "common-scan", deadline);
+  }
+
+  // 5. Project roots, depth 3 (code folders live deeper)
+  for (const root of projectRoots()) {
+    walkCollect(root, q, 0, 3, all, "project-scan", deadline);
+    if (Date.now() > deadline) break;
+  }
+
+  // 6. Windows Recent shortcuts
+  all.push(...recentCandidates(q));
+
+  // Filter by kind, dedupe (case-insensitive path), keep best score per path.
+  const kindFiltered = all.filter((c) => (kind === "any" ? true : c.kind === kind));
+  const best = new Map<string, LocalCandidate>();
+  for (const c of kindFiltered) {
+    const key = c.path.toLowerCase();
+    const prev = best.get(key);
+    if (!prev || c.score > prev.score) best.set(key, c);
+  }
+  return [...best.values()]
+    .sort((a, b) => b.score - a.score || a.path.length - b.path.length)
+    .slice(0, limit);
+}
+
 /** Shallow search for a folder/file by name (depth ≤ 3, skips build dirs). */
 function findMatching(
   root: string,

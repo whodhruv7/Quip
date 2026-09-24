@@ -32,6 +32,7 @@ import {
   ghostType,
   ghostScroll,
   ghostHideSoon,
+  keyCaption,
   type CursorActionLabel,
 } from "./ghost-cursor";
 
@@ -423,6 +424,9 @@ export async function executeDesktopAction(action: DesktopAction): Promise<Actio
       if (!seq) {
         return fail(`I don't know the key combination: ${action.keys.join("+")}.`, [], "unknown-key");
       }
+      // The key press is VISIBLE too — the keycap gesture taps while the
+      // real keystroke goes out.
+      ghostType(keyCaption(action.keys));
       const res = await runCapture(
         `powershell -NoProfile -Command "$ws = New-Object -ComObject WScript.Shell; $ws.SendKeys(${psQuote(seq)}); 'sent'"`,
         8000

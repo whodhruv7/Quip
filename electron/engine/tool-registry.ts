@@ -26,7 +26,12 @@ import {
 } from "./app-discovery";
 import { executeDesktopAction } from "./desktop-controller";
 import { executeFileOp, searchFiles } from "./file-ops";
-import { resolveLocalTarget, openLocalTarget } from "./file-discovery";
+import fs from "node:fs";
+import { runCapture } from "./action-verifier";
+import { resolveLocalTarget, resolveLocalCandidates, openLocalTarget } from "./file-discovery";
+import { ghostPerformOpen } from "./ghost-cursor";
+import { looksLikeEmail } from "./mailwing";
+import type { PendingChoice } from "./context-store";
 import {
   openBrowserSurface,
   navigateBrowser,
@@ -70,6 +75,8 @@ import {
   removeAccount,
   listAccounts,
   resolveAccount,
+  setDefaultAccount,
+  otherAccountIdOrLabel,
   testAccount,
   sendMail,
   humanizeEmail,
@@ -226,7 +233,12 @@ let appIndexPromise: Promise<InstalledApp[]> | null = null;
 
 async function getAppIndex(): Promise<InstalledApp[]> {
   if (!appIndexPromise) {
-    appIndexPromise = buildInstalledAppIndex(app.getPath("userData"));
+    try {
+      appIndexPromise = buildInstalledAppIndex(app.getPath("userData"));
+    } catch {
+      // Headless / test context (no Electron app) — scan without disk cache.
+      appIndexPromise = buildInstalledAppIndex("");
+    }
   }
   try {
     return await appIndexPromise;
@@ -245,6 +257,125 @@ export function invalidateAppIndex(): void {
 
 // ─── Executors ───────────────────────────────────────────────────────────────
 
+// ─── Open-with + pending-choice helpers (the follow-up flow) ────────────────
+
+/** Browser aliases for "open X in chrome" — `start <alias> "url"`. */
+const BROWSER_START: Record<string, string> = {
+  chrome: "chrome",
+  edge: "msedge",
+  firefox: "firefox",
+  brave: "brave",
+  opera: "opera",
+};
+
+/** Open a file with a specific installed app (`start "" "app.exe" "file"`). */
+async function openWithApp(filePath: string, appName: string): Promise<ActionVerification> {
+  const apps = await getAppIndex();
+  const appEntry = resolveApp(appName, apps);
+  if (!appEntry?.executable) {
+    return {
+      ok: false,
+      summary: `I couldn't find an installed app called "${appName}" to open that with.`,
+      evidence: ["no installed app matched the open-with request"],
+      error: "open-with-app-not-found",
+    };
+  }
+  if (process.platform === "win32") {
+    const res = await runCapture(`cmd /c start "" "${appEntry.executable}" "${filePath}"`, 8000);
+    if (res === null) {
+      return { ok: false, summary: `I couldn't launch ${appEntry.name}.`, evidence: ["start command failed"], error: "open-with-launch-failed" };
+    }
+  } else {
+    try {
+      const err = await shell.openPath(filePath); // dev/non-Windows fallback
+      if (err) return { ok: false, summary: `I couldn't open the file — ${err}`, evidence: [], error: "open-file-failed" };
+    } catch (e: any) {
+      return { ok: false, summary: `I couldn't open the file with ${appEntry.name} — ${String(e?.message ?? e).slice(0, 140)}.`, evidence: [], error: "open-file-exception" };
+    }
+  }
+  return { ok: true, summary: `Opened it with ${appEntry.name}.`, evidence: [`launch: ${appEntry.executable}`, `file: ${filePath}`] };
+}
+
+/** Open a pending choice (from the follow-up list), optionally with an app. */
+async function openPickedTarget(pick: PendingChoice, openWith?: string): Promise<ActionVerification> {
+  let exists = false;
+  try {
+    exists = fs.existsSync(pick.path);
+  } catch {
+    exists = false;
+  }
+  if (!exists) {
+    return { ok: false, summary: `"${pick.label}" isn't on disk anymore.`, evidence: [`path missing: ${pick.path}`], error: "path-missing" };
+  }
+  try {
+    if (openWith) {
+      if (pick.kind !== "file") {
+        const opened = await openLocalTarget({
+          kind: pick.kind === "project" ? "project" : "folder",
+          path: pick.path,
+          displayName: pick.label,
+          confidence: 1,
+        });
+        return opened.ok
+          ? { ok: true, summary: `Opened the folder ${pick.label}. (Folders open in Explorer — "with ${openWith}" applies to files.)`, evidence: opened.evidence }
+          : opened;
+      }
+      return await openWithApp(pick.path, openWith);
+    }
+    return await openLocalTarget({ kind: pick.kind, path: pick.path, displayName: pick.label, confidence: 1 });
+  } catch (e: any) {
+    return {
+      ok: false,
+      summary: `I couldn't open "${pick.label}" — ${String(e?.message ?? e).slice(0, 140)}.`,
+      evidence: [`open threw for: ${pick.path}`],
+      error: "open-exception",
+    };
+  }
+}
+
+/** Shared pending-choice handler for open_file / open_folder. */
+async function handlePendingOpen(p: Record<string, string>): Promise<ToolResult | null> {
+  if (p.fromPending === "cancel") {
+    contextStore.update({ pendingChoices: [], pendingQuery: undefined, pendingKind: undefined });
+    return { success: true, output: "Okay — I've dropped those options. What's next?", note: "pending choices cleared" };
+  }
+  if (p.fromPending !== "true") return null;
+  const pending = contextStore.get().pendingChoices ?? [];
+  let idx = parseInt(p.choice ?? "1", 10);
+  if (!Number.isFinite(idx) || idx < 1) idx = 1;
+  if (String(p.choice) === "-1") idx = pending.length; // "last one"
+  const pick = pending[idx - 1];
+  if (!pick) {
+    contextStore.update({ pendingChoices: [] });
+    return { success: false, output: "That option isn't on the list anymore — tell me the file or folder name again.", note: "stale pending choice" };
+  }
+  // The pick is VISIBLE too — the cursor performs the open.
+  let openPromise: Promise<ActionVerification> | null = null;
+  await ghostPerformOpen({ label: pick.label, act: () => { openPromise = openPickedTarget(pick, p.openWith); } });
+  const result = await (openPromise ?? openPickedTarget(pick, p.openWith));
+  if (result.ok) {
+    contextStore.update({ lastOpenedPath: pick.path, pendingChoices: [] });
+  }
+  return fromVerification(result);
+}
+
+/** Ask the user which match to open (the follow-up flow's question). */
+function askWhichCandidate(
+  query: string,
+  candidates: { path: string; name: string; kind: "file" | "folder" }[],
+  kind: "file" | "folder" | "any"
+): ToolResult {
+  const choices: PendingChoice[] = candidates.slice(0, 5).map((c) => ({ label: c.name, path: c.path, kind: c.kind }));
+  contextStore.update({ pendingChoices: choices, pendingQuery: query, pendingKind: kind });
+  const listed = choices.map((c, i) => `${i + 1}. ${c.label} — ${c.path}`).join("\n");
+  return {
+    success: true,
+    output: `I found ${candidates.length} matches for "${query}":\n${listed}\n\nOpen one? Say "open it", "open the second one", "open it with <app>", or "no".`,
+    note: "ambiguous match — following up with the user",
+    evidence: [`candidates: ${choices.length}`],
+  };
+}
+
 const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<ToolResult>> = {
   async open_app(step, _ctx) {
     const apps = await getAppIndex();
@@ -262,9 +393,14 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
     }
 
     if (resolved) {
-      const result = await launchApp(resolved);
+      // The cursor PERFORMS the launch — visible summon, glide, press+burst
+      // while the app actually starts. Fails soft: no overlay → direct run.
+      const app = resolved;
+      let launchPromise: Promise<ActionVerification> | null = null;
+      await ghostPerformOpen({ label: app.name, act: () => { launchPromise = launchApp(app); } });
+      const result = await (launchPromise ?? launchApp(app));
       if (result.ok) {
-        contextStore.update({ activeApp: resolved.name });
+        contextStore.update({ activeApp: app.name });
       }
       return fromVerification(result);
     }
@@ -272,7 +408,9 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
     // Not installed → sensible fallbacks
     const q = query.toLowerCase();
     if (q.includes("whatsapp")) {
-      const result = await openBrowserSurface("https://web.whatsapp.com");
+      let webPromise: Promise<ActionVerification> | null = null;
+      await ghostPerformOpen({ label: "WhatsApp Web", act: () => { webPromise = openBrowserSurface("https://web.whatsapp.com"); } });
+      const result = await (webPromise ?? openBrowserSurface("https://web.whatsapp.com"));
       return {
         success: result.ok,
         output: result.ok
@@ -295,24 +433,53 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
   },
 
   async open_website(step, _ctx) {
-    const result = await openBrowserSurface(step.params.url);
-    if (result.ok) contextStore.update({ activeWebsite: step.target, activeUrl: step.params.url });
+    // "open youtube in chrome" — launch in THAT browser when asked.
+    const browser = String(step.params.browser ?? "").toLowerCase();
+    if (browser && BROWSER_START[browser] && process.platform === "win32") {
+      const url = String(step.params.url ?? "");
+      const res = await runCapture(`cmd /c start ${BROWSER_START[browser]} "${url}"`, 8000);
+      if (res !== null) {
+        contextStore.update({ activeWebsite: step.target, activeUrl: url });
+        return {
+          success: true,
+          output: `Opened ${step.params.label ?? step.target} in ${browser}.`,
+          note: `browser-specific launch: ${browser}`,
+          evidence: [`start ${BROWSER_START[browser]} "${url}"`],
+        };
+      }
+      // launch failed → fall through to the default browser, still useful
+    }
+    const url = String(step.params.url ?? "");
+    const label = String(step.params.label ?? step.target ?? "website");
+    let surfPromise: Promise<ActionVerification> | null = null;
+    await ghostPerformOpen({ label, act: () => { surfPromise = openBrowserSurface(url); } });
+    const result = await (surfPromise ?? openBrowserSurface(url));
+    if (result.ok) contextStore.update({ activeWebsite: step.target, activeUrl: url });
     return fromVerification(result);
   },
 
   async open_url(step, _ctx) {
-    const result = await openBrowserSurface(step.params.url);
-    if (result.ok) contextStore.update({ activeUrl: step.params.url });
+    const url = String(step.params.url ?? "");
+    let surfPromise: Promise<ActionVerification> | null = null;
+    await ghostPerformOpen({ label: step.params.label || step.target || url, act: () => { surfPromise = openBrowserSurface(url); } });
+    const result = await (surfPromise ?? openBrowserSurface(url));
+    if (result.ok) contextStore.update({ activeUrl: url });
     return fromVerification(result);
   },
 
   async search_web(step, _ctx) {
-    const result = await openBrowserSurface(step.params.url);
+    const url = String(step.params.url ?? "");
+    let surfPromise: Promise<ActionVerification> | null = null;
+    await ghostPerformOpen({ label: `search "${step.params.query || step.target || ""}"`, act: () => { surfPromise = openBrowserSurface(url); } });
+    const result = await (surfPromise ?? openBrowserSurface(url));
     return fromVerification(result);
   },
 
   async search_youtube(step, _ctx) {
-    const result = await openBrowserSurface(step.params.url);
+    const url = String(step.params.url ?? "");
+    let surfPromise: Promise<ActionVerification> | null = null;
+    await ghostPerformOpen({ label: `YouTube "${step.params.query || step.target || ""}"`, act: () => { surfPromise = openBrowserSurface(url); } });
+    const result = await (surfPromise ?? openBrowserSurface(url));
     if (result.ok) contextStore.update({ activeWebsite: "youtube", lastMediaQuery: step.params.query });
     return fromVerification(result);
   },
@@ -329,38 +496,65 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
   },
 
   async open_folder(step, _ctx) {
-    const target = await resolveLocalTarget(
-      step.params.location || step.params.query || step.target,
-      contextStore.get()
-    );
-    if (!target) {
+    // Follow-up answers ("open the second one") land here too.
+    const pendingResult = await handlePendingOpen(step.params);
+    if (pendingResult) return pendingResult;
+
+    const query = step.params.location || step.params.query || step.target;
+    const candidates = await resolveLocalCandidates(query, contextStore.get(), { kind: "folder" });
+    if (candidates.length === 0) {
       return {
         success: false,
         output: `I couldn't find a folder called "${step.params.query ?? step.target}".`,
         note: "no matching folder in known locations or project directories",
-        evidence: ["known folders + project roots scanned"],
+        evidence: ["known folders + common folders + project roots scanned"],
       };
     }
-    const result = await openLocalTarget(target);
-    if (result.ok) contextStore.update({ lastOpenedPath: target.path });
+    const top = candidates[0];
+    const runner = candidates[1];
+    const decisive = candidates.length === 1 || top.score >= 90 || (runner && top.score - runner.score >= 20);
+    if (!decisive) {
+      return askWhichCandidate(query, candidates, "folder");
+    }
+    let openPromise: Promise<ActionVerification> | null = null;
+    const folderTarget = { kind: "folder" as const, path: top.path, displayName: top.name, confidence: top.score / 100 };
+    await ghostPerformOpen({ label: top.name, act: () => { openPromise = openLocalTarget(folderTarget); } });
+    const result = await (openPromise ?? openLocalTarget(folderTarget));
+    if (result.ok) contextStore.update({ lastOpenedPath: top.path });
     return fromVerification(result);
   },
 
   async open_file(step, _ctx) {
-    const target = await resolveLocalTarget(
-      step.params.query || step.target,
-      contextStore.get()
-    );
-    if (!target) {
+    // Follow-up answers ("open it", "open it with word", "no") ──────────────
+    const pendingResult = await handlePendingOpen(step.params);
+    if (pendingResult) return pendingResult;
+
+    const query = step.params.query || step.target;
+    const kind = step.params.kind === "folder" ? "folder" : "any";
+    const candidates = await resolveLocalCandidates(query, contextStore.get(), { kind });
+    if (candidates.length === 0) {
       return {
         success: false,
-        output: `I couldn't find a file called "${step.params.query ?? step.target}".`,
-        note: "no matching file in known locations or project directories",
-        evidence: ["known folders + project roots scanned"],
+        output: `I searched your Desktop, Documents, Downloads, Pictures and project folders — nothing matches "${query}".`,
+        note: "no local match in the bounded scan",
+        evidence: ["common folders + project roots + Recent scanned"],
       };
     }
-    const result = await openLocalTarget(target);
-    if (result.ok) contextStore.update({ lastOpenedPath: target.path });
+    const top = candidates[0];
+    const runner = candidates[1];
+    const decisive = candidates.length === 1 || top.score >= 90 || (runner && top.score - runner.score >= 20);
+    if (!decisive) {
+      return askWhichCandidate(query, candidates, kind);
+    }
+    // The open is VISIBLE — the cursor performs it (optionally with an app).
+    let openPromise: Promise<ActionVerification> | null = null;
+    const label = step.params.openWith ? `${top.name} with ${step.params.openWith}` : top.name;
+    await ghostPerformOpen({
+      label,
+      act: () => { openPromise = openPickedTarget({ label: top.name, path: top.path, kind: top.kind }, step.params.openWith); },
+    });
+    const result = await (openPromise ?? openPickedTarget({ label: top.name, path: top.path, kind: top.kind }, step.params.openWith));
+    if (result.ok) contextStore.update({ lastOpenedPath: top.path });
     return fromVerification(result);
   },
 
@@ -548,12 +742,17 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
           evidence: [`hits: ${res.hits.length}`, opened.ok ? `opened ${first}` : "open failed"],
         };
       }
+      // Store the hits as pending choices — "open it" / "open the second
+      // one" works right after, per the search → confirm → open flow.
+      const searchChoices = res.hits.slice(0, 5).map((h) => ({ label: path.basename(h), path: h, kind: "file" as const }));
+      contextStore.update({ pendingChoices: searchChoices, pendingQuery: query, pendingKind: "file" });
       return {
         success: true,
         output:
           `Found ${res.hits.length} matching item${res.hits.length > 1 ? "s" : ""}:\n${res.hits.map((h) => `• ${h}`).join("\n")}` +
-          (contentLines ? `\nContents also mention "${query}" in:\n${res.contentHits!.slice(0, 8).map((h) => `• ${h}`).join("\n")}` : ""),
-        note: "file-search",
+          (contentLines ? `\nContents also mention "${query}" in:\n${res.contentHits!.slice(0, 8).map((h) => `• ${h}`).join("\n")}` : "") +
+          `\n\nOpen one? Say "open it" or "open the second one" — or "open it with <app>".`,
+        note: "file-search: results listed for the follow-up flow",
         evidence: [`searched: ${query}`, wantContent ? `content grep: ${contentLines} hit(s)` : "name-only"],
       };
     }
@@ -620,8 +819,36 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
   },
 
   async compose_email(step, _ctx) {
-    const result = await openBrowserSurface(step.params.url);
-    return fromVerification(result);
+    const to = String(step.params.to ?? "").trim();
+    const subject = String(step.params.subject ?? "").trim();
+    const body = String(step.params.body ?? "").trim();
+    // Only a real email address goes into the Gmail compose URL — a name like
+    // "dhruv" would silently corrupt the recipient field. mailto: passes
+    // through untouched (the parser/agent built it deliberately).
+    const rawUrl = String(step.params.url ?? "");
+    const url = rawUrl.startsWith("mailto:")
+      ? rawUrl
+      : gmailComposeUrl({ to: looksLikeEmail(to) ? to : "", subject, body });
+    // The compose surface opens VISIBLE — the cursor performs it.
+    let surfPromise: Promise<ActionVerification> | null = null;
+    await ghostPerformOpen({
+      label: to ? `email to ${to}` : "new email",
+      act: () => { surfPromise = openBrowserSurface(url); },
+    });
+    const result = await (surfPromise ?? openBrowserSurface(url));
+    if (!result.ok) return fromVerification(result);
+    contextStore.update({ activeWebsite: "gmail", activeUrl: url });
+
+    return {
+      success: true,
+      output: to
+        ? looksLikeEmail(to)
+          ? `Compose window is open for ${to}${subject ? ` — subject "${subject}"` : ""}${body ? ", body filled" : ""}. Check it and hit Send.`
+          : `Compose window is open${subject ? ` with subject "${subject}"` : ""} — but "${to}" isn't an email address. Give me the full address and I'll open it addressed.`
+        : `Compose window is open${subject || body ? " with the details filled" : ""}. Tell me the recipient — say "to someone@gmail.com" — and I'll open it addressed.`,
+      note: "gmail compose surface opened with details",
+      evidence: [...(result.evidence ?? []), `compose url: ${url.slice(0, 120)}`],
+    };
   },
 
   async compose_message(step, _ctx) {
@@ -1070,6 +1297,37 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
     if (op === "remove") {
       const res = removeAccount(String(step.params.account ?? ""));
       return { success: res.ok, output: res.ok ? `Removed account "${res.removed}".` : res.error!, note: "mailwing account remove" };
+    }
+    if (op === "switch") {
+      // "switch my gmail" with no named account → the OTHER account.
+      const wanted = String(step.params.account ?? step.target ?? "").trim();
+      const target = wanted && wanted !== "other" ? wanted : otherAccountIdOrLabel() ?? "";
+      if (!target) {
+        const accounts = listAccounts();
+        if (accounts.length === 0) {
+          // No vault accounts — do the web thing: the other signed-in Gmail.
+          const url = "https://mail.google.com/mail/u/1/";
+          let surfPromise: Promise<ActionVerification> | null = null;
+          await ghostPerformOpen({ label: "other Gmail account", act: () => { surfPromise = openBrowserSurface(url); } });
+          const opened = await (surfPromise ?? openBrowserSurface(url));
+          return {
+            success: opened.ok,
+            output: opened.ok
+              ? "No MailWing accounts configured, so I opened your other signed-in Gmail account in the browser."
+              : opened.summary,
+            note: "switch: no vault accounts → web fallback",
+            evidence: opened.evidence,
+          };
+        }
+        return { success: false, output: "There's only one mail account — nothing to switch to. Add another in Settings → MailWing.", note: "switch: single account" };
+      }
+      const res = setDefaultAccount(target);
+      return {
+        success: res.ok,
+        output: res.ok ? `Switched the default mail account to "${res.label}".` : `Couldn't switch — ${res.error}`,
+        note: res.ok ? "mailwing default account switched" : "mailwing switch failed",
+        evidence: res.ok ? [`default: ${res.label}`] : [],
+      };
     }
     if (op === "test") {
       const res = await testAccount(step.params.account);

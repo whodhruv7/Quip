@@ -21,7 +21,20 @@ export interface ExecutionContextState {
   lastReadPage?: string;
   /** Comma-separated emails from the last ghost extraction — lets "email him" work. */
   lastExtractedEmails?: string;
+  /** Pending file/folder choices — powers the follow-up flow
+   *  ("I found 3 resumes — open the first one?" → "open the second one"). */
+  pendingChoices?: PendingChoice[];
+  /** The search query that produced the pending choices ("search again"). */
+  pendingQuery?: string;
+  /** What kind of search produced them. */
+  pendingKind?: "file" | "folder" | "any";
   updatedAt: number;
+}
+
+export interface PendingChoice {
+  label: string;
+  path: string;
+  kind: "file" | "folder" | "project";
 }
 
 const TTL_MS = 30 * 60 * 1000; // 30 minutes
@@ -56,6 +69,9 @@ export const contextStore = {
     if (state.lastSelectedEntity) parts.push(`selected="${state.lastSelectedEntity}"`);
     if (state.lastReadPage) parts.push(`lastRead=${state.lastReadPage.length} chars`);
     if (state.lastExtractedEmails) parts.push(`emails=${state.lastExtractedEmails.slice(0, 60)}`);
+    if (state.pendingChoices && state.pendingChoices.length > 0) {
+      parts.push(`pendingChoices=${state.pendingChoices.length} (user may say "open it" / "open the second one")`);
+    }
     return parts.length ? `Current context: ${parts.join(", ")}` : "";
   },
 
