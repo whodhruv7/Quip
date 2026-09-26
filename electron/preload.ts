@@ -393,6 +393,9 @@ const api = {
     ipcRenderer.invoke(IPC.PROBLEM_DIARY_EXPORT) as Promise<{ ok: boolean; path?: string; count?: number; error?: string }>,
   problemDiaryClear: (scope?: "resolved" | "all") =>
     ipcRenderer.invoke(IPC.PROBLEM_DIARY_CLEAR, scope) as Promise<{ ok: boolean; removed: number }>,
+  /** UX self-audit — report a display problem the renderer noticed. */
+  logUxIssue: (issue: string, where?: string) =>
+    ipcRenderer.send(IPC.LOG_UX_ISSUE, { issue, where }),
   onProblemDiaryChanged: (cb: (stats: import("./shared").ProblemDiaryStats) => void) => {
     const handler = (_e: unknown, data: any) => cb(data);
     ipcRenderer.on(IPC.PROBLEM_DIARY_CHANGED, handler as any);

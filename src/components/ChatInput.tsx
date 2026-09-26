@@ -151,6 +151,7 @@ export function ChatInput({ onSend, busy, companionId }: ChatInputProps) {
 
   return (
     <div
+      data-ux="composer"
       className="flex flex-col px-3 py-2.5"
       style={{
         borderTop: "1px solid rgba(var(--quip-line), 0.08)",

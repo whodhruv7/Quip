@@ -541,10 +541,20 @@ const ORDINALS: Record<string, number> = {
   fourth: 4, "4th": 4, fifth: 5, "5th": 5, sixth: 6, "6th": 6,
 };
 
-/** Pure: parse "the second one" / "number 3" / "2" / "last" → 1-based index. */
+/** Pure: parse "the second one" / "number 3" / "2" / "dusra" / "last" → 1-based index. */
 export function parsePendingChoice(text: string): number | null {
   const t = text.trim().toLowerCase();
   if (!t) return null;
+  // Hinglish ordinals users actually say — "pehla", "dusra wala", "teesri".
+  const hinglish = t.match(/\b(pehla|pehli|pehla\s+wala|dusra|doosra|dusri|doosri|dusra\s+wala|teesra|teesri|chautha)\b/);
+  if (hinglish) {
+    const word = hinglish[1].split(/\s+/)[0];
+    const map: Record<string, number> = {
+      pehla: 1, pehli: 1, dusra: 2, doosra: 2, dusri: 2, doosri: 2,
+      teesra: 3, teesri: 3, chautha: 4,
+    };
+    return map[word] ?? null;
+  }
   const ordinal = t.match(/\b(first|1st|second|2nd|third|3rd|fourth|4th|fifth|5th|sixth|6th)\b/);
   if (ordinal) return ORDINALS[ordinal[1]];
   if (/\blast\b/.test(t)) return -1;
@@ -560,8 +570,10 @@ export function parsePendingChoice(text: string): number | null {
  * Pure: with a pending-choice list on screen, map a short reply onto an
  * action — "open it" / "the second one" / "no" / "search again" /
  * "open it with vlc" / "vlc me kholo".
+ * `pendingLabels` (optional) enables reply-by-name ("excel") and
+ * reply-by-type ("the pdf one") when the names are on screen.
  */
-export function matchPendingFollowup(text: string): PendingFollowup | null {
+export function matchPendingFollowup(text: string, pendingLabels?: string[]): PendingFollowup | null {
   const t = text.trim().toLowerCase().replace(/[.!?]+$/, "").replace(/\s+/g, " ");
   if (!t) return null;
 
@@ -601,6 +613,28 @@ export function matchPendingFollowup(text: string): PendingFollowup | null {
       .trim();
     const choice = parsePendingChoice(stripped || "1");
     if (choice !== null) return { kind: "choice", choice };
+  }
+
+  // Reply-by-name ("excel") or by file type ("the pdf one") — the user points
+  // at a listed candidate without using its position. Only for SHORT replies
+  // (≤5 words) so real commands never hijack the pending list.
+  if (pendingLabels && pendingLabels.length > 0 && t.split(/\s+/).length <= 5) {
+    for (let i = 0; i < pendingLabels.length; i++) {
+      const label = (pendingLabels[i] ?? "").toLowerCase();
+      const base = label.replace(/\.[^.]+$/, "");
+      if (
+        (base.length > 2 && t.includes(base)) ||
+        (label.length > 2 && t.includes(label))
+      ) {
+        return { kind: "choice", choice: i + 1 };
+      }
+    }
+    for (let i = 0; i < pendingLabels.length; i++) {
+      const ext = pendingLabels[i]?.match(/\.([A-Za-z0-9]{2,4})$/)?.[1]?.toLowerCase();
+      if (ext && new RegExp(`\\b${ext}\\b`).test(t)) {
+        return { kind: "choice", choice: i + 1 };
+      }
+    }
   }
 
   return null;
@@ -689,7 +723,10 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
   // into app/site routing.
   const pending = context.pendingChoices;
   if (pending && pending.length > 0) {
-    const followup = matchPendingFollowup(text);
+    const followup = matchPendingFollowup(
+      text,
+      pending.map((c) => c.label)
+    );
     if (followup?.kind === "cancel") {
       return {
         ...base,

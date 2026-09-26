@@ -43,6 +43,8 @@
     "../electron/engine/orchestrator.ts",
     "../electron/engine/file-ops.ts",
     "../electron/engine/app-discovery.ts",
+    "../electron/engine/file-discovery.ts",
+    "../electron/engine/fix-suggestions.ts",
     "../electron/engine/system-control.ts",
     "../electron/engine/tool-registry.ts",
     "../electron/engine/smtp-client.ts",

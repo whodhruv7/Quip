@@ -82,16 +82,81 @@ export interface LocalCandidate {
   source: "exact-path" | "known-folder" | "project-scan" | "common-scan" | "recent" | "context";
 }
 
-/** Common user folders searched before any deeper scan. */
+/** Common user folders searched before any deeper scan — OneDrive-aware.
+ *  Windows "folder backup" silently redirects the REAL Desktop/Documents to
+ *  ~/OneDrive/…; only checking the plain folders made Quip "not find" files
+ *  that clearly existed. Both locations are searched, plain first. */
+function knownFolderVariants(name: string): string[] {
+  const oneDrives = [
+    process.env.OneDrive,
+    process.env.OneDriveConsumer,
+    process.env.OneDriveCommercial,
+  ].filter((v): v is string => !!v);
+  const out = [path.join(HOME, name), ...oneDrives.map((od) => path.join(od, name))];
+  return [...new Set(out)];
+}
+
 function commonUserFolders(): string[] {
-  return [
-    path.join(HOME, "Desktop"),
-    path.join(HOME, "Documents"),
-    path.join(HOME, "Downloads"),
-    path.join(HOME, "Pictures"),
-    path.join(HOME, "Music"),
-    path.join(HOME, "Videos"),
-  ];
+  const names = ["Desktop", "Documents", "Downloads", "Pictures", "Music", "Videos"];
+  const out: string[] = [];
+  for (const n of names) {
+    for (const v of knownFolderVariants(n)) {
+      if (!out.includes(v)) out.push(v);
+    }
+  }
+  return out;
+}
+
+/** Bounded Levenshtein ratio — last-resort similarity for typos. */
+function similarity(a: string, b: string): number {
+  if (a === b) return 1;
+  if (!a.length || !b.length) return 0;
+  const max = Math.max(a.length, b.length);
+  if (Math.abs(a.length - b.length) > Math.floor(max * 0.4)) return 0;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(
+        prev[j] + 1,
+        cur[j - 1] + 1,
+        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+    }
+    prev = cur;
+  }
+  return 1 - prev[b.length] / max;
+}
+
+/**
+ * Score one entry name against the query (both lowercase), 0–100 scale:
+ * 92 exact name · 90 exact base name · 80 prefix · 68 substring ·
+ * 72/62 token coverage · 50–65 fuzzy typo. Exported for tests.
+ */
+export function scoreEntryName(queryLower: string, entryNameLower: string): number {
+  const baseNoExt = entryNameLower.replace(/\.[^.]+$/, "");
+  if (entryNameLower === queryLower) return 92;
+  if (baseNoExt === queryLower) return 90;
+  if (baseNoExt.startsWith(queryLower) && queryLower.length >= 3) return 80;
+  if (baseNoExt.includes(queryLower) && queryLower.length >= 3) return 68;
+
+  const qTokens = queryLower.split(/[\s._-]+/).filter((t) => t.length > 1);
+  const nTokens = baseNoExt.split(/[\s._-]+/).filter(Boolean);
+  if (qTokens.length > 0) {
+    let hits = 0;
+    for (const t of qTokens) {
+      if (nTokens.some((n) => n === t)) hits += 1;
+      else if (nTokens.some((n) => n.startsWith(t) && t.length >= 3)) hits += 0.75;
+      else if (nTokens.some((n) => n.includes(t) && t.length >= 4)) hits += 0.5;
+    }
+    const coverage = hits / qTokens.length;
+    if (coverage >= 1) return 72;
+    if (coverage >= 0.7) return 62;
+  }
+
+  const fuzz = similarity(queryLower, baseNoExt);
+  if (fuzz >= 0.82 && queryLower.length >= 4) return Math.round(50 + (fuzz - 0.82) * 30);
+  return 0;
 }
 
 /** Depth-bounded name matching — collects every plausible hit, not just one. */
@@ -116,15 +181,9 @@ function walkCollect(
     if (entry.name.startsWith(".") && entry.name !== ".env") continue;
     if (SKIP_DIRS.has(entry.name)) continue;
     const full = path.join(root, entry.name);
-    const nameLower = entry.name.toLowerCase();
-    const baseNoExt = nameLower.replace(/\.[^.]+$/, "");
-    let score = 0;
-    if (nameLower === queryLower) score = 92;
-    else if (baseNoExt === queryLower) score = 90;
-    else if (nameLower.startsWith(queryLower) && queryLower.length >= 3) score = 80;
-    else if (nameLower.includes(queryLower) && queryLower.length >= 3) score = 68;
-    if (score > 0) {
-      score -= depth * 2; // shallower matches rank higher
+    const matched = scoreEntryName(queryLower, entry.name.toLowerCase());
+    if (matched > 0) {
+      const score = matched - depth * 2; // shallower matches rank higher
       out.push({
         path: full,
         name: entry.name,

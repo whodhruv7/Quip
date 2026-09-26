@@ -192,6 +192,19 @@ export interface AutonomyAPI {
   problemDiaryExport: () => Promise<{ ok: boolean; path?: string; count?: number; error?: string }>;
   problemDiaryClear: (scope?: "resolved" | "all") => Promise<{ ok: boolean; removed: number }>;
   onProblemDiaryChanged: (cb: (stats: import("../../electron/shared").ProblemDiaryStats) => void) => () => void;
+  /** UX self-audit — report a display problem the renderer noticed. */
+  logUxIssue: (issue: string, where?: string) => void;
+  // ─── Ghost Cursor / Care routines / App watcher ───
+  /** Renderer → main: resolved accent colors so the cursor matches the theme. */
+  setGhostCursorStyle: (style: import("../../electron/shared").GhostCursorStyle) => void;
+  getCareEnabled: () => Promise<{ enabled: boolean }>;
+  setCareEnabled: (enabled: boolean) => Promise<{ ok: boolean; enabled: boolean }>;
+  onCareEvent: (cb: (event: import("../../electron/shared").CareEventPayload) => void) => () => void;
+  getAppNoticeEnabled: () => Promise<{ enabled: boolean }>;
+  setAppNoticeEnabled: (enabled: boolean) => Promise<{ ok: boolean; enabled: boolean }>;
+  /** Direct app focus — never routes through chat parsing. */
+  focusApp: (target: string) => Promise<{ ok: boolean; message: string }>;
+  onAppNotice: (cb: (notice: import("../../electron/shared").AppNoticePayload) => void) => () => void;
   // ─── Drag & drop + CAP-060 autonomy budget ───
   getPathForFile: (file: File) => string;
   getQuestBudget: () => Promise<{ budget: number }>;

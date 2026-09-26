@@ -33,8 +33,13 @@ export interface ExecutionContextState {
 
 export interface PendingChoice {
   label: string;
+  /** Files/folders: the on-disk path. Apps: the executable (may be empty when
+   *  the launch goes through appUserModelId). */
   path: string;
-  kind: "file" | "folder" | "project";
+  kind: "file" | "folder" | "project" | "app";
+  /** App-only launch hints (an app near-miss "did you mean Excel?" choice). */
+  appUserModelId?: string;
+  procName?: string;
 }
 
 const TTL_MS = 30 * 60 * 1000; // 30 minutes

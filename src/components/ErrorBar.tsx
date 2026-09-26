@@ -86,6 +86,7 @@ export function ErrorBar({ mode, onOpenProblems }: ErrorBarProps) {
 
   return (
     <div
+      data-ux="error-status"
       style={{
         position: "fixed",
         left: 10,

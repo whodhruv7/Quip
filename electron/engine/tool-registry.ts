@@ -22,6 +22,9 @@ import {
   resolveApp,
   launchApp,
   invalidateAppIndex as invalidateDiscoveryCache,
+  getLastScanDiagnostic,
+  scoreAppMatch,
+  normalizeAppName,
   type InstalledApp,
 } from "./app-discovery";
 import { executeDesktopAction } from "./desktop-controller";
@@ -296,8 +299,13 @@ async function openWithApp(filePath: string, appName: string): Promise<ActionVer
   return { ok: true, summary: `Opened it with ${appEntry.name}.`, evidence: [`launch: ${appEntry.executable}`, `file: ${filePath}`] };
 }
 
-/** Open a pending choice (from the follow-up list), optionally with an app. */
+/** Open a pending choice (from the follow-up list), optionally with an app.
+ *  App-kind picks never reach here (handlePendingOpen launches them via
+ *  launchApp) — the guard below is a defensive narrowing. */
 async function openPickedTarget(pick: PendingChoice, openWith?: string): Promise<ActionVerification> {
+  if (pick.kind === "app") {
+    return { ok: false, summary: `App picks launch directly — ask for "${pick.label}" again.`, evidence: ["app kind in openPickedTarget"], error: "wrong-pick-kind" };
+  }
   let exists = false;
   try {
     exists = fs.existsSync(pick.path);
@@ -333,7 +341,7 @@ async function openPickedTarget(pick: PendingChoice, openWith?: string): Promise
   }
 }
 
-/** Shared pending-choice handler for open_file / open_folder. */
+/** Shared pending-choice handler for open_file / open_folder / open_app. */
 async function handlePendingOpen(p: Record<string, string>): Promise<ToolResult | null> {
   if (p.fromPending === "cancel") {
     contextStore.update({ pendingChoices: [], pendingQuery: undefined, pendingKind: undefined });
@@ -348,6 +356,33 @@ async function handlePendingOpen(p: Record<string, string>): Promise<ToolResult 
   if (!pick) {
     contextStore.update({ pendingChoices: [] });
     return { success: false, output: "That option isn't on the list anymore — tell me the file or folder name again.", note: "stale pending choice" };
+  }
+  // App picks launch through the installed-app launcher (visible too).
+  if (pick.kind === "app") {
+    let appPromise: Promise<ActionVerification> | null = null;
+    await ghostPerformOpen({
+      label: pick.label,
+      act: () => {
+        appPromise = launchApp({
+          name: pick.label,
+          executable: pick.path,
+          appUserModelId: pick.appUserModelId,
+          procName: pick.procName,
+          confidence: 1,
+        });
+      },
+    });
+    const result = await (appPromise ?? launchApp({
+      name: pick.label,
+      executable: pick.path,
+      appUserModelId: pick.appUserModelId,
+      procName: pick.procName,
+      confidence: 1,
+    }));
+    if (result.ok) {
+      contextStore.update({ activeApp: pick.label, pendingChoices: [] });
+    }
+    return fromVerification(result);
   }
   // The pick is VISIBLE too — the cursor performs the open.
   let openPromise: Promise<ActionVerification> | null = null;
@@ -420,14 +455,53 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
         evidence: result.evidence,
       };
     }
-    // Maybe it's actually a website the user calls an "app"
-    const web = await openBrowserSurface(`https://www.google.com/search?q=${encodeURIComponent(query)}`);
+
+    // Honest failure + near-miss offer. If the index is empty because the
+    // SCAN broke, say so — "app not found" would be a lie. And NO surprise
+    // browser windows: the old fallback opened a Google search page on every
+    // miss, which looked like Quip doing the wrong thing.
+    const scanIssue = apps.length === 0 ? getLastScanDiagnostic() : null;
+    if (scanIssue) {
+      return {
+        success: false,
+        output: `I couldn't check installed apps — the app list failed to load (${scanIssue}). Say "rescan apps" and try again.`,
+        note: "app index scan failed",
+        evidence: ["app index is empty", scanIssue],
+      };
+    }
+
+    // Near-misses — ASK instead of failing ("open sheets" should offer Excel,
+    // not die). Stored as kind:"app" picks so "yes" / "first" launches it.
+    const qNorm = normalizeAppName(query);
+    const near: Array<{ app: InstalledApp; score: number }> = [];
+    for (const app of apps) {
+      const score = scoreAppMatch(qNorm, normalizeAppName(app.name));
+      if (score >= 0.3 && score < 0.5) near.push({ app, score });
+    }
+    near.sort((a, b) => b.score - a.score);
+    const top = near.slice(0, 3);
+    if (top.length > 0) {
+      const choices: PendingChoice[] = top.map((t) => ({
+        label: t.app.name,
+        path: t.app.executable ?? "",
+        kind: "app",
+        appUserModelId: t.app.appUserModelId,
+        procName: t.app.procName,
+      }));
+      contextStore.update({ pendingChoices: choices, pendingQuery: query, pendingKind: "any" });
+      const listed = choices.map((c, i) => `${i + 1}. ${c.label}`).join("\n");
+      return {
+        success: true,
+        output: `I couldn't find an app called "${query}". Did you mean one of these?\n${listed}\n\nSay "first", "second", or the app's name — or "no" to drop it.`,
+        note: "app near-miss — following up with the user",
+        evidence: [`candidates: ${choices.length}`],
+      };
+    }
+
     return {
       success: false,
       output: `I couldn't find an installed app called "${query}".`,
-      note: web.ok
-        ? "app not found — opened a web search so you can double-check the name"
-        : "app not found",
+      note: "app not found in Start Menu, Program Files or Store",
       evidence: ["no Start Menu / Program Files / Store match"],
     };
   },
@@ -512,7 +586,13 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
     }
     const top = candidates[0];
     const runner = candidates[1];
-    const decisive = candidates.length === 1 || top.score >= 90 || (runner && top.score - runner.score >= 20);
+    // Decisive = exact/strong hit (≥90), a clear 20-point lead over the
+    // runner-up, or a lone candidate at ≥65. A lone WEAK hit (a fuzzy
+    // typo match) is a "did you mean this?" question — never a guess.
+    const decisive =
+      top.score >= 90 ||
+      (runner && top.score - runner.score >= 20 && top.score >= 65) ||
+      (candidates.length === 1 && top.score >= 65);
     if (!decisive) {
       return askWhichCandidate(query, candidates, "folder");
     }
@@ -542,7 +622,11 @@ const Executors: Record<string, (step: TaskStep, ctx: ToolContext) => Promise<To
     }
     const top = candidates[0];
     const runner = candidates[1];
-    const decisive = candidates.length === 1 || top.score >= 90 || (runner && top.score - runner.score >= 20);
+    // Same decisive rule as folders — weak lone fuzzy hits ask, not open.
+    const decisive =
+      top.score >= 90 ||
+      (runner && top.score - runner.score >= 20 && top.score >= 65) ||
+      (candidates.length === 1 && top.score >= 65);
     if (!decisive) {
       return askWhichCandidate(query, candidates, kind);
     }

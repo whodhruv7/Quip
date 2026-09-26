@@ -86,6 +86,18 @@ function localProgramsDirs(): string[] {
   ].filter(Boolean);
 }
 
+/** Last scan failure reason — surfaced by open_app instead of a silent
+ *  "app not found" when the index is empty because the scan broke. */
+let lastScanDiagnostic: string | null = null;
+
+export function getLastScanDiagnostic(): string | null {
+  return lastScanDiagnostic;
+}
+
+function noteScanFailure(source: string, detail: string): void {
+  lastScanDiagnostic = `${source}: ${detail}`;
+}
+
 /** One PowerShell round-trip resolves ALL Start Menu .lnk targets. */
 async function scanStartMenuShortcuts(): Promise<InstalledApp[]> {
   const dirs = startMenuDirs();
@@ -101,6 +113,13 @@ Get-ChildItem -Path @(${dirList}) -Recurse -Filter *.lnk -ErrorAction SilentlyCo
     `powershell -NoProfile -ExecutionPolicy Bypass -Command "${ps.replace(/"/g, '\\"').replace(/\r?\n/g, "; ")}"`,
     25000
   );
+  if (!res) {
+    noteScanFailure("start-menu scan", "PowerShell could not be spawned");
+    return [];
+  }
+  if (res.code !== 0) {
+    noteScanFailure("start-menu scan", `exit ${res.code}: ${(res.stderr || "no stderr").slice(0, 120)}`);
+  }
   if (!res || res.code !== 0 || !res.stdout) return [];
 
   const apps: InstalledApp[] = [];
@@ -214,6 +233,8 @@ export async function buildInstalledAppIndex(
   }
 
   // 3. fresh scan
+  const isWin = process.platform === "win32";
+  if (!isWin) lastScanDiagnostic = null;
   const [shortcuts, progs, uwp] = await Promise.all([
     scanStartMenuShortcuts(),
     scanProgramDirs(),
@@ -238,6 +259,18 @@ export async function buildInstalledAppIndex(
   }
 
   memCache = { apps: merged, at: Date.now() };
+
+  // Loud diagnostics: an empty index on Windows means the scans failed
+  // (PowerShell blocked / policy). Remember WHY so open_app can tell the
+  // user the truth instead of "app not found".
+  if (isWin && merged.length === 0) {
+    if (!lastScanDiagnostic) {
+      lastScanDiagnostic = "all scans returned empty (no Start Menu entries, no Program Files exes, no UWP apps)";
+    }
+  } else if (merged.length > 0) {
+    lastScanDiagnostic = null;
+  }
+
   if (userDataPath) {
     try {
       fs.writeFileSync(

@@ -156,6 +156,11 @@ export const IPC = {
   PROBLEM_DIARY_CLEAR: "quip:problem-diary-clear",
   /** main → renderer: stats changed (new problem / resolved / cleared). */
   PROBLEM_DIARY_CHANGED: "quip:problem-diary-changed",
+  /** UX self-audit — the renderer reports its own display problems
+   *  (element overflowing the window, clipped composer, stuck overlay).
+   *  Issues land in the Problem Diary as source "watch" so "the error bar
+   *  went off-screen" becomes a recorded fact, not a silent glitch. */
+  LOG_UX_ISSUE: "quip:log-ux-issue",
 
   // ── CAP-060 autonomy budget (Settings → Desktop) ──
   QUEST_BUDGET_GET: "quip:quest-budget-get",

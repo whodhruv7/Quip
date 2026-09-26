@@ -636,11 +636,72 @@ export default function App() {
     setQuipSay(lines[Math.floor(Math.random() * lines.length)]);
   }, [taskOutcome?.at]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ─── UX self-audit — Quip notices its own display problems ───────────────
+  // Every user-facing surface carries data-ux="…". On mount, resize and on a
+  // slow timer, we check whether a surface sticks out of the viewport or the
+  // page grew a horizontal scrollbar. When it does, the issue is REPORTED
+  // (main → Problem Diary, auto-severity) instead of silently sitting there
+  // for the user to describe later. Signature-deduped per session.
+  useEffect(() => {
+    const reported = new Set<string>();
+    let cooldownUntil = 0;
+
+    const audit = () => {
+      if (Date.now() < cooldownUntil) return;
+      try {
+        const doc = document.documentElement;
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const issues: Array<{ sig: string; issue: string; where: string }> = [];
+
+        if (doc.scrollWidth > vw + 2) {
+          issues.push({
+            sig: "page-hoverflow",
+            issue: `page is horizontally scrollable (content ${doc.scrollWidth}px vs window ${vw}px)`,
+            where: "app-shell",
+          });
+        }
+
+        doc.querySelectorAll<HTMLElement>("[data-ux]").forEach((el) => {
+          const r = el.getBoundingClientRect();
+          if (r.width === 0 && r.height === 0) return;
+          const name = el.dataset.ux ?? "surface";
+          if (r.right > vw + 2 || r.bottom > vh + 2 || r.left < -2 || r.top < -2) {
+            issues.push({
+              sig: `${name}-out(r${Math.round(r.right)},b${Math.round(r.bottom)},l${Math.round(r.left)},t${Math.round(r.top)})`,
+              issue: `${name} sticks out of the window (right ${Math.round(r.right)}/${vw}, bottom ${Math.round(r.bottom)}/${vh}, left ${Math.round(r.left)}, top ${Math.round(r.top)})`,
+              where: name,
+            });
+          }
+        });
+
+        if (issues.length === 0) return;
+        cooldownUntil = Date.now() + 5000; // max one report burst per 5s
+        for (const it of issues) {
+          if (reported.has(it.sig)) continue;
+          reported.add(it.sig);
+          window.quip?.logUxIssue?.(it.issue, it.where);
+        }
+      } catch {
+        /* the auditor must never break the UI it audits */
+      }
+    };
+
+    audit();
+    window.addEventListener("resize", audit);
+    const t = window.setInterval(audit, 15000); // catch drift while running
+    return () => {
+      window.removeEventListener("resize", audit);
+      window.clearInterval(t);
+    };
+  }, []);
+
   // ─── Shared chat body (used by both panel and full layouts) ──────────────
   const chatBody = (
     <>
       {error && (
         <div
+          data-ux="error-bar"
           style={{
             padding: "8px 12px",
             fontSize: 11,
@@ -651,9 +712,25 @@ export default function App() {
             alignItems: "center",
             justifyContent: "space-between",
             gap: 8,
+            // THE overflow fix: without minWidth:0 a long unbroken error
+            // (a path, a URL) refuses to shrink and pushed this bar clean
+            // past the panel edge — the "error bar out of screen" bug.
+            minWidth: 0,
+            maxHeight: 88,
+            overflowY: "auto",
           }}
         >
-          <span style={{ flex: 1 }}>{error}</span>
+          <span
+            style={{
+              flex: 1,
+              minWidth: 0,
+              overflowWrap: "anywhere",
+              wordBreak: "break-word",
+              lineHeight: 1.45,
+            }}
+          >
+            {error}
+          </span>
           {errorKind === "no-key" ? (
             <button
               onClick={() => openSettings("ai")}

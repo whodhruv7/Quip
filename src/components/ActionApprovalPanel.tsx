@@ -54,6 +54,7 @@ export function ActionApprovalPanel({ request, companionColor, onResolve }: Acti
 
   return (
     <motion.div
+      data-ux="approval-card"
       ref={panelRef}
       tabIndex={-1}
       onKeyDown={handleKeyDown}

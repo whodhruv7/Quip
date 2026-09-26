@@ -168,6 +168,8 @@ import {
   exportProblemsMarkdown as diaryExport,
   problemStats as diaryStats,
 } from "./engine/problem-diary";
+import { suggestFor, suggestedRetryPrompt } from "./engine/fix-suggestions";
+import { buildInstalledAppIndex } from "./engine/app-discovery";
 
 // The orchestrator uses the model ONLY for ambiguous intent (compact schema,
 // one small call) — deterministic tools handle the obvious actions.
@@ -371,6 +373,18 @@ function fullAppBounds(): { width: number; height: number } {
   };
 }
 
+/** Panel size CLAMPED to the real work area. On a 1366×768 laptop at 150%
+ *  scaling the work area can be ~512 logical px tall — a fixed 560px panel
+ *  anchored bottom-right pushed its TOP (error bar / approval card) off the
+ *  screen, and nothing reported it. The panel now always fits. */
+function panelModeSize(): { width: number; height: number } {
+  const area = screen.getPrimaryDisplay().workArea;
+  return {
+    width: Math.min(PANEL_MODE_SIZE.width, area.width - 24),
+    height: Math.min(PANEL_MODE_SIZE.height, area.height - 24),
+  };
+}
+
 /** True when the mode is an app-sized layout (as opposed to the sprite). */
 export function isFullLayout(mode: WindowMode): boolean {
   return mode === "full" || mode === "fullscreen";
@@ -399,8 +413,9 @@ function setWindowMode(win: BrowserWindow, mode: WindowMode) {
 
   let next: { x: number; y: number; width: number; height: number };
   if (mode === "panel") {
-    const c = anchorBottomRight(cur, PANEL_MODE_SIZE.width, PANEL_MODE_SIZE.height);
-    next = { x: c.x, y: c.y, width: PANEL_MODE_SIZE.width, height: PANEL_MODE_SIZE.height };
+    const size = panelModeSize();
+    const c = anchorBottomRight(cur, size.width, size.height);
+    next = { x: c.x, y: c.y, width: size.width, height: size.height };
   } else if (mode === "full") {
     const size = fullAppBounds();
     next = {
@@ -430,7 +445,10 @@ function setWindowMode(win: BrowserWindow, mode: WindowMode) {
   win.setResizable(isFullLayout(mode));
   win.setAlwaysOnTop(!isFullLayout(mode), "screen-saver");
   if (isFullLayout(mode)) {
-    win.setMinimumSize(760, 520);
+    // Minimum size must NEVER exceed the display — on small/scaled laptops a
+    // 760×520 minimum clipped the bottom edge of fullscreen mode.
+    const a = screen.getPrimaryDisplay().workArea;
+    win.setMinimumSize(Math.min(760, a.width), Math.min(520, a.height));
   } else {
     win.setMinimumSize(0, 0);
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
@@ -1348,6 +1366,70 @@ async function runTaskExecute(
       status: "running",
     } as TaskProgressPayload);
 
+    // ── Quip self-commands — instant, honest, no LLM round-trip ─────────
+    const lowerCmd = payload.command.trim().toLowerCase().replace(/[?.!]+$/, "");
+    if (
+      /^(show|open|see)\s+(my\s+)?(task\s+)?(diary|failures|errors?|problems)$/.test(lowerCmd) ||
+      /^what\s+(tasks?\s+)?(failed|went\s+wrong)$/.test(lowerCmd) ||
+      /^recent\s+(task\s+)?(failures|errors?|problems)$/.test(lowerCmd) ||
+      /^(kya\s+fail\s+hua|kya\s+problem\s+(hua|hai))$/.test(lowerCmd)
+    ) {
+      const problems = listProblems({ status: "open", limit: 6 });
+      const summary = problems.length
+        ? `Recent problems (newest first):\n${problems
+            .map((p) => {
+              const fix = suggestFor([`${p.title} ${p.detail}`])[0];
+              return `• ${new Date(p.lastSeen ?? p.firstSeen ?? Date.now()).toLocaleString()} — ${p.title.slice(0, 90)}${fix ? `\n  Fix: ${fix}` : ""}`;
+            })
+            .join("\n")}`
+        : "Nothing has failed recently — the last tasks went through clean.";
+      return {
+        requestId: payload.requestId,
+        success: true,
+        summary,
+        notes: ["read from Quip's problem diary — every failure is written down with its fix"],
+        answered: true,
+        stepsCompleted: 0,
+        stepsTotal: 0,
+        failures: [],
+        plan: planMetaFromBrain(payload.requestId, undefined, "task diary", false),
+      } as unknown as TaskResultPayload;
+    }
+    if (/^rescan\s+(my\s+)?(apps?|applications?|installed\s+apps?)$/.test(lowerCmd)) {
+      invalidateAppIndex();
+      void buildInstalledAppIndex(app.getPath("userData"), true)
+        .then((apps) => {
+          console.log(`[rescan] app index rebuilt: ${apps.length} apps`);
+          noteProblem({
+            source: "watch",
+            kind: "app-rescan",
+            severity: "low",
+            title: `App rescan finished — ${apps.length} apps indexed`,
+            detail: "Triggered by the user's \"rescan apps\" command.",
+          });
+        })
+        .catch((err) => {
+          noteProblem({
+            source: "watch",
+            kind: "app-rescan-failed",
+            severity: "medium",
+            title: "App rescan failed",
+            detail: String(err?.message ?? err).slice(0, 400),
+          });
+        });
+      return {
+        requestId: payload.requestId,
+        success: true,
+        summary: "Rescanning every installed app now — Start Menu, Program Files and Store. Give me a few seconds, then say \"open <app name>\" again.",
+        notes: ["app index invalidated and rebuild started"],
+        answered: true,
+        stepsCompleted: 0,
+        stepsTotal: 0,
+        failures: [],
+        plan: planMetaFromBrain(payload.requestId, undefined, "rescan apps", false),
+      } as unknown as TaskResultPayload;
+    }
+
     // ── Head Brain: understanding → plan → route (spec Phase 1/2) ──────
     // The orchestrator still executes, but now on the REFERENCE-RESOLVED
     // command, behind a clarification gate (never act on a guess), with the
@@ -1401,6 +1483,27 @@ async function runTaskExecute(
 
     const result = hubOutcome.result;
 
+    // Failure → Problem Diary + inline fix suggestions. Nothing disappears:
+    // the user sees WHY it failed, HOW it's usually solved, and (when one
+    // exists) a ready-made retry prompt — inline in the chat answer.
+    let fixNotes: string[] = [];
+    if (!result.success) {
+      const failureTexts = result.failures?.length ? result.failures : [result.summary].filter(Boolean);
+      if (failureTexts.length > 0) {
+        noteProblem({
+          source: "tool",
+          kind: "task-failed",
+          severity: "medium",
+          title: `task failed: ${payload.command.slice(0, 80)}`,
+          detail: failureTexts.map((f) => String(f).slice(0, 300)).join(" | ").slice(0, 800),
+          evidence: [hubOutcome.route],
+        });
+        fixNotes = suggestFor(failureTexts).map((s) => `Fix: ${s}`);
+        const retry = suggestedRetryPrompt(payload.command, failureTexts);
+        if (retry) fixNotes.push(`Try: ${retry}`);
+      }
+    }
+
     // Record task completion for companion evolution and timeline
     if (result.success && result.stepsTotal > 0) {
       try {
@@ -1419,7 +1522,7 @@ async function runTaskExecute(
       requestId: payload.requestId,
       success: result.success,
       summary: result.summary,
-      notes: result.notes,
+      notes: [...(result.notes ?? []), ...fixNotes],
       ...(result.failures?.length ? { failures: result.failures } : {}),
       ...(result.answered ? { answered: true } : {}),
       plan: planMetaFromBrain(payload.requestId, brainU, result.summary, result.stepsTotal === 0 && !result.answered),
@@ -2132,6 +2235,24 @@ ipcMain.handle(IPC.PROBLEM_DIARY_CLEAR, (_e, scope?: "resolved" | "all") => {
   const res = scope === "all" ? diaryClearAll() : diaryClearResolved();
   if (res.ok) broadcastToRenderers(IPC.PROBLEM_DIARY_CHANGED, diaryStats());
   return res;
+});
+
+// UX self-audit — the RENDERER reports its own display problems here
+// (element sticking out of the window, page grew a horizontal scrollbar …).
+// Nothing disappears silently: the issue lands in the Problem Diary
+// (source "watch", auto-severity) with a fix suggestion, so "the error bar
+// went off-screen" is a recorded, answerable fact instead of a one-time
+// glitch the user has to describe later.
+ipcMain.on(IPC.LOG_UX_ISSUE, (_e, payload: { issue: string; where?: string }) => {
+  const issue = String(payload?.issue ?? "").slice(0, 300);
+  if (!issue) return;
+  noteProblem({
+    source: "watch",
+    kind: "ux-overflow",
+    title: `UX: ${issue.slice(0, 120)}`,
+    detail: payload?.where ? `${payload.where}: ${issue}` : issue,
+  });
+  console.log(`[ux-audit] ${issue}`);
 });
 
 // ── Care routines + App watcher toggles (persisted small JSON files) ────────
