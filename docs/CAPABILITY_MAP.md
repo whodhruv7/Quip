@@ -21,6 +21,7 @@
 |---|---|---|
 | Device scan + knowledge index (diff-only, <50ms lookup) | Live | brain/device-index; verified boot-created stores |
 | Installed-app discovery + default handlers | Live | engine/app-discovery (24h TTL + diff) |
+| Launch verification (UWP-safe: process names for .exe, new-window evidence for Store apps, one-shot PowerShell snapshot) | Live | action-verifier snapshotSystemState + baseline verifyLaunched |
 | Window geometry clamp / multi-display | Live | window-geometry + display-metrics hook |
 | Battery telemetry (real, Windows WMI) | Live (Windows) / honest-unsupported (elsewhere) | 60s cache; honesty test |
 | Network reachability + transport journal | Live | connection-journal ring 80 |
