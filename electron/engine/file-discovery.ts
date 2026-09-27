@@ -79,7 +79,7 @@ export interface LocalCandidate {
   name: string;
   kind: "file" | "folder";
   score: number;
-  source: "exact-path" | "known-folder" | "project-scan" | "common-scan" | "recent" | "context";
+  source: "exact-path" | "known-folder" | "project-scan" | "common-scan" | "recent" | "context" | "location-hinted";
 }
 
 /** Common user folders searched before any deeper scan — OneDrive-aware.
@@ -259,16 +259,28 @@ export async function resolveLocalCandidates(
     }
   }
 
-  // 2. Known folders ("open downloads")
-  for (const word of q.split(/\s+/)) {
-    const folder = resolveKnownFolder(word);
-    if (folder) {
-      try {
-        if (fs.existsSync(folder)) {
-          all.push({ path: folder, name: path.basename(folder), kind: "folder", score: 95, source: "known-folder" });
+  // 2. Known folders ("open downloads") — but NOT when the query ALSO names
+  // something inside one: "invoice from downloads" wants the invoice file,
+  // and a score-95 folder candidate would beat every real match.
+  const LOCATION_RE = /\b(downloads?|download|documents?|document|docs|desktop|pictures?|photos?|music|videos?|onedrive)\b/i;
+  const hasLocation = LOCATION_RE.test(q);
+  const fileNoun = q
+    .replace(/\b(from|in|under|of|my|the|a|an|open|play|find|show|launch|kholo)\b/g, " ")
+    .replace(LOCATION_RE, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const wantsFileInsideFolder = hasLocation && fileNoun.length >= 2;
+  if (!wantsFileInsideFolder) {
+    for (const word of q.split(/\s+/)) {
+      const folder = resolveKnownFolder(word);
+      if (folder) {
+        try {
+          if (fs.existsSync(folder)) {
+            all.push({ path: folder, name: path.basename(folder), kind: "folder", score: 95, source: "known-folder" });
+          }
+        } catch {
+          /* skip */
         }
-      } catch {
-        /* skip */
       }
     }
   }
@@ -287,6 +299,15 @@ export async function resolveLocalCandidates(
       }
     } catch {
       /* fall through */
+    }
+  }
+
+  // 3.5. Location-hinted deep search FIRST ("invoice from downloads") — the
+  // named folder gets a deeper walk before the generic shallow sweep.
+  if (wantsFileInsideFolder) {
+    const hinted = resolveKnownFolder(LOCATION_RE.exec(q)![1]);
+    if (hinted) {
+      walkCollect(hinted, fileNoun, 0, 4, all, "location-hinted", deadline);
     }
   }
 

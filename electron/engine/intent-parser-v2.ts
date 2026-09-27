@@ -405,6 +405,39 @@ function routeOpenClause(clause: string): TaskStep | null {
     }
   }
 
+  // ── Explicit filesystem path — open it directly, NEVER name-munge ──────
+  // ("open C:\Users\me\My Files\resume.pdf" used to lose the "Files" token
+  // and search for a file called "my \\resume.pdf".)
+  if (/^(?:[a-z]:[\\/]|\\\\|~\/)/i.test(rest)) {
+    const isFile = /\.(docx?|pdf|txt|xlsx?|pptx?|png|jpe?g|gif|webp|bmp|svg|heic|mp3|wav|flac|m4a|ogg|mp4|mkv|avi|mov|webm|zip|rar|7z|csv|json|md|html?|log)$/i.test(rest);
+    return {
+      action: isFile ? "open_file" : "open_folder",
+      target: rest,
+      params: { query: rest, ...(isFile ? {} : { kind: "folder" }) },
+      description: `Open ${rest}`,
+    };
+  }
+
+  // ── File inside a named folder: "open my invoice from downloads" ────────
+  // A file IN a known folder, not the folder itself. The full clause stays in
+  // params.query so the resolver keeps the location hint AND the file name.
+  const locPhrase = rest.match(/\b(?:from|in|under|of)\s+(downloads?|download|documents?|document|docs|desktop|pictures?|photos?|music|videos?|onedrive)\b/i);
+  if (locPhrase) {
+    const fileQuery = rest
+      .replace(locPhrase[0], " ")
+      .replace(/\b(my|the|a|an)\b/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (fileQuery.length > 1) {
+      return {
+        action: "open_file",
+        target: fileQuery,
+        params: { query: rest, location: locPhrase[1] },
+        description: `Open "${fileQuery}" from ${locPhrase[1]}`,
+      };
+    }
+  }
+
   // Folder hints ("open downloads")
   for (const word of rest.split(/\s+/)) {
     const folder = FOLDER_HINTS[word];
@@ -855,6 +888,33 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
     };
   }
 
+  // ── Explicit filesystem path (case preserved from the raw text) ──────
+  // normalizeCommand lowercases everything, which corrupts a real path
+  // ("C:\Users\me\My Files\resume.pdf"). Paths come from the RAW text.
+  const pathInRaw = raw.match(
+    /(?:^|\s)(?:open|launch|start|kholo?|khol\s*do|chala|go\s*to|goto)\s+([A-Za-z]:[\\/][^"<>|*?]+|~\/[\w\-./ ]+|\/[\w.\-][\w.\-/]*)/i
+  );
+  if (pathInRaw) {
+    const p = pathInRaw[1].trim().replace(/[.,;!]+$/, "");
+    const isFile = /\.(docx?|pdf|txt|xlsx?|pptx?|png|jpe?g|gif|webp|bmp|svg|heic|mp3|wav|flac|m4a|ogg|mp4|mkv|avi|mov|webm|zip|rar|7z|csv|json|md|html?|log)$/i.test(p);
+    return {
+      ...base,
+      action: "open",
+      target: p,
+      query: "",
+      isTask: true,
+      isMultiStep: false,
+      steps: [{
+        action: isFile ? "open_file" : "open_folder",
+        target: p,
+        params: { query: p, ...(isFile ? {} : { kind: "folder" }) },
+        description: `Open ${p}`,
+      }],
+      summary: `Opened ${p}`,
+      confidence: 0.95,
+    };
+  }
+
   // ─── MULTI-STEP CHAINS (open/search/play/close/… sequences) ─────────────
   // "Open VS Code and open my Quip project." → 2 steps
   // "Open Chrome, go to YouTube, search for Mitwa and play it." → 4 steps
@@ -1019,6 +1079,12 @@ export function parseIntentV2(raw: string, opts: ParseOptions = {}): ParsedInten
   if (/^(awaaz|aawaz|awaz)\s+(band|chalu|bada|kam|tez|dheema)\s*(karo|kar)?$/.test(text)) {
     const w = text.split(/\s+/)[1];
     const a = w === "band" ? "mute" : w === "chalu" ? "unmute" : (w === "kam" || w === "dheema") ? "down" : "up";
+    return single("volume", a, { action: a }, `Volume ${a}`, `Volume ${a}`, 0.85);
+  }
+  // Hinglish verbs on the English word: "volume kam karo", "volume badhao".
+  const volHi = text.match(/^volume\s+(kam|dheema|tez|zyada|bada|badha|badhao)\s*(karo|kar|kar\s+do|kar\s+dena)?$/);
+  if (volHi) {
+    const a = volHi[1] === "kam" || volHi[1] === "dheema" ? "down" : "up";
     return single("volume", a, { action: a }, `Volume ${a}`, `Volume ${a}`, 0.85);
   }
   if (/^(awaaz|aawaz|awaz)\s+(\d{1,3})\s*(?:%|percent)?\s*(karo|kar)?$/.test(text)) {

@@ -386,11 +386,19 @@ export async function launchApp(app: InstalledApp): Promise<ActionVerification> 
     };
   }
 
-  const procNames = [app.procName, normalizeAppName(app.name).replace(/\s+/g, "")].filter(Boolean) as string[];
+  // Verification inputs — process names ONLY make sense for .exe launches.
+  // A UWP/Store app launched via shell:AppsFolder has an AppUserModelId, not a
+  // guessable process name (Calculator runs as CalculatorApp.exe / inside
+  // ApplicationFrameHost). Passing the display name as a process name made
+  // verification fail for EVERY Store app even when it opened fine — the
+  // verifier now also accepts "a new window appeared" as launch evidence.
+  const procNames = app.executable
+    ? [app.procName, normalizeAppName(app.name).replace(/\s+/g, "")].filter(Boolean) as string[]
+    : [];
   const verification = await verifyLaunched({
     procNames,
     titleHints: [app.name],
-    timeoutMs: 9000,
+    timeoutMs: 12000,
   });
 
   if (verification.ok) return { ...verification, summary: `Opened ${app.name}.` };

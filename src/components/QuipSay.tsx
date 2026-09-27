@@ -83,6 +83,11 @@ export function QuipSay({ message, companionColor, onDismiss, compact }: QuipSay
             right: compact ? 8 : 24,
             zIndex: 150,
             maxWidth: compact ? 118 : 220,
+            // The companion window is tiny (132×176) — a long proactive message
+            // used to grow the bubble OUT of the window (visually "an error
+            // bar going off screen"). Clamp the height; long text scrolls.
+            maxHeight: compact ? 52 : 120,
+            overflowY: "auto",
             padding: compact ? "7px 10px" : "9px 13px",
             borderRadius: "14px 14px 4px 14px",
             ...surface,
@@ -93,6 +98,7 @@ export function QuipSay({ message, companionColor, onDismiss, compact }: QuipSay
             lineHeight: 1.45,
             textAlign: "left",
             cursor: "pointer",
+            wordBreak: "break-word",
           }}
         >
           {message}

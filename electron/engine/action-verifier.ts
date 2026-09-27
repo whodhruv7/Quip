@@ -108,6 +108,40 @@ export async function listWindowTitles(): Promise<string[]> {
   return res.stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
 }
 
+export interface SystemSnapshot {
+  /** Running process names, lowercase, without .exe (e.g. "chrome"). */
+  procNames: string[];
+  /** Titles of top-level visible windows. */
+  windowTitles: string[];
+}
+
+/**
+ * ONE PowerShell round-trip that captures BOTH running process names and
+ * visible window titles. Verification used to spend one PowerShell call per
+ * process name (1.5–4s cold start EACH) — on a slow machine the whole verify
+ * budget evaporated before the first poll finished, so apps that DID open
+ * were reported as failures (the "capabilities don't work" class). One
+ * snapshot keeps the same honesty at a fraction of the cost.
+ */
+export async function snapshotSystemState(): Promise<SystemSnapshot> {
+  const res = await runCapture(
+    `powershell -NoProfile -Command "Get-Process | ForEach-Object { $_.ProcessName + '|' + $_.MainWindowTitle }"`,
+    8000
+  );
+  if (!res || res.code !== 0 || !res.stdout) return { procNames: [], windowTitles: [] };
+  const procNames = new Set<string>();
+  const windowTitles: string[] = [];
+  for (const line of res.stdout.split(/\r?\n/)) {
+    const idx = line.indexOf("|");
+    if (idx === -1) continue;
+    const proc = line.slice(0, idx).trim().toLowerCase();
+    const title = line.slice(idx + 1).trim();
+    if (proc) procNames.add(proc);
+    if (title) windowTitles.push(title);
+  }
+  return { procNames: [...procNames], windowTitles };
+}
+
 /** Does any visible window title contain the substring (case-insensitive)? */
 export async function windowWithTitleExists(titleSubstring: string): Promise<boolean> {
   const needle = titleSubstring.toLowerCase().trim();
@@ -132,30 +166,53 @@ export async function verifyLaunched(opts: {
   titleHints: string[];
   timeoutMs?: number;
 }): Promise<ActionVerification> {
-  const { procNames, titleHints, timeoutMs = 8000 } = opts;
+  const { procNames, titleHints, timeoutMs = 12000 } = opts;
+
+  // Baseline BEFORE the launch lands: with it, we can honestly verify a launch
+  // even when we don't know the app's process name (UWP/Store apps expose an
+  // AppUserModelId, not a guessable exe name) — a NEW visible window is proof.
+  const baseline = await snapshotSystemState();
+  const baseTitles = new Set(baseline.windowTitles.map((t) => t.toLowerCase()));
+
+  const cleanProc = (p: string) => p.trim().toLowerCase().replace(/\.exe$/, "");
+  const wantedProcs = procNames.map(cleanProc).filter(Boolean);
+  const wantedTitles = titleHints.map((t) => t.toLowerCase().trim()).filter(Boolean);
+
+  const findEvidence = (snap: SystemSnapshot): string | null => {
+    for (const p of wantedProcs) {
+      if (snap.procNames.includes(p)) return `process '${p}' is running`;
+    }
+    for (const t of wantedTitles) {
+      const hit = snap.windowTitles.find((title) => title.toLowerCase().includes(t));
+      if (hit) return `window title matched '${t}'`;
+    }
+    const newWindow = snap.windowTitles.find((title) => !baseTitles.has(title.toLowerCase()));
+    if (newWindow) return `a new window appeared: "${newWindow.slice(0, 60)}"`;
+    return null;
+  };
+
   const started = await pollUntil(async () => {
-    for (const p of procNames) {
-      if (p && (await processExists(p))) return true;
-    }
-    for (const t of titleHints) {
-      if (t && (await windowWithTitleExists(t))) return true;
-    }
-    return false;
+    const snap = await snapshotSystemState();
+    return findEvidence(snap) !== null;
   }, timeoutMs);
 
   if (started) {
+    const finalSnap = await snapshotSystemState();
     const evidence: string[] = [];
-    for (const p of procNames) {
-      if (p && (await processExists(p))) evidence.push(`process '${p}' is running`);
+    const found = findEvidence(finalSnap);
+    if (found) evidence.push(found);
+    for (const p of wantedProcs) {
+      if (finalSnap.procNames.includes(p)) evidence.push(`process '${p}' is running`);
     }
-    for (const t of titleHints) {
-      if (t && (await windowWithTitleExists(t))) evidence.push(`window title matched '${t}'`);
+    for (const t of wantedTitles) {
+      const hit = finalSnap.windowTitles.find((title) => title.toLowerCase().includes(t));
+      if (hit) evidence.push(`window title seen: "${hit.slice(0, 60)}"`);
     }
     return ok("Launched and verified on the system.", evidence);
   }
   return fail(
     "The app did not appear after launch.",
-    ["no matching process", "no matching window title"],
+    ["no matching process", "no matching window title", "no new window appeared"],
     "launch-not-verified"
   );
 }
